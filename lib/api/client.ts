@@ -535,7 +535,7 @@ export function mapApiEpisodeToEpisode(
     thumbnail,
     durationMinutes: 24,
     languages,
-    releasedAt: new Date().toISOString().split("T")[0],
+    releasedAt: "",
   };
 }
 
@@ -1026,7 +1026,7 @@ export function mapLatestEpisodeToEpisode(item: LatestEpisodeItem): Episode {
     thumbnail: poster,
     durationMinutes: 24,
     languages: ["hindi", "english"],
-    releasedAt: new Date().toISOString(),
+    releasedAt: "",
     isNew: true,
   };
 }
