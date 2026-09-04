@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+:root {
+  --background: #050807;
+  --surface-dark: #0a100d;
+  --surface: #0f1713;
+  --surface-elevated: #142019;
+  --border-line: #1d3025;
+
+  --green-primary: #16a34a;
+  --green-bright: #22c55e;
+  --green-light: #86efac;
+
+  --text-primary: #f5f7f6;
+  --text-secondary: #b7c1ba;
+  --text-muted: #7e8b83;
+
+  --font-display: var(--font-manrope);
+  --font-body: var(--font-inter);
+  --font-eyebrow: var(--font-bebas);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface-dark: var(--surface-dark);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border-line: var(--border-line);
+
+  --color-green-primary: var(--green-primary);
+  --color-green-bright: var(--green-bright);
+  --color-green-light: var(--green-light);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-eyebrow: var(--font-eyebrow);
+
+  --container-page: 1800px;
+}
+
+* {
+  scrollbar-color: var(--border-line) transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+::selection {
+  background: var(--green-primary);
+  color: #04150a;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.container-page {
+  width: 100%;
+  max-width: var(--container-page);
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+
+@media (min-width: 768px) {
+  .container-page {
+    padding-inline: 2rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .container-page {
+    padding-inline: 2.5rem;
+  }
+}
+
+.eyebrow {
+  font-family: var(--font-eyebrow);
+  letter-spacing: 0.14em;
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--green-bright);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 3.2s ease-in-out infinite;
+}
