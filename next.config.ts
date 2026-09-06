@@ -19,6 +19,10 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "**.tmdb.org",
       },
+      {
+        protocol: "https",
+        hostname: "multishows.top",
+      },
     ],
   },
   async headers() {
@@ -52,9 +56,9 @@ const nextConfig: NextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: https://image.tmdb.org https://img.animesalt.cx https://animesalt.cx https://*.tmdb.org",
+              "img-src 'self' data: blob: https://image.tmdb.org https://img.animesalt.cx https://animesalt.cx https://*.tmdb.org https://multishows.top",
               "font-src 'self' data:",
-              "connect-src 'self' https://anime-api-gilt-beta.vercel.app https://animesalt.cx",
+              "connect-src 'self' https://anime-api-gilt-beta.vercel.app https://animeapi-bmm3kbd5.b4a.run https://animesalt.cx https://multishows.top",
               // Permissive frame-src and media-src so embedded video players and streams function smoothly
               "frame-src 'self' https: http:",
               "media-src 'self' blob: data: https: http:",

@@ -111,6 +111,77 @@ async function scrapeDirectMovieStreams(
   }
 }
 
+async function scrapeMultiShowsStreams(
+  animeId: string,
+  season: string,
+  ep: string
+): Promise<StreamItem[]> {
+  const cleanId = cleanAnimeSlug(animeId) || animeId;
+  const urls = [
+    `https://multishows.top/episode/${encodeURIComponent(cleanId)}/${season}-${ep}`,
+    `https://multishows.top/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`,
+  ];
+
+  for (const pageUrl of urls) {
+    try {
+      const res = await fetch(pageUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          Referer: "https://multishows.top/",
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) continue;
+
+      const html = await res.text();
+      const results: StreamItem[] = [];
+      const seen = new Set<string>();
+
+      // 1. Check selectServer onclick matches (includes Hindi audio tags like Sony Yay)
+      const selectMatches = [...html.matchAll(/selectServer\('([^']+)',\s*'([^']+)'\)/g)];
+      for (const match of selectMatches) {
+        const embed = match[1]?.replace(/&#038;/g, "&").trim();
+        const name = match[2]?.replace(/&amp;/g, "&").trim();
+        if (embed && isValidEmbedUrl(embed) && !seen.has(embed)) {
+          seen.add(embed);
+          results.push({
+            server: name || `Server ${results.length + 1}`,
+            embed,
+          });
+        }
+      }
+
+      // 2. Check iframes in page
+      const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
+      let match: RegExpExecArray | null;
+      while ((match = iframeRegex.exec(html)) !== null) {
+        let src = match[1]?.replace(/&#038;/g, "&").trim();
+        if (!src || src.includes("about:blank")) continue;
+        if (src.startsWith("//")) src = "https:" + src;
+        if (isValidEmbedUrl(src) && !seen.has(src)) {
+          seen.add(src);
+          results.push({
+            server: `Server ${results.length + 1}`,
+            embed: src,
+          });
+        }
+      }
+
+      if (results.length > 0) {
+        return results;
+      }
+    } catch (err) {
+      console.error("[stream-proxy] multishows scrape error:", err);
+    }
+  }
+
+  return [];
+}
+
 /**
  * Proxy route: GET /api/stream-proxy?id=naruto-shippuden&season=1&ep=1
  */
@@ -248,6 +319,23 @@ export async function GET(request: Request) {
         success: true,
         message: "Stream Found!!",
         results: movieDirectResults,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+      }
+    );
+  }
+
+  // 5. Fallback for Series/Movies: MultiShows (multishows.top)
+  const msResults = await scrapeMultiShowsStreams(cleanId, season, ep);
+  if (msResults.length > 0) {
+    return NextResponse.json(
+      {
+        success: true,
+        message: "Stream Found!!",
+        results: msResults,
       },
       {
         headers: {
