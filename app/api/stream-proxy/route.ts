@@ -14,10 +14,10 @@ const DEFAULT_HEADERS = {
   Referer: "https://animesalt.cx/",
 };
 
-/**
- * Direct scraper fallback: extracts real <iframe> embed URLs directly from the episode page
- * if the upstream remote API is unavailable, failing, or returns invalid "Not Found" embeds.
- */
+const CF_PROXY_URL =
+  process.env.CF_PROXY_URL ||
+  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
+
 async function scrapeDirectEpisodeStreams(
   animeId: string,
   season: string,
@@ -26,17 +26,39 @@ async function scrapeDirectEpisodeStreams(
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   const episodeUrl = `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`;
 
+  let html: string | null = null;
+
+  // 1. Try direct fetch
   try {
     const res = await fetch(episodeUrl, {
       headers: DEFAULT_HEADERS,
       cache: "no-store",
     });
-    if (!res.ok) return [];
+    if (res.ok) {
+      html = await res.text();
+    }
+  } catch {
+    // direct fetch failed
+  }
 
-    const html = await res.text();
+  // 2. Try Cloudflare Worker proxy if direct fetch failed (bypasses Cloudflare 403 on Vercel)
+  if (!html) {
+    try {
+      const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(episodeUrl)}`, {
+        cache: "no-store",
+      });
+      if (pRes.ok) {
+        html = await pRes.text();
+      }
+    } catch {
+      // proxy failed
+    }
+  }
+
+  if (!html) return [];
+
+  try {
     const results: StreamItem[] = [];
-
-    // Extract all iframe src or data-src URLs from the episode page
     const iframeRegex =
       /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
@@ -72,14 +94,36 @@ async function scrapeDirectMovieStreams(
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(cleanId)}/`;
 
+  let html: string | null = null;
+
   try {
     const res = await fetch(movieUrl, {
       headers: DEFAULT_HEADERS,
       cache: "no-store",
     });
-    if (!res.ok) return [];
+    if (res.ok) {
+      html = await res.text();
+    }
+  } catch {
+    // direct fetch failed
+  }
 
-    const html = await res.text();
+  if (!html) {
+    try {
+      const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(movieUrl)}`, {
+        cache: "no-store",
+      });
+      if (pRes.ok) {
+        html = await pRes.text();
+      }
+    } catch {
+      // proxy failed
+    }
+  }
+
+  if (!html) return [];
+
+  try {
     const results: StreamItem[] = [];
 
     const iframeRegex =

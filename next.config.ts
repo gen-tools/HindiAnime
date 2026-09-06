@@ -58,7 +58,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https://image.tmdb.org https://img.animesalt.cx https://animesalt.cx https://*.tmdb.org https://multishows.top",
               "font-src 'self' data:",
-              "connect-src 'self' https://anime-api-gilt-beta.vercel.app https://animeapi-bmm3kbd5.b4a.run https://animesalt.cx https://multishows.top",
+              "connect-src 'self' https://anime-api-gilt-beta.vercel.app https://animeapi-bmm3kbd5.b4a.run https://animesalt.cx https://multishows.top https://*.workers.dev https://wispy-cherry-6934.shahazaibseo038.workers.dev",
               // Permissive frame-src and media-src so embedded video players and streams function smoothly
               "frame-src 'self' https: http:",
               "media-src 'self' blob: data: https: http:",
