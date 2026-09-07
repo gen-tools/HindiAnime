@@ -27,15 +27,12 @@ interface ValidServer {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseValidServers(results: StreamItem[]): ValidServer[] {
-  // Only keep the first valid server (Server 1)
-  const first = results.find((r) => isValidEmbedUrl(r.embed));
-  if (!first) return [];
-  return [
-    {
-      label: "Server 1",
-      embed: first.embed,
-    },
-  ];
+  const valid = results.filter((r) => isValidEmbedUrl(r.embed));
+  return valid.map((r, i) => ({
+    // Always use clean sequential labels: Server 1, Server 2, etc.
+    label: `Server ${i + 1}`,
+    embed: r.embed,
+  }));
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -141,14 +138,38 @@ export function StreamPlayer({
         )}
       </div>
 
-      {/* Control bar: Server label + Theater & Fullscreen Actions */}
+      {/* Control bar: Server buttons + Theater & Fullscreen */}
       {state === "ready" && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-line bg-surface px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <Server className="h-3.5 w-3.5 text-green-bright" />
-            <span className="text-xs font-semibold text-green-light">Server 1</span>
+          {/* Server selector buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
+              <Server className="h-3.5 w-3.5 text-green-bright" />
+              <span>Server:</span>
+            </div>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Select streaming server">
+              {servers.map((srv) => {
+                const isActive = srv.embed === activeServer?.embed;
+                return (
+                  <button
+                    key={srv.embed}
+                    onClick={() => setActiveServer(srv)}
+                    aria-pressed={isActive}
+                    className={cn(
+                      "focus-ring rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all",
+                      isActive
+                        ? "border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_8px_rgba(34,197,94,0.3)]"
+                        : "border-border-line bg-surface-elevated/40 text-text-secondary hover:border-green-primary/50 hover:text-white"
+                    )}
+                  >
+                    {srv.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
+          {/* Theater & Fullscreen controls */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsTheater((t) => !t)}
@@ -186,6 +207,7 @@ export function StreamPlayer({
     </div>
   );
 }
+
 
 // ─── Sub-states ──────────────────────────────────────────────────────────────
 
