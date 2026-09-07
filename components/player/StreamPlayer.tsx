@@ -27,20 +27,15 @@ interface ValidServer {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseValidServers(results: StreamItem[]): ValidServer[] {
-  return results
-    .filter((r) => isValidEmbedUrl(r.embed))
-    .map((r, i) => {
-      // Use the API's own server name when it's meaningful (not a generic options-N id)
-      let label = r.server || "";
-      if (!label || /^options-\d+$/.test(label)) {
-        // Fall back to position-based names for anonymous servers
-        label = i === 0 ? "Server 1 (Primary)" : `Server ${i + 1}`;
-      }
-      return {
-        label,
-        embed: r.embed,
-      };
-    });
+  // Only keep the first valid server (Server 1)
+  const first = results.find((r) => isValidEmbedUrl(r.embed));
+  if (!first) return [];
+  return [
+    {
+      label: "Server 1",
+      embed: first.embed,
+    },
+  ];
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -146,38 +141,12 @@ export function StreamPlayer({
         )}
       </div>
 
-      {/* Control bar: Servers + Theater & Fullscreen Actions */}
+      {/* Control bar: Server label + Theater & Fullscreen Actions */}
       {state === "ready" && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-line bg-surface px-4 py-2.5">
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
-              <Server className="h-3.5 w-3.5 text-green-bright" />
-              <span>Server:</span>
-            </div>
-            <div
-              className="flex flex-wrap gap-2"
-              role="group"
-              aria-label="Select streaming server"
-            >
-              {servers.map((srv) => {
-                const isActive = srv.embed === activeServer?.embed;
-                return (
-                  <button
-                    key={srv.embed}
-                    onClick={() => setActiveServer(srv)}
-                    aria-pressed={isActive}
-                    className={cn(
-                      "focus-ring rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm",
-                      isActive
-                        ? "border-green-bright bg-green-primary/20 text-green-light font-bold"
-                        : "border-border-line bg-surface-elevated/40 text-text-secondary hover:border-green-primary/50 hover:text-white"
-                    )}
-                  >
-                    {srv.label}
-                  </button>
-                );
-              })}
-            </div>
+          <div className="flex items-center gap-2">
+            <Server className="h-3.5 w-3.5 text-green-bright" />
+            <span className="text-xs font-semibold text-green-light">Server 1</span>
           </div>
 
           <div className="flex items-center gap-2">

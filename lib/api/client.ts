@@ -1320,26 +1320,42 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       title = unbracketed || rawTitle;
     }
 
-    // Parse Poster (TMDB portrait)
+    // Parse Poster — try og:image first (always set reliably on animesalt.cx),
+    // then fall back to explicit img data-src/src scanning for any CDN image URL.
     let poster: string | undefined;
-    const sPosterMatch =
-      html.match(/<img[^>]+data-src=["'](\/\/[^"']*(?:tmdb\.org|image|poster)[^"']*)["']/i) ||
-      html.match(/<img[^>]+data-src=["'](https?:\/\/[^"']*(?:tmdb\.org|image|poster)[^"']*)["']/i) ||
-      html.match(/<img[^>]+src=["'](https?:\/\/[^"']*(?:tmdb\.org|image|poster)[^"']*)["']/i) ||
-      html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-    if (sPosterMatch) {
-      let p = sPosterMatch[1];
+
+    // 1. og:image — most reliable, covers all pages including movies
+    const ogImageMatch = html.match(/<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i);
+    if (ogImageMatch) {
+      let p = (ogImageMatch[1] || ogImageMatch[2] || "").trim();
       if (p.startsWith("//")) p = "https:" + p;
-      p = p.replace(/\/w\d+\//, "/w500/");
-      poster = p;
+      if (p && !p.startsWith("data:")) poster = p;
     }
 
-    // Parse Backdrop (TMDB widescreen w1280 or TPostBg)
+    // 2. Fallback: img with data-src/src — any external CDN image
+    if (!poster) {
+      const sPosterMatch =
+        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+data-src=["'](https?:[^"']+)["']/i) ||
+        html.match(/<img[^>]+data-src=["'](https?:\/\/[^"']{20,}\.(?:jpg|jpeg|png|webp)[^"']*)["']/i) ||
+        html.match(/<img[^>]+src=["'](https?:\/\/[^"']{20,}\.(?:jpg|jpeg|png|webp)[^"']*)["']/i);
+      if (sPosterMatch) {
+        let p = sPosterMatch[1];
+        if (p.startsWith("//")) p = "https:" + p;
+        if (!p.startsWith("data:")) {
+          // Upgrade TMDB w185/w342 to w500 for better quality
+          p = p.replace(/\/w(?:185|342|200|300)\//,  "/w500/");
+          poster = p;
+        }
+      }
+    }
+
+    // Parse Backdrop (TMDB widescreen w1280/original or animesalt TPostBg CDN)
     let backdrop: string | undefined;
     const sBackdropMatch =
       html.match(/<img[^>]+class=["'][^"']*TPostBg[^"']*["'][^>]*data-src=["']([^"']+)["']/i) ||
       html.match(/data-src=["'](\/\/[^"']*image\.tmdb\.org\/t\/p\/(?:w1280|original)[^"']*)["']/i) ||
-      html.match(/src=["'](\/\/[^"']*image\.tmdb\.org\/t\/p\/(?:w1280|original)[^"']*)["']/i);
+      html.match(/src=["'](\/\/[^"']*image\.tmdb\.org\/t\/p\/(?:w1280|original)[^"']*)["']/i) ||
+      html.match(/data-src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp))["']/i);
     if (sBackdropMatch) {
       let b = sBackdropMatch[1];
       if (b.startsWith("//")) b = "https:" + b;
