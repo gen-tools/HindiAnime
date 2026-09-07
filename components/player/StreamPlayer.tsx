@@ -134,8 +134,8 @@ export function StreamPlayer({
           isFullscreen
             ? "h-full w-full rounded-none border-0"
             : isTheater
-            ? "aspect-video max-h-[85vh] w-full rounded-xl border border-border-line shadow-2xl"
-            : "aspect-video max-h-[80vh] w-full -mx-4 sm:mx-0 sm:rounded-xl border border-border-line shadow-2xl"
+            ? "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
+            : "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
         )}
       >
         {state === "loading" && <LoadingState episodeTitle={episodeTitle} />}
@@ -286,6 +286,9 @@ function EmbedFrame({ embed, title }: { embed: string; title: string }) {
       mozallowfullscreen="true"
       loading="eager"
       referrerPolicy="no-referrer-when-downgrade"
+      // Block redirect/pop-up ads: deny top-navigation while allowing scripts,
+      // same-origin, popups needed by the player, and fullscreen.
+      sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-presentation allow-pointer-lock"
     />
   );
 }

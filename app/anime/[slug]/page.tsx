@@ -184,9 +184,13 @@ export default async function AnimeDetailPage({
   let item: Anime | undefined;
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
-  if (movieData?.title) {
+  // Only treat as a Movie if the scraper also confirms it's a movie.
+  // This prevents series like Solo Leveling (which have a separate movie entry)
+  // from being misclassified as Movies because getMovieInfo returns data.
+  const confirmedMovie = movieData?.title && (directData?.isMovie !== false);
+  if (confirmedMovie) {
     item = mapMovieInfoToAnime(
-      movieData,
+      movieData!,
       searchMatch?.poster || directData?.poster || undefined,
       directData?.title || undefined
     );
