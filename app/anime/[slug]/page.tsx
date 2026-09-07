@@ -23,6 +23,7 @@ import {
   SYNOPSIS_FALLBACK,
   formatDisplayTitle,
   isUsableImageUrl,
+  parseLanguages,
 } from "@/lib/api/client";
 import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
@@ -38,46 +39,62 @@ export async function generateMetadata({
   const cleanSlug = cleanAnimeSlug(slug) || slug;
   const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
 
-  const [apiInfo, movieInfo, searchRes, directData] = await Promise.all([
+  const [apiInfo, movieInfo, searchRes, directData, epApiRes] = await Promise.all([
     getAnimeInfo(cleanSlug),
     getMovieInfo(cleanSlug),
     searchAnime(searchKeyword, 1),
     scrapeDirectSeriesData(cleanSlug),
+    getEpisodes(cleanSlug, 1),
   ]);
 
   const searchMatch = searchRes?.results?.results?.find(
     (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
   );
 
-  let item: Anime | undefined;
+  const rawEpisodes = epApiRes?.results?.episodes || [];
+  const s1Fallback = directData?.s1Episodes || [];
+  const hasSeriesEpisodes = rawEpisodes.length > 0 || s1Fallback.length > 0;
+  const hasMultipleSeasons = Boolean(directData?.seasons && directData.seasons.length > 1);
+
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
-  if (movieData?.title) {
+
+  const isMovie =
+    !hasSeriesEpisodes &&
+    !hasMultipleSeasons &&
+    (Boolean(directData?.isMovie) || (Boolean(movieData?.title) && !animeData?.title));
+
+  let item: Anime | undefined;
+  if (isMovie && movieData?.title) {
     item = mapMovieInfoToAnime(
       movieData,
       searchMatch?.poster || directData?.poster || undefined,
       directData?.title || undefined
     );
-  } else if (animeData) {
+  } else if (animeData?.title) {
     item = mapApiInfoToAnime(
       animeData,
-      searchMatch?.poster || directData?.poster || undefined,
-      directData?.title || undefined
+      searchMatch?.poster || directData?.poster || movieData?.poster || undefined,
+      directData?.title || movieData?.title || undefined
     );
   } else if (directData) {
-    const formattedTitle = directData.title || formatDisplayTitle(cleanSlug);
+    const formattedTitle = directData.title || movieData?.title || formatDisplayTitle(cleanSlug);
     item = {
       id: cleanSlug,
       slug: cleanSlug,
       title: formattedTitle,
-      synopsis: directData.synopsis || `Watch ${formattedTitle} in Hindi on HindiAnime.`,
+      synopsis:
+        directData.synopsis ||
+        (typeof movieData?.overview === "string"
+          ? movieData.overview
+          : `Watch ${formattedTitle} in Hindi on HindiAnime.`),
       poster: directData.poster || cleanSlug,
       backdrop: directData.backdrop || directData.poster || cleanSlug,
       rating: 8.5,
       year: new Date().getFullYear(),
-      type: directData.isMovie ? "Movie" : "TV",
-      status: directData.isMovie ? "Completed" : "Ongoing",
-      durationMinutes: directData.isMovie ? 110 : 24,
+      type: isMovie ? "Movie" : "TV",
+      status: isMovie ? "Completed" : "Ongoing",
+      durationMinutes: isMovie ? 110 : 24,
       episodeCount: directData.s1Episodes.length || 1,
       genres: ["action", "animation"],
       languages: ["hindi", "japanese", "english"],
@@ -114,7 +131,7 @@ export async function generateMetadata({
     };
   }
 
-  // Override synopsis with scraped data if the API returned the fallback or empty
+  // Override synopsis with scraped data if empty
   if (
     directData?.synopsis &&
     (!item.synopsis ||
@@ -124,7 +141,7 @@ export async function generateMetadata({
     item = { ...item, synopsis: directData.synopsis };
   }
 
-  // Override title if current title contains percent encoding or fallback
+  // Override title if current title contains percent encoding
   if (directData?.title && (!item.title || item.title.includes("%"))) {
     item = { ...item, title: directData.title };
   } else if (item.title && item.title.includes("%")) {
@@ -168,63 +185,98 @@ export default async function AnimeDetailPage({
 
   const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
 
-  // 1. Fetch info, movieInfo, direct scraper data and search in parallel
-  const [apiInfo, movieInfo, searchRes, directData] = await Promise.all([
-    getAnimeInfo(cleanSlug),
-    getMovieInfo(cleanSlug),
-    searchAnime(searchKeyword, 1),
-    scrapeDirectSeriesData(cleanSlug),
-  ]);
+  // 1. Fetch info, movieInfo, search, direct scraper, seasons, and episodes in parallel
+  const [apiInfo, movieInfo, searchRes, directData, availableSeasons, epApiRes] =
+    await Promise.all([
+      getAnimeInfo(cleanSlug),
+      getMovieInfo(cleanSlug),
+      searchAnime(searchKeyword, 1),
+      scrapeDirectSeriesData(cleanSlug),
+      getAvailableSeasons(cleanSlug),
+      getEpisodes(cleanSlug, seasonNum),
+    ]);
 
   // Match ONLY by exact slug
   const searchMatch = searchRes?.results?.results?.find(
     (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
   );
 
-  let item: Anime | undefined;
+  const rawEpisodes = epApiRes?.results?.episodes || [];
+  const s1Fallback =
+    seasonNum === 1 && directData?.s1Episodes ? directData.s1Episodes : [];
+  const effectiveRawEpisodes =
+    rawEpisodes.length > 0 ? rawEpisodes : s1Fallback;
+
+  const hasSeriesEpisodes = effectiveRawEpisodes.length > 0;
+  const hasMultipleSeasons =
+    (availableSeasons && availableSeasons.length > 1) ||
+    (directData?.seasons && directData.seasons.length > 1);
+
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
-  // Only treat as a Movie if the scraper also confirms it's a movie.
-  // This prevents series like Solo Leveling (which have a separate movie entry)
-  // from being misclassified as Movies because getMovieInfo returns data.
-  const confirmedMovie = movieData?.title && (directData?.isMovie !== false);
-  if (confirmedMovie) {
+
+  // A title is only a movie if it has NO series episodes and is confirmed as a movie
+  const isMovie =
+    !hasSeriesEpisodes &&
+    !hasMultipleSeasons &&
+    (Boolean(directData?.isMovie) ||
+      (Boolean(movieData?.title) && !animeData?.title));
+
+  let item: Anime | undefined;
+  if (isMovie && movieData?.title) {
     item = mapMovieInfoToAnime(
-      movieData!,
+      movieData,
       searchMatch?.poster || directData?.poster || undefined,
       directData?.title || undefined
     );
-  } else if (animeData) {
+  } else if (animeData?.title) {
     item = mapApiInfoToAnime(
       animeData,
-      searchMatch?.poster || directData?.poster || undefined,
-      directData?.title || undefined
+      searchMatch?.poster || directData?.poster || movieData?.poster || undefined,
+      directData?.title || movieData?.title || undefined
     );
-  } else if (directData) {
-    const formattedTitle = directData.title || formatDisplayTitle(cleanSlug);
+  } else {
+    const formattedTitle =
+      directData?.title ||
+      movieData?.title ||
+      searchMatch?.title ||
+      formatDisplayTitle(cleanSlug);
+    const poster =
+      directData?.poster ||
+      searchMatch?.poster ||
+      movieData?.poster ||
+      cleanSlug;
+
+    const totalSeasonsCount =
+      availableSeasons.length || directData?.seasons?.length || 1;
+
     item = {
       id: cleanSlug,
       slug: cleanSlug,
       title: formattedTitle,
-      synopsis: directData.synopsis || "",
-      poster: directData.poster || cleanSlug,
-      backdrop: directData.backdrop || directData.poster || cleanSlug,
-      rating: 8.5,
-      year: new Date().getFullYear(),
-      type: directData.isMovie ? "Movie" : "TV",
-      status: directData.isMovie ? "Completed" : "Ongoing",
-      durationMinutes: directData.isMovie ? 110 : 24,
-      episodeCount: directData.s1Episodes.length || 1,
-      genres: ["action", "animation"],
-      languages: ["hindi", "japanese", "english"],
-      seasons: directData.seasons.length || 1,
+      synopsis:
+        directData?.synopsis ||
+        (typeof movieData?.overview === "string"
+          ? movieData.overview
+          : SYNOPSIS_FALLBACK),
+      poster,
+      backdrop: directData?.backdrop || poster,
+      rating: Number(movieData?.rating) || 8.5,
+      year: Number(movieData?.year) || new Date().getFullYear(),
+      type: isMovie ? "Movie" : "TV",
+      status: isMovie ? "Completed" : "Ongoing",
+      durationMinutes: isMovie ? 110 : 24,
+      episodeCount: effectiveRawEpisodes.length || 12,
+      genres: movieData?.genres?.map((g) =>
+        g.toLowerCase().replace(/\s+/g, "-")
+      ) || ["action", "animation"],
+      languages: movieData?.languages
+        ? parseLanguages(movieData.languages.join(","))
+        : ["hindi", "japanese", "english"],
+      seasons: totalSeasonsCount,
       studio: "Anime",
       updatedAt: new Date().toISOString().split("T")[0],
     };
-  } else if (searchMatch) {
-    item = mapSearchItemToAnime(searchMatch);
-  } else {
-    item = getAnimeBySlug(cleanSlug);
   }
 
   if (!item) {
@@ -250,7 +302,7 @@ export default async function AnimeDetailPage({
     };
   }
 
-  // Override synopsis with scraped data if the API returned the fallback or empty
+  // Override synopsis with scraped data if empty
   if (
     directData?.synopsis &&
     (!item.synopsis ||
@@ -260,7 +312,7 @@ export default async function AnimeDetailPage({
     item = { ...item, synopsis: directData.synopsis };
   }
 
-  // Override title if current title contains percent encoding or fallback
+  // Override title if current title contains percent encoding
   if (directData?.title && (!item.title || item.title.includes("%"))) {
     item = { ...item, title: directData.title };
   } else if (item.title && item.title.includes("%")) {
@@ -283,7 +335,7 @@ export default async function AnimeDetailPage({
   // 2. Discover episodes & seasons
   let episodes: Episode[] = [];
 
-  if (item.type === "Movie" || directData?.isMovie) {
+  if (isMovie) {
     episodes = [
       {
         id: "ep-1-1",
@@ -300,18 +352,13 @@ export default async function AnimeDetailPage({
       },
     ];
   } else {
-    const [availableSeasons, epApiRes] = await Promise.all([
-      getAvailableSeasons(cleanSlug),
-      getEpisodes(cleanSlug, seasonNum),
-    ]);
-    const rawEpisodes = epApiRes?.results?.episodes || [];
-
-    const totalSeasons = availableSeasons.length || directData?.seasons?.length || item.seasons;
+    const totalSeasons =
+      availableSeasons.length || directData?.seasons?.length || item.seasons;
     item = { ...item, seasons: totalSeasons };
 
-    if (rawEpisodes.length > 0) {
+    if (effectiveRawEpisodes.length > 0) {
       episodes = deduplicateEpisodes(
-        rawEpisodes.map((ep, idx) =>
+        effectiveRawEpisodes.map((ep, idx) =>
           mapApiEpisodeToEpisode(
             ep,
             item!.slug,
@@ -323,34 +370,45 @@ export default async function AnimeDetailPage({
           )
         )
       );
-    } else if (seasonNum === 1 && directData?.s1Episodes && directData.s1Episodes.length > 0) {
-      episodes = deduplicateEpisodes(
-        directData.s1Episodes.map((ep, idx) =>
-          mapApiEpisodeToEpisode(
-            ep,
-            item!.slug,
-            item!.title,
-            item!.poster,
-            item!.languages,
-            1,
-            idx
-          )
-        )
-      );
+    } else {
+      // Synthesize at least Episode 1 fallback so episode options are never empty
+      episodes = [
+        {
+          id: `ep-${seasonNum}-1`,
+          animeSlug: item.slug,
+          animeTitle: item.title,
+          animePoster: item.poster,
+          season: seasonNum,
+          number: 1,
+          title: `Episode 1`,
+          thumbnail: item.poster,
+          durationMinutes: 24,
+          languages: item.languages,
+          releasedAt: new Date().toISOString().split("T")[0],
+        },
+      ];
     }
   }
 
   // 3. Build season list
-  const isMovie = item.type === "Movie" || Boolean(directData?.isMovie);
-  const totalSeasonsCount = isMovie ? 1 : item.seasons || 1;
+  const allSeasons = isMovie
+    ? [1]
+    : Array.from(
+        new Set([
+          ...(availableSeasons.length ? availableSeasons : [1]),
+          ...(directData?.seasons || []),
+          seasonNum,
+        ])
+      ).sort((a, b) => a - b);
+
   const seasonList: SeasonItem[] = isMovie
     ? [{ season: "1", text: "Movie" }]
-    : Array.from({ length: totalSeasonsCount }, (_, idx) => ({
-        season: String(idx + 1),
-        text: `Season ${idx + 1}`,
+    : allSeasons.map((s) => ({
+        season: String(s),
+        text: `Season ${s}`,
       }));
 
-  const firstEpisodeId = episodes.length > 0 ? episodes[0].id : "ep-1-1";
+  const firstEpisodeId = episodes.length > 0 ? episodes[0].id : `ep-${seasonNum}-1`;
 
   // Build related from homepage feed
   const homepageFeed = await getHomepageFeed();
@@ -382,14 +440,23 @@ export default async function AnimeDetailPage({
 
       {episodes.length > 0 && (
         <div className="container-page mt-10">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <h2 className="font-display text-xl font-bold text-text-primary">
-              Episodes
-            </h2>
-            <SeasonSelector
-              seasons={seasonList}
-              currentSeason={currentSeason}
-            />
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <h2 className="font-display text-xl font-bold text-text-primary">
+                Episodes
+              </h2>
+              {!isMovie && (
+                <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-xs font-semibold text-text-secondary border border-border-line">
+                  {episodes.length} Episodes
+                </span>
+              )}
+            </div>
+            {!isMovie && seasonList.length > 1 && (
+              <SeasonSelector
+                seasons={seasonList}
+                currentSeason={currentSeason}
+              />
+            )}
           </div>
           <EpisodeList episodes={episodes} animeSlug={item.slug} />
         </div>

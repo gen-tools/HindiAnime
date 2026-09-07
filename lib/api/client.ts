@@ -1210,6 +1210,39 @@ function parseEpisodesFromHtml(html: string): EpisodeItem[] {
   return episodes;
 }
 
+const WORKER_PROXY_URL =
+  process.env.NEXT_PUBLIC_CF_PROXY_URL ||
+  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
+
+async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: DEFAULT_SCRAPER_HEADERS,
+      next: { revalidate: 60 },
+    });
+    if (res.ok) {
+      return await res.text();
+    }
+  } catch {
+    // direct fetch error
+  }
+
+  try {
+    const proxyUrl = `${WORKER_PROXY_URL}${encodeURIComponent(url)}`;
+    const pRes = await fetch(proxyUrl, {
+      headers: DEFAULT_SCRAPER_HEADERS,
+      next: { revalidate: 60 },
+    });
+    if (pRes.ok) {
+      return await pRes.text();
+    }
+  } catch {
+    // proxy fetch error
+  }
+
+  return null;
+}
+
 export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
   const cleanId = cleanAnimeSlug(slug) || slug;
   if (!cleanId) return null;
@@ -1226,24 +1259,13 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
 
     // 1. Try series page
     const seriesUrl = `https://animesalt.cx/series/${encodeURIComponent(decodedSlug)}/`;
-    const res = await fetch(seriesUrl, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      next: { revalidate: 60 },
-    });
+    html = await fetchHtmlWithWorkerFallback(seriesUrl);
 
-    if (res.ok) {
-      html = await res.text();
-    } else if (res.status === 404) {
+    if (!html) {
       // 2. Try movie page
       const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`;
-      const movieRes = await fetch(movieUrl, {
-        headers: DEFAULT_SCRAPER_HEADERS,
-        next: { revalidate: 60 },
-      });
-      if (movieRes.ok) {
-        html = await movieRes.text();
-        isMovie = true;
-      }
+      html = await fetchHtmlWithWorkerFallback(movieUrl);
+      if (html) isMovie = true;
     }
 
     // 3. Fallback: Search AnimeSalt by keyword if direct fetch failed
@@ -1251,20 +1273,14 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       const searchKw = decodedSlug.replace(/[【】\[\]]/g, " ").replace(/-/g, " ").trim();
       if (searchKw) {
         try {
-          const sRes = await fetch(`https://animesalt.cx/?s=${encodeURIComponent(searchKw)}`, {
-            headers: DEFAULT_SCRAPER_HEADERS,
-          });
-          if (sRes.ok) {
-            const sHtml = await sRes.text();
+          const sUrl = `https://animesalt.cx/?s=${encodeURIComponent(searchKw)}`;
+          const sHtml = await fetchHtmlWithWorkerFallback(sUrl);
+          if (sHtml) {
             const linkMatch = sHtml.match(/href=["'](https:\/\/animesalt\.cx\/(?:series|movies)\/[^"']+)["']/i);
             if (linkMatch) {
               const targetUrl = linkMatch[1];
-              const pageRes = await fetch(targetUrl, {
-                headers: DEFAULT_SCRAPER_HEADERS,
-                next: { revalidate: 60 },
-              });
-              if (pageRes.ok) {
-                html = await pageRes.text();
+              html = await fetchHtmlWithWorkerFallback(targetUrl);
+              if (html) {
                 isMovie = targetUrl.includes("/movies/");
               }
             }
@@ -1415,12 +1431,8 @@ async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise
 
   try {
     const ajaxUrl = `https://animesalt.cx/wp-admin/admin-ajax.php?action=action_select_season&season=${season}&post=${postId}`;
-    const res = await fetch(ajaxUrl, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      next: { revalidate: 60 },
-    });
-    if (!res.ok) return [];
-    const html = await res.text();
+    const html = await fetchHtmlWithWorkerFallback(ajaxUrl);
+    if (!html) return [];
     return parseEpisodesFromHtml(html);
   } catch (err) {
     console.error(`[Scraper] Error fetching season ${season} for ${cleanId}:`, err);
@@ -1491,7 +1503,7 @@ export async function getAvailableSeasons(
 
   // 1. Direct discovery: pulls all season buttons in a single request
   const meta = await scrapeDirectSeriesData(cleanId);
-  if (meta && meta.seasons.length > 0) {
+  if (meta && meta.seasons && meta.seasons.length > 0) {
     return meta.seasons;
   }
 
@@ -1502,6 +1514,12 @@ export async function getAvailableSeasons(
     });
     if (res.ok) {
       const data: EpisodeResponse = await res.json();
+      if (Array.isArray(data?.results?.seasons) && data.results.seasons.length > 0) {
+        const sNums = data.results.seasons
+          .map((s) => parseInt(s.season, 10))
+          .filter((n) => !isNaN(n) && n > 0);
+        if (sNums.length > 0) return [...new Set(sNums)].sort((a, b) => a - b);
+      }
       const total = parseInt(data?.results?.totalSeasons, 10);
       if (!isNaN(total) && total > 0) {
         return Array.from({ length: total }, (_, i) => i + 1);
