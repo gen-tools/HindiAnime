@@ -24,11 +24,13 @@ async function scrapeAnimeSaltEpisodeStreams(
   ep: string
 ): Promise<StreamItem[]> {
   const cleanId = cleanAnimeSlug(animeId) || animeId;
-  // Animesalt uses two URL patterns: slug-SxEP and slug/season-ep
   const urlFormats = [
     `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`,
     `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep.padStart(2, "0")}/`,
   ];
+  if (String(season) === "1" && String(ep) === "1") {
+    urlFormats.push(`https://animesalt.cx/movies/${encodeURIComponent(cleanId)}/`);
+  }
 
   let html: string | null = null;
 
@@ -42,7 +44,6 @@ async function scrapeAnimeSaltEpisodeStreams(
       });
       if (res.ok) {
         const text = await res.text();
-        // Make sure it's not a 404-like page (animesalt returns 200 even for 404s)
         if (text.length > 5000) {
           html = text;
         }
@@ -55,6 +56,7 @@ async function scrapeAnimeSaltEpisodeStreams(
     if (!html) {
       try {
         const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(episodeUrl)}`, {
+          headers: DEFAULT_HEADERS,
           cache: "no-store",
         });
         if (pRes.ok) {
@@ -76,15 +78,14 @@ async function scrapeAnimeSaltEpisodeStreams(
     const seen = new Set<string>();
 
     // --- Extract animesalt multi-lang Plyr player (data-src on lazy-loaded iframe) ---
-    // These are loaded lazily so the attribute is data-src, not src
     const dataSrcRegex = /data-src=["'](https:\/\/animesalt\.cx\/multi-lang-plyr[^"']+)["']/gi;
     let plyrMatch: RegExpExecArray | null;
     while ((plyrMatch = dataSrcRegex.exec(html)) !== null) {
       const src = plyrMatch[1].replace(/&#038;/g, "&");
-      if (!seen.has(src)) {
+      if (isValidEmbedUrl(src) && !seen.has(src)) {
         seen.add(src);
         results.push({
-          server: "Server 1 | Multi Audio",
+          server: "AnimeSalt Multi-Audio",
           embed: src,
         });
       }
@@ -93,20 +94,18 @@ async function scrapeAnimeSaltEpisodeStreams(
     // --- Extract any other iframes (src or data-src) ---
     const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
-    let idx = results.length + 1;
 
     while ((match = iframeRegex.exec(html)) !== null) {
       let src = match[1].replace(/&#038;/g, "&");
       if (src.startsWith("//")) src = "https:" + src;
       else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
 
-      if (isValidEmbedUrl(src) && !seen.has(src)) {
+      if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
         seen.add(src);
         results.push({
-          server: `Server ${idx}`,
+          server: "AnimeSalt Server",
           embed: src,
         });
-        idx++;
       }
     }
 
@@ -140,6 +139,7 @@ async function scrapeDirectMovieStreams(
   if (!html) {
     try {
       const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(movieUrl)}`, {
+        headers: DEFAULT_HEADERS,
         cache: "no-store",
       });
       if (pRes.ok) {
@@ -154,11 +154,24 @@ async function scrapeDirectMovieStreams(
 
   try {
     const results: StreamItem[] = [];
+    const seen = new Set<string>();
+
+    const dataSrcRegex = /data-src=["'](https:\/\/animesalt\.cx\/multi-lang-plyr[^"']+)["']/gi;
+    let plyrMatch: RegExpExecArray | null;
+    while ((plyrMatch = dataSrcRegex.exec(html)) !== null) {
+      const src = plyrMatch[1].replace(/&#038;/g, "&");
+      if (isValidEmbedUrl(src) && !seen.has(src)) {
+        seen.add(src);
+        results.push({
+          server: "AnimeSalt Multi-Audio",
+          embed: src,
+        });
+      }
+    }
 
     const iframeRegex =
       /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
-    let idx = 0;
 
     while ((match = iframeRegex.exec(html)) !== null) {
       let src = match[1].replace(/&#038;/g, "&");
@@ -168,12 +181,12 @@ async function scrapeDirectMovieStreams(
         src = "https://animesalt.cx" + src;
       }
 
-      if (isValidEmbedUrl(src)) {
+      if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
+        seen.add(src);
         results.push({
-          server: `options-${idx}`,
+          server: "AnimeSalt Server",
           embed: src,
         });
-        idx++;
       }
     }
 
@@ -193,67 +206,82 @@ async function scrapeMultiShowsStreams(
   const urls = [
     `https://multishows.top/episode/${encodeURIComponent(cleanId)}/${season}-${ep}`,
     `https://multishows.top/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`,
+    `https://multishows.top/episode/${encodeURIComponent(cleanId)}-season-${season}-episode-${ep}/`,
   ];
+  if (String(season) === "1" && String(ep) === "1") {
+    urls.push(`https://multishows.top/movie/${encodeURIComponent(cleanId)}/`);
+    urls.push(`https://multishows.top/movies/${encodeURIComponent(cleanId)}/`);
+  }
+
+  const msHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    Accept:
+      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    Referer: "https://multishows.top/",
+  };
+
+  async function fetchMs(url: string): Promise<string | null> {
+    // 1. Direct fetch
+    try {
+      const r = await fetch(url, { headers: msHeaders, cache: "no-store" });
+      if (r.ok) {
+        const text = await r.text();
+        if (text.length > 3000) return text;
+      }
+    } catch { /* direct failed */ }
+
+    // 2. Route through CF Worker proxy (bypasses IP blocks on Vercel)
+    try {
+      const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(url)}`;
+      const r = await fetch(proxyUrl, { headers: msHeaders, cache: "no-store" });
+      if (r.ok) {
+        const text = await r.text();
+        if (text.length > 3000) return text;
+      }
+    } catch { /* proxy failed */ }
+
+    return null;
+  }
 
   for (const pageUrl of urls) {
-    try {
-      const res = await fetch(pageUrl, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          Referer: "https://multishows.top/",
-        },
-        cache: "no-store",
-      });
+    const html = await fetchMs(pageUrl);
+    if (!html) continue;
 
-      if (!res.ok) continue;
+    const results: StreamItem[] = [];
+    const seen = new Set<string>();
 
-      const html = await res.text();
-      const results: StreamItem[] = [];
-      const seen = new Set<string>();
-
-      // 1. Check selectServer onclick matches (includes Hindi audio tags like Sony Yay)
-      const selectMatches = [...html.matchAll(/selectServer\('([^']+)',\s*'([^']+)'\)/g)];
-      for (const match of selectMatches) {
-        const embed = match[1]?.replace(/&#038;/g, "&").trim();
-        const name = match[2]?.replace(/&amp;/g, "&").trim();
-        if (embed && isValidEmbedUrl(embed) && !seen.has(embed)) {
-          seen.add(embed);
-          results.push({
-            server: name || `Server ${results.length + 1}`,
-            embed,
-          });
-        }
+    // 1. selectServer onclick handlers (Hindi dub servers like Sony Yay, etc.)
+    const selectMatches = [...html.matchAll(/selectServer\('([^']+)',\s*'([^']+)'\)/g)];
+    for (const match of selectMatches) {
+      const embed = match[1]?.replace(/&#038;/g, "&").trim();
+      const name = match[2]?.replace(/&amp;/g, "&").trim();
+      if (embed && isValidEmbedUrl(embed) && !seen.has(embed)) {
+        seen.add(embed);
+        results.push({ server: name || `Server ${results.length + 1}`, embed });
       }
-
-      // 2. Check iframes in page
-      const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
-      let match: RegExpExecArray | null;
-      while ((match = iframeRegex.exec(html)) !== null) {
-        let src = match[1]?.replace(/&#038;/g, "&").trim();
-        if (!src || src.includes("about:blank")) continue;
-        if (src.startsWith("//")) src = "https:" + src;
-        if (isValidEmbedUrl(src) && !seen.has(src)) {
-          seen.add(src);
-          results.push({
-            server: `Server ${results.length + 1}`,
-            embed: src,
-          });
-        }
-      }
-
-      if (results.length > 0) {
-        return results;
-      }
-    } catch (err) {
-      console.error("[stream-proxy] multishows scrape error:", err);
     }
+
+    // 2. Iframes in page
+    const iframeRegex = /<iframe[^\>]+(?:src|data-src)=["']([^"']+)["'][^\>]*>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = iframeRegex.exec(html)) !== null) {
+      let src = match[1]?.replace(/&#038;/g, "&").trim();
+      if (!src || src.includes("about:blank")) continue;
+      if (src.startsWith("//")) src = "https:" + src;
+      if (isValidEmbedUrl(src) && !seen.has(src)) {
+        seen.add(src);
+        results.push({ server: `Server ${results.length + 1}`, embed: src });
+      }
+    }
+
+    if (results.length > 0) return results;
   }
 
   return [];
 }
+
 
 /**
  * Proxy route: GET /api/stream-proxy?id=naruto-shippuden&season=1&ep=1
@@ -283,7 +311,6 @@ export async function GET(request: Request) {
   // searchParams.get() may return it still partially encoded. Normalize to a plain string.
   let decodedId = id;
   try {
-    // Only decode if the string contains percent-encoded sequences
     if (id.includes("%")) {
       decodedId = decodeURIComponent(id);
     }
@@ -299,46 +326,64 @@ export async function GET(request: Request) {
     );
   }
 
-  // Run animesalt scrape + multishows scrape in parallel for speed
-  const [animeSaltResults, msResults] = await Promise.all([
+  // Run all scrapers in parallel
+  let [animeSaltResults, msResults] = await Promise.all([
     scrapeAnimeSaltEpisodeStreams(cleanId, season, ep),
     scrapeMultiShowsStreams(cleanId, season, ep),
   ]);
 
-  // Merge: multishows FIRST (it reliably works as Server 1),
-  // then animesalt as additional server if multishows found results.
+  // Fallback to direct movie scrape if no results found
+  if (animeSaltResults.length === 0 && msResults.length === 0) {
+    animeSaltResults = await scrapeDirectMovieStreams(cleanId);
+  }
+
+  // Build merged servers:
+  // Server 1 = Primary MultiShows (Hindi Dub Sony Yay / Multi Server)
+  // Server 2 = Primary AnimeSalt (Multi-Language Plyr / as-cdn)
+  // Remaining servers = Additional alternates
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
-  // 1. Add multishows results first (these are the working servers)
-  for (const r of msResults) {
-    if (!seen.has(r.embed)) {
-      seen.add(r.embed);
-      mergedResults.push(r);
+  if (msResults.length > 0) {
+    const firstMs = msResults[0];
+    seen.add(firstMs.embed);
+    mergedResults.push({ server: "Server 1", embed: firstMs.embed });
+  }
+
+  if (animeSaltResults.length > 0) {
+    const firstAs = animeSaltResults[0];
+    if (!seen.has(firstAs.embed)) {
+      seen.add(firstAs.embed);
+      mergedResults.push({ server: `Server ${mergedResults.length + 1}`, embed: firstAs.embed });
     }
   }
 
-  // 2. Add animesalt results (may not work due to lazy-loading/CORS)
-  for (const r of animeSaltResults) {
+  // Append remaining MultiShows servers
+  for (let i = 1; i < msResults.length; i++) {
+    const r = msResults[i];
     if (!seen.has(r.embed)) {
       seen.add(r.embed);
-      mergedResults.push(r);
+      mergedResults.push({ server: `Server ${mergedResults.length + 1}`, embed: r.embed });
     }
   }
 
+  // Append remaining AnimeSalt servers
+  for (let i = 1; i < animeSaltResults.length; i++) {
+    const r = animeSaltResults[i];
+    if (!seen.has(r.embed)) {
+      seen.add(r.embed);
+      mergedResults.push({ server: `Server ${mergedResults.length + 1}`, embed: r.embed });
+    }
+  }
 
   if (mergedResults.length > 0) {
     return NextResponse.json(
-      {
-        success: true,
-        message: "Stream Found!!",
-        results: mergedResults,
-      },
-      {
-        headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
-      }
+      { success: true, message: "Stream Found!!", results: mergedResults },
+      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   }
+
+
 
   // Fallback 1: upstream API /api/stream endpoint
   try {

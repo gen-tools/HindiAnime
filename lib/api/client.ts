@@ -143,6 +143,15 @@ export function isUsableImageUrl(value?: string | null): value is string {
   if (!value || typeof value !== "string") return false;
   const image = value.trim();
   if (!image || image.startsWith("data:") || image.includes("data:image")) return false;
+  if (
+    image.includes("cropped-AnimeSalticon") ||
+    image.includes("AnimeSalticon") ||
+    image.includes("favicon") ||
+    image.includes("default-avatar") ||
+    image.includes("ui-avatars.com")
+  ) {
+    return false;
+  }
   try {
     const url = new URL(image.startsWith("//") ? `https:${image}` : image);
     return url.protocol === "http:" || url.protocol === "https:";
@@ -1320,44 +1329,83 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       title = unbracketed || rawTitle;
     }
 
-    // Parse Poster — og:image is always set on animesalt.cx (covers movies & series)
+    // Parse Poster
     let poster: string | undefined;
 
-    // 1. og:image — most reliable: every animesalt page sets this to the correct poster
-    const ogImageMatch = html.match(/<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i);
+    // 1. og:image — if it's a real content image (not the site logo/icon)
+    const ogImageMatch = html.match(
+      /<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i
+    );
     if (ogImageMatch) {
       let p = (ogImageMatch[1] || ogImageMatch[2] || "").trim();
       if (p.startsWith("//")) p = "https:" + p;
-      if (p && !p.startsWith("data:")) poster = p;
+      if (
+        p &&
+        !p.startsWith("data:") &&
+        !p.includes("AnimeSalticon") &&
+        !p.includes("cropped-") &&
+        !p.includes("favicon") &&
+        !p.includes("logo")
+      ) {
+        poster = p;
+      }
     }
 
-    // 2. Targeted fallback: only look for the TPostImg class or TMDB URLs (never generic images)
+    // 2. data-src or src on post-thumbnail, TPostImg, or TMDB image
     if (!poster) {
-      const sPosterMatch =
-        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+(?:data-src|src)=["'](https?:[^"']+)["']/i) ||
-        html.match(/<img[^>]+(?:data-src|src)=["'](https?:\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i) ||
-        html.match(/<img[^>]+(?:data-src|src)=["'](\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i);
-      if (sPosterMatch) {
-        let p = sPosterMatch[1];
+      const pDataMatch =
+        html.match(/<div[^>]*class=["'][^"']*post-thumbnail[^"']*["'][^>]*>[\s\S]*?<img[^>]+data-src=["']([^"']+)["']/i) ||
+        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+data-src=["']([^"']+)["']/i) ||
+        html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/w(?:342|500)\/[^"']+)["']/i) ||
+        html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i);
+
+      if (pDataMatch) {
+        let p = pDataMatch[1];
         if (p.startsWith("//")) p = "https:" + p;
         if (!p.startsWith("data:")) {
-          p = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
-          poster = p;
+          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
         }
       }
     }
 
-    // Parse Backdrop (TMDB widescreen w1280/original or animesalt TPostBg)
+    if (!poster) {
+      const pSrcMatch =
+        html.match(/src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/w(?:342|500)\/[^"']+)["']/i) ||
+        html.match(/src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i);
+      if (pSrcMatch) {
+        let p = pSrcMatch[1];
+        if (p.startsWith("//")) p = "https:" + p;
+        if (!p.startsWith("data:")) {
+          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
+        }
+      }
+    }
+
+    // Parse Backdrop: Look for data-src on TPostBg or TMDB w1280 / original
     let backdrop: string | undefined;
-    const sBackdropMatch =
-      html.match(/<img[^>]+class=["'][^"']*TPostBg[^"']*["'][^>]+(?:data-src|src)=["']([^"']+)["']/i) ||
-      html.match(/(?:data-src|src)=["'](\/\/[^"']*image\.tmdb\.org\/t\/p\/(?:w1280|original)[^"']*)["']/i);
-    if (sBackdropMatch) {
-      let b = sBackdropMatch[1];
+    const bDataMatch =
+      html.match(/<img[^>]+class=["'][^"']*TPostBg[^"']*["'][^>]+data-src=["']([^"']+)["']/i) ||
+      html.match(/<img[^>]+data-src=["']([^"']+)["'][^>]+class=["'][^"']*TPostBg[^"']*["']/i) ||
+      html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/(?:w1280|original)\/[^"']+)["']/i);
+
+    if (bDataMatch) {
+      let b = bDataMatch[1];
       if (b.startsWith("//")) b = "https:" + b;
-      backdrop = b;
-    } else if (poster) {
-      // Always fall back to the poster — PosterArt will show it in landscape mode
+      if (!b.startsWith("data:")) backdrop = b;
+    }
+
+    if (!backdrop) {
+      const bSrcMatch = html.match(
+        /src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/(?:w1280|original)\/[^"']+)["']/i
+      );
+      if (bSrcMatch) {
+        let b = bSrcMatch[1];
+        if (b.startsWith("//")) b = "https:" + b;
+        if (!b.startsWith("data:")) backdrop = b;
+      }
+    }
+
+    if (!backdrop && poster) {
       backdrop = poster;
     }
 

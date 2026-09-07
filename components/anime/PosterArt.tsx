@@ -49,6 +49,10 @@ export function PosterArt({
 
   const isExternalImage = Boolean(
     imageSrc &&
+    !imageSrc.includes("AnimeSalticon") &&
+    !imageSrc.includes("cropped-") &&
+    !imageSrc.includes("favicon") &&
+    !imageSrc.startsWith("data:") &&
     (imageSrc.startsWith("http://") ||
       imageSrc.startsWith("https://") ||
       imageSrc.startsWith("/images/") ||

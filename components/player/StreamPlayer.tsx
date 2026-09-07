@@ -28,8 +28,8 @@ interface ValidServer {
 
 function parseValidServers(results: StreamItem[]): ValidServer[] {
   const valid = results.filter((r) => isValidEmbedUrl(r.embed));
-  return valid.map((r, i) => ({
-    // Always use clean sequential labels: Server 1, Server 2, etc.
+  // Guarantee up to 2 distinct working servers (Server 1 and Server 2)
+  return valid.slice(0, 2).map((r, i) => ({
     label: `Server ${i + 1}`,
     embed: r.embed,
   }));
