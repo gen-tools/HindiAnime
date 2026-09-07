@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { isValidEmbedUrl, cleanAnimeSlug } from "@/lib/api/client";
 import type { StreamItem, StreamResponse } from "@/types/api";
 
+// Stream links are short-lived. Always resolve them at request time rather
+// than letting an upstream block or empty response become a cached failure.
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
 
@@ -230,6 +235,20 @@ async function scrapeMultiShowsStreams(
     const results: StreamItem[] = [];
     const seen = new Set<string>();
 
+    // MultiShows currently exposes its primary player as an /embed/ URL.
+    // Capture it directly as well as through iframe attributes: some pages
+    // include a placeholder iframe `src` after the real embed URL.
+    const directEmbedMatches = html.matchAll(
+      /https?:\/\/(?:www\.)?multishows\.top\/embed\/[^\s"'<>\\]+/gi
+    );
+    for (const directMatch of directEmbedMatches) {
+      const embed = directMatch[0].replace(/&#038;/g, "&").trim();
+      if (isValidEmbedUrl(embed) && !seen.has(embed)) {
+        seen.add(embed);
+        results.push({ server: `Server ${results.length + 1}`, embed });
+      }
+    }
+
     // 1. selectServer onclick handlers (Hindi dub servers like Sony Yay, etc.)
     const selectMatches = [...html.matchAll(/selectServer\('([^']+)',\s*'([^']+)'\)/g)];
     for (const match of selectMatches) {
@@ -305,10 +324,11 @@ export async function GET(request: Request) {
   }
 
   // Run all scrapers in parallel
-  let [animeSaltResults, msResults] = await Promise.all([
+  const [initialAnimeSaltResults, msResults] = await Promise.all([
     scrapeAnimeSaltEpisodeStreams(cleanId, season, ep),
     scrapeMultiShowsStreams(cleanId, season, ep),
   ]);
+  let animeSaltResults = initialAnimeSaltResults;
 
   // Fallback to direct movie scrape if no results found
   if (animeSaltResults.length === 0 && msResults.length === 0) {

@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import { posterPalette } from "@/lib/poster";
 import { cn } from "@/lib/utils";
 
 interface PosterArtProps {
@@ -21,10 +20,7 @@ interface PosterArtProps {
   showSprocket?: boolean;
 }
 
-/**
- * Generates a unique, deterministic duotone "poster" for each anime using only
- * its slug/id as a seed, or renders the real image URL if provided by the API.
- */
+/** Renders verified source artwork. Missing or failed assets remain neutral. */
 export function PosterArt({
   seed,
   title,
@@ -38,11 +34,6 @@ export function PosterArt({
   showOverlay = true,
   showSprocket = true,
 }: PosterArtProps) {
-  const { palette, angle, monogram, hash } = posterPalette(seed || title || "anime");
-  const [base, mid, bright] = palette;
-  const gradientId = `grad-${hash}`;
-  const linesId = `lines-${hash}`;
-
   let imageSrc = seed && seed.startsWith("//") ? `https:${seed}` : seed;
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const imageFailed = failedImageSrc === imageSrc;
@@ -105,40 +96,7 @@ export function PosterArt({
           onError={() => setFailedImageSrc(imageSrc)}
         />
       ) : (
-        <svg
-          viewBox="0 0 300 450"
-          preserveAspectRatio="xMidYMid slice"
-          className="absolute inset-0 h-full w-full"
-        >
-          <defs>
-            <linearGradient
-              id={gradientId}
-              gradientTransform={`rotate(${angle} 0.5 0.5)`}
-            >
-              <stop offset="0%" stopColor={base} />
-              <stop offset="55%" stopColor={mid} />
-              <stop offset="100%" stopColor={base} />
-            </linearGradient>
-            <pattern id={linesId} width="40" height="40" patternUnits="userSpaceOnUse" patternTransform={`rotate(${angle})`}>
-              <line x1="0" y1="0" x2="0" y2="40" stroke={bright} strokeOpacity="0.06" strokeWidth="40" />
-            </pattern>
-          </defs>
-          <rect width="300" height="450" fill={`url(#${gradientId})`} />
-          <rect width="300" height="450" fill={`url(#${linesId})`} />
-          <circle cx={hash % 300} cy={(hash * 3) % 200} r="140" fill={bright} opacity="0.12" />
-          <text
-            x="50%"
-            y="58%"
-            textAnchor="middle"
-            fontFamily="Manrope, sans-serif"
-            fontWeight="800"
-            fontSize="118"
-            fill={bright}
-            opacity="0.16"
-          >
-            {monogram}
-          </text>
-        </svg>
+        <div className="absolute inset-0 bg-surface-elevated" />
       )}
 
       {/* film-sprocket motif along the left edge */}
@@ -153,7 +111,7 @@ export function PosterArt({
       {showOverlay && (
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
       )}
-      <span className="sr-only">{title} poster art</span>
+      <span className="sr-only">{title} artwork</span>
     </div>
   );
 }

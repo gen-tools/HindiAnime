@@ -12,6 +12,10 @@ import {
   getHomepageData,
 } from "@/lib/api/client";
 
+// Never persist an empty homepage when an upstream host temporarily blocks a
+// request. The data helper has direct + Worker fallbacks for each request.
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   const {
     heroItems,

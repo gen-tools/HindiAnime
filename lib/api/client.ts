@@ -589,14 +589,11 @@ export async function scrapeAnimeSaltCatalog(
         ? `https://animesalt.cx/${kind}/`
         : `https://animesalt.cx/${kind}/page/${page}/`;
 
-    const res = await fetch(url, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      next: { revalidate: 300 },
-    });
-
-    if (!res.ok) return null;
-
-    const html = await res.text();
+    // AnimeSalt sometimes blocks requests originating from Vercel. Use the
+    // Worker fallback here too, so catalogue pages stay available when the
+    // legacy JSON API is challenged or unavailable.
+    const html = await fetchHtmlWithWorkerFallback(url);
+    if (!html) return null;
     const results: AnimeSearchResult[] = [];
     const artRegex = /<article[^>]*class=["'][^"']*post[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi;
     let match: RegExpExecArray | null;
@@ -876,20 +873,30 @@ function parseHomepageArticles(
 
 let homepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
 
+function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean {
+  const sections = feed?.data?.results;
+  if (!sections) return false;
+
+  return [
+    sections.fresh_drops,
+    sections.latest_animeMovies,
+    sections.mostWatched_Films,
+    sections.mostWatched_Series,
+    sections.on_air_series,
+  ].some((items) => Array.isArray(items) && items.length > 0);
+}
+
 export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | null> {
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
     return homepageFeedCache.data;
   }
 
   try {
-    const res = await fetch("https://animesalt.cx/", {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      next: { revalidate: 60 },
-    });
-
-    if (!res.ok) return null;
-
-    const html = await res.text();
+    // Do not depend on the separate Vercel API deployment for the homepage.
+    // It can be served a Vercel Security Checkpoint, while the Worker can
+    // still retrieve the public AnimeSalt page that supplies these cards.
+    const html = await fetchHtmlWithWorkerFallback("https://animesalt.cx/");
+    if (!html) return null;
     const mostWatched_Series = parseHomepageCharts(html, "Most-Watched Series");
     const mostWatched_Films = parseHomepageCharts(html, "Most-Watched Films");
     const fresh_drops = parseHomepageArticles(
@@ -943,7 +950,10 @@ export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
     });
     if (res.ok) {
       const data = (await res.json()) as HomepageApiResponse;
-      if (data?.data?.results) {
+      // A previous failed scrape can be cached by the legacy API as an object
+      // containing five empty arrays. Treat that as a failure and continue to
+      // the direct source instead of rendering a blank homepage.
+      if (hasHomepageItems(data)) {
         homepageFeedCache = { data, timestamp: Date.now() };
         return data;
       }
@@ -954,13 +964,14 @@ export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
 
   // Fallback 1: Direct upstream scraper from animesalt.cx
   const scrapedFeed = await scrapeDirectHomepageFeed();
-  if (scrapedFeed?.data?.results) {
+  if (hasHomepageItems(scrapedFeed)) {
     return scrapedFeed;
   }
 
   // Fallback 2: Cached in-memory feed if available
-  if (homepageFeedCache?.data?.data?.results) {
-    return homepageFeedCache.data;
+  const cachedFeed = homepageFeedCache?.data;
+  if (hasHomepageItems(cachedFeed)) {
+    return cachedFeed ?? null;
   }
 
   return null;
@@ -1227,7 +1238,27 @@ function is404Html(text: string): boolean {
   if (!text || text.length < 500) return true;
   if (/<title>[\s\S]*?(?:404|not found|page not found)[\s\S]*?<\/title>/i.test(text)) return true;
   if (/class=["'][^"']*error404[^"']*["']/i.test(text)) return true;
+  // The Worker can turn a source 404 into HTTP 200. AnimeSalt's compact 404
+  // document does not consistently label its <title> or CSS class, so also
+  // recognise its visible error copy before treating it as a detail page.
+  const visibleText = text
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  if (/(?:page you (?:are looking for|requested) (?:does not exist|could not be found)|sorry,? (?:this )?page (?:does not exist|cannot be found)|error 404|nothing found)/i.test(visibleText)) {
+    return true;
+  }
   return false;
+}
+
+function isAnimeDetailHtml(html: string | null): html is string {
+  if (!html || is404Html(html)) return false;
+  // AnimeSalt does not use one stable heading class for every movie/series
+  // template. The URL is already an exact title URL at this stage, so once a
+  // disguised 404 has been ruled out, keep the page for its real artwork.
+  return true;
 }
 
 async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> {
@@ -1278,12 +1309,17 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
     // 1. Try series page
     const seriesUrl = `https://animesalt.cx/series/${encodeURIComponent(decodedSlug)}/`;
     html = await fetchHtmlWithWorkerFallback(seriesUrl);
+    if (!isAnimeDetailHtml(html)) html = null;
 
     if (!html) {
       // 2. Try movie page
       const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`;
       html = await fetchHtmlWithWorkerFallback(movieUrl);
-      if (html) isMovie = true;
+      if (isAnimeDetailHtml(html)) {
+        isMovie = true;
+      } else {
+        html = null;
+      }
     }
 
     // 3. Fallback: Search AnimeSalt by keyword if direct fetch failed
@@ -1294,12 +1330,17 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
           const sUrl = `https://animesalt.cx/?s=${encodeURIComponent(searchKw)}`;
           const sHtml = await fetchHtmlWithWorkerFallback(sUrl);
           if (sHtml) {
-            const linkMatch = sHtml.match(/href=["'](https:\/\/animesalt\.cx\/(?:series|movies)\/[^"']+)["']/i);
-            if (linkMatch) {
-              const targetUrl = linkMatch[1];
+            const links = [...sHtml.matchAll(/href=["'](https:\/\/animesalt\.cx\/(?:series|movies)\/[^"']+)["']/gi)];
+            const exactLink = links.find(
+              (match) => cleanAnimeSlug(match[1]) === decodedSlug
+            );
+            if (exactLink) {
+              const targetUrl = exactLink[1];
               html = await fetchHtmlWithWorkerFallback(targetUrl);
-              if (html) {
+              if (isAnimeDetailHtml(html)) {
                 isMovie = targetUrl.includes("/movies/");
+              } else {
+                html = null;
               }
             }
           }
@@ -1362,30 +1403,13 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
     // Parse Poster
     let poster: string | undefined;
 
-    // 1. og:image — if it's a real content image (not the site logo/icon)
-    const ogImageMatch = html.match(
-      /<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i
-    );
-    if (ogImageMatch) {
-      let p = (ogImageMatch[1] || ogImageMatch[2] || "").trim();
-      if (p.startsWith("//")) p = "https:" + p;
-      if (
-        p &&
-        !p.startsWith("data:") &&
-        !p.includes("AnimeSalticon") &&
-        !p.includes("cropped-") &&
-        !p.includes("favicon") &&
-        !p.includes("logo")
-      ) {
-        poster = p;
-      }
-    }
-
-    // 2. data-src or src on post-thumbnail, TPostImg, or TMDB image
-    if (!poster) {
+    // 1. The post thumbnail belongs to this exact detail page. Prefer it over
+    // og:image, which AnimeSalt's WordPress theme can populate with an image
+    // from a different post.
+    {
       const pDataMatch =
-        html.match(/<div[^>]*class=["'][^"']*post-thumbnail[^"']*["'][^>]*>[\s\S]*?<img[^>]+data-src=["']([^"']+)["']/i) ||
-        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+data-src=["']([^"']+)["']/i) ||
+        html.match(/<div[^>]*class=["'][^"']*post-thumbnail[^"']*["'][^>]*>[\s\S]*?<img[^>]+(?:data-src|src)=["']([^"']+)["']/i) ||
+        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+(?:data-src|src)=["']([^"']+)["']/i) ||
         html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/w(?:342|500)\/[^"']+)["']/i) ||
         html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i);
 
@@ -1394,6 +1418,27 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
         if (p.startsWith("//")) p = "https:" + p;
         if (!p.startsWith("data:")) {
           poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
+        }
+      }
+    }
+
+    // 2. og:image is a fallback only when the title page has no local poster.
+    if (!poster) {
+      const ogImageMatch = html.match(
+        /<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i
+      );
+      if (ogImageMatch) {
+        let p = (ogImageMatch[1] || ogImageMatch[2] || "").trim();
+        if (p.startsWith("//")) p = "https:" + p;
+        if (
+          p &&
+          !p.startsWith("data:") &&
+          !p.includes("AnimeSalticon") &&
+          !p.includes("cropped-") &&
+          !p.includes("favicon") &&
+          !p.includes("logo")
+        ) {
+          poster = p;
         }
       }
     }
@@ -1433,6 +1478,13 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
         if (b.startsWith("//")) b = "https:" + b;
         if (!b.startsWith("data:")) backdrop = b;
       }
+    }
+
+    // Some title pages publish only the wide hero image. It still belongs to
+    // this exact anime, so use it for the portrait card (cropped by the UI)
+    // instead of falling back to an unrelated legacy API poster.
+    if (!poster && backdrop) {
+      poster = backdrop;
     }
 
     if (!backdrop && poster) {

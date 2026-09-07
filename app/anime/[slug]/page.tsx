@@ -149,13 +149,18 @@ export async function generateMetadata({
     item = { ...item, title: formatDisplayTitle(item.title) };
   }
 
-  // Override poster & backdrop if missing or not usable
-  if (directData?.poster && (!item.poster || !isUsableImageUrl(item.poster))) {
-    item = { ...item, poster: directData.poster };
+  // A poster parsed from this title's own AnimeSalt detail page is the source
+  // of truth. The legacy API can return a valid-looking image from another
+  // title, so do not keep it merely because it is a URL.
+  const verifiedArtwork =
+    (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
+    (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
+  if (verifiedArtwork) {
+    item = { ...item, poster: verifiedArtwork };
   }
-  if (directData?.backdrop && (!item.backdrop || !isUsableImageUrl(item.backdrop))) {
+  if (directData?.backdrop && isUsableImageUrl(directData.backdrop)) {
     item = { ...item, backdrop: directData.backdrop };
-  } else if (directData?.poster && (!item.backdrop || !isUsableImageUrl(item.backdrop))) {
+  } else if (directData?.poster && isUsableImageUrl(directData.poster)) {
     item = { ...item, backdrop: directData.poster };
   }
 
@@ -320,13 +325,17 @@ export default async function AnimeDetailPage({
     item = { ...item, title: formatDisplayTitle(item.title) };
   }
 
-  // Override poster & backdrop if missing or not usable
-  if (directData?.poster && (!item.poster || !isUsableImageUrl(item.poster))) {
-    item = { ...item, poster: directData.poster };
+  // Prefer the verified image from this exact source page over an unrelated
+  // image that the fallback API may have attached to the same title.
+  const verifiedArtwork =
+    (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
+    (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
+  if (verifiedArtwork) {
+    item = { ...item, poster: verifiedArtwork };
   }
-  if (directData?.backdrop && (!item.backdrop || !isUsableImageUrl(item.backdrop))) {
+  if (directData?.backdrop && isUsableImageUrl(directData.backdrop)) {
     item = { ...item, backdrop: directData.backdrop };
-  } else if (directData?.poster && (!item.backdrop || !isUsableImageUrl(item.backdrop))) {
+  } else if (directData?.poster && isUsableImageUrl(directData.poster)) {
     item = { ...item, backdrop: directData.poster };
   }
 

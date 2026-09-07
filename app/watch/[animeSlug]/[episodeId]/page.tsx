@@ -232,6 +232,7 @@ export default async function WatchPage({
 
   const bestPoster =
     directData?.poster ||
+    directData?.backdrop ||
     (isUsableImageUrl(anime.poster) ? anime.poster : "") ||
     (movieData?.poster && isUsableImageUrl(movieData.poster) ? movieData.poster : "") ||
     cleanSlug;

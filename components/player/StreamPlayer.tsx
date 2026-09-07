@@ -108,7 +108,10 @@ export function StreamPlayer({
   }, [animeSlug, season, episode]);
 
   useEffect(() => {
-    fetchStreams();
+    // Defer the first load so the effect only schedules external work; the
+    // fetch callback owns the subsequent loading/error state transitions.
+    const timer = window.setTimeout(fetchStreams, 0);
+    return () => window.clearTimeout(timer);
   }, [fetchStreams]);
 
   return (
