@@ -92,8 +92,11 @@ export function PosterArt({
           unoptimized={
             imageSrc.includes("image.tmdb.org") ||
             imageSrc.includes("animesalt.cx") ||
+            imageSrc.includes("multishows.top") ||
             imageSrc.includes(".webp") ||
-            imageSrc.includes(".png")
+            imageSrc.includes(".png") ||
+            imageSrc.includes(".jpg") ||
+            imageSrc.includes(".jpeg")
           }
           onError={() => setFailedImageSrc(imageSrc)}
         />

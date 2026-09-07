@@ -30,9 +30,12 @@ function parseValidServers(results: StreamItem[]): ValidServer[] {
   return results
     .filter((r) => isValidEmbedUrl(r.embed))
     .map((r, i) => {
-      let label = `Server ${i + 1}`;
-      if (r.server === "options-0") label = "Server 1 (Primary)";
-      else if (r.server === "options-1") label = "Server 2 (Multi-Audio)";
+      // Use the API's own server name when it's meaningful (not a generic options-N id)
+      let label = r.server || "";
+      if (!label || /^options-\d+$/.test(label)) {
+        // Fall back to position-based names for anonymous servers
+        label = i === 0 ? "Server 1 (Primary)" : `Server ${i + 1}`;
+      }
       return {
         label,
         embed: r.embed,
