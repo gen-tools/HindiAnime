@@ -1320,11 +1320,10 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       title = unbracketed || rawTitle;
     }
 
-    // Parse Poster — try og:image first (always set reliably on animesalt.cx),
-    // then fall back to explicit img data-src/src scanning for any CDN image URL.
+    // Parse Poster — og:image is always set on animesalt.cx (covers movies & series)
     let poster: string | undefined;
 
-    // 1. og:image — most reliable, covers all pages including movies
+    // 1. og:image — most reliable: every animesalt page sets this to the correct poster
     const ogImageMatch = html.match(/<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i);
     if (ogImageMatch) {
       let p = (ogImageMatch[1] || ogImageMatch[2] || "").trim();
@@ -1332,35 +1331,33 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       if (p && !p.startsWith("data:")) poster = p;
     }
 
-    // 2. Fallback: img with data-src/src — any external CDN image
+    // 2. Targeted fallback: only look for the TPostImg class or TMDB URLs (never generic images)
     if (!poster) {
       const sPosterMatch =
-        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+data-src=["'](https?:[^"']+)["']/i) ||
-        html.match(/<img[^>]+data-src=["'](https?:\/\/[^"']{20,}\.(?:jpg|jpeg|png|webp)[^"']*)["']/i) ||
-        html.match(/<img[^>]+src=["'](https?:\/\/[^"']{20,}\.(?:jpg|jpeg|png|webp)[^"']*)["']/i);
+        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+(?:data-src|src)=["'](https?:[^"']+)["']/i) ||
+        html.match(/<img[^>]+(?:data-src|src)=["'](https?:\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i) ||
+        html.match(/<img[^>]+(?:data-src|src)=["'](\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i);
       if (sPosterMatch) {
         let p = sPosterMatch[1];
         if (p.startsWith("//")) p = "https:" + p;
         if (!p.startsWith("data:")) {
-          // Upgrade TMDB w185/w342 to w500 for better quality
-          p = p.replace(/\/w(?:185|342|200|300)\//,  "/w500/");
+          p = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
           poster = p;
         }
       }
     }
 
-    // Parse Backdrop (TMDB widescreen w1280/original or animesalt TPostBg CDN)
+    // Parse Backdrop (TMDB widescreen w1280/original or animesalt TPostBg)
     let backdrop: string | undefined;
     const sBackdropMatch =
-      html.match(/<img[^>]+class=["'][^"']*TPostBg[^"']*["'][^>]*data-src=["']([^"']+)["']/i) ||
-      html.match(/data-src=["'](\/\/[^"']*image\.tmdb\.org\/t\/p\/(?:w1280|original)[^"']*)["']/i) ||
-      html.match(/src=["'](\/\/[^"']*image\.tmdb\.org\/t\/p\/(?:w1280|original)[^"']*)["']/i) ||
-      html.match(/data-src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp))["']/i);
+      html.match(/<img[^>]+class=["'][^"']*TPostBg[^"']*["'][^>]+(?:data-src|src)=["']([^"']+)["']/i) ||
+      html.match(/(?:data-src|src)=["'](\/\/[^"']*image\.tmdb\.org\/t\/p\/(?:w1280|original)[^"']*)["']/i);
     if (sBackdropMatch) {
       let b = sBackdropMatch[1];
       if (b.startsWith("//")) b = "https:" + b;
       backdrop = b;
     } else if (poster) {
+      // Always fall back to the poster — PosterArt will show it in landscape mode
       backdrop = poster;
     }
 

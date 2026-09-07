@@ -305,20 +305,27 @@ export async function GET(request: Request) {
     scrapeMultiShowsStreams(cleanId, season, ep),
   ]);
 
-  // Merge: animesalt first (Server 1 | Multi Audio), then multishows as additional servers
-  const mergedResults: StreamItem[] = [...animeSaltResults];
-  const seen = new Set<string>(animeSaltResults.map((r) => r.embed));
-  let serverIdx = mergedResults.length + 1;
+  // Merge: multishows FIRST (it reliably works as Server 1),
+  // then animesalt as additional server if multishows found results.
+  const mergedResults: StreamItem[] = [];
+  const seen = new Set<string>();
+
+  // 1. Add multishows results first (these are the working servers)
   for (const r of msResults) {
     if (!seen.has(r.embed)) {
       seen.add(r.embed);
-      mergedResults.push({
-        server: `Server ${serverIdx} | ${r.server}`,
-        embed: r.embed,
-      });
-      serverIdx++;
+      mergedResults.push(r);
     }
   }
+
+  // 2. Add animesalt results (may not work due to lazy-loading/CORS)
+  for (const r of animeSaltResults) {
+    if (!seen.has(r.embed)) {
+      seen.add(r.embed);
+      mergedResults.push(r);
+    }
+  }
+
 
   if (mergedResults.length > 0) {
     return NextResponse.json(
