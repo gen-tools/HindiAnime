@@ -18,40 +18,54 @@ const CF_PROXY_URL =
   process.env.CF_PROXY_URL ||
   "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
 
-async function scrapeDirectEpisodeStreams(
+async function scrapeAnimeSaltEpisodeStreams(
   animeId: string,
   season: string,
   ep: string
 ): Promise<StreamItem[]> {
   const cleanId = cleanAnimeSlug(animeId) || animeId;
-  const episodeUrl = `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`;
+  // Animesalt uses two URL patterns: slug-SxEP and slug/season-ep
+  const urlFormats = [
+    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`,
+    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep.padStart(2, "0")}/`,
+  ];
 
   let html: string | null = null;
 
-  // 1. Try direct fetch
-  try {
-    const res = await fetch(episodeUrl, {
-      headers: DEFAULT_HEADERS,
-      cache: "no-store",
-    });
-    if (res.ok) {
-      html = await res.text();
-    }
-  } catch {
-    // direct fetch failed
-  }
-
-  // 2. Try Cloudflare Worker proxy if direct fetch failed (bypasses Cloudflare 403 on Vercel)
-  if (!html) {
+  for (const episodeUrl of urlFormats) {
+    if (html) break;
+    // 1. Try direct fetch
     try {
-      const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(episodeUrl)}`, {
+      const res = await fetch(episodeUrl, {
+        headers: DEFAULT_HEADERS,
         cache: "no-store",
       });
-      if (pRes.ok) {
-        html = await pRes.text();
+      if (res.ok) {
+        const text = await res.text();
+        // Make sure it's not a 404-like page (animesalt returns 200 even for 404s)
+        if (text.length > 5000) {
+          html = text;
+        }
       }
     } catch {
-      // proxy failed
+      // direct fetch failed
+    }
+
+    // 2. Try Cloudflare Worker proxy if direct fetch failed
+    if (!html) {
+      try {
+        const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(episodeUrl)}`, {
+          cache: "no-store",
+        });
+        if (pRes.ok) {
+          const text = await pRes.text();
+          if (text.length > 5000) {
+            html = text;
+          }
+        }
+      } catch {
+        // proxy failed
+      }
     }
   }
 
@@ -59,22 +73,37 @@ async function scrapeDirectEpisodeStreams(
 
   try {
     const results: StreamItem[] = [];
-    const iframeRegex =
-      /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
+    const seen = new Set<string>();
+
+    // --- Extract animesalt multi-lang Plyr player (data-src on lazy-loaded iframe) ---
+    // These are loaded lazily so the attribute is data-src, not src
+    const dataSrcRegex = /data-src=["'](https:\/\/animesalt\.cx\/multi-lang-plyr[^"']+)["']/gi;
+    let plyrMatch: RegExpExecArray | null;
+    while ((plyrMatch = dataSrcRegex.exec(html)) !== null) {
+      const src = plyrMatch[1].replace(/&#038;/g, "&");
+      if (!seen.has(src)) {
+        seen.add(src);
+        results.push({
+          server: "Server 1 | Multi Audio",
+          embed: src,
+        });
+      }
+    }
+
+    // --- Extract any other iframes (src or data-src) ---
+    const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
-    let idx = 0;
+    let idx = results.length + 1;
 
     while ((match = iframeRegex.exec(html)) !== null) {
       let src = match[1].replace(/&#038;/g, "&");
-      if (src.startsWith("//")) {
-        src = "https:" + src;
-      } else if (src.startsWith("/")) {
-        src = "https://animesalt.cx" + src;
-      }
+      if (src.startsWith("//")) src = "https:" + src;
+      else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
 
-      if (isValidEmbedUrl(src)) {
+      if (isValidEmbedUrl(src) && !seen.has(src)) {
+        seen.add(src);
         results.push({
-          server: `options-${idx}`,
+          server: `Server ${idx}`,
           embed: src,
         });
         idx++;
@@ -83,7 +112,7 @@ async function scrapeDirectEpisodeStreams(
 
     return results;
   } catch (err) {
-    console.error("[stream-proxy] direct scrape error:", err);
+    console.error("[stream-proxy] animesalt scrape error:", err);
     return [];
   }
 }
@@ -270,136 +299,101 @@ export async function GET(request: Request) {
     );
   }
 
-  // 1. Try fetching from the upstream API endpoint (series episode stream)
+  // Run animesalt scrape + multishows scrape in parallel for speed
+  const [animeSaltResults, msResults] = await Promise.all([
+    scrapeAnimeSaltEpisodeStreams(cleanId, season, ep),
+    scrapeMultiShowsStreams(cleanId, season, ep),
+  ]);
+
+  // Merge: animesalt first (Server 1 | Multi Audio), then multishows as additional servers
+  const mergedResults: StreamItem[] = [...animeSaltResults];
+  const seen = new Set<string>(animeSaltResults.map((r) => r.embed));
+  let serverIdx = mergedResults.length + 1;
+  for (const r of msResults) {
+    if (!seen.has(r.embed)) {
+      seen.add(r.embed);
+      mergedResults.push({
+        server: `Server ${serverIdx} | ${r.server}`,
+        embed: r.embed,
+      });
+      serverIdx++;
+    }
+  }
+
+  if (mergedResults.length > 0) {
+    return NextResponse.json(
+      {
+        success: true,
+        message: "Stream Found!!",
+        results: mergedResults,
+      },
+      {
+        headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+      }
+    );
+  }
+
+  // Fallback 1: upstream API /api/stream endpoint
   try {
     const upstreamUrl = `${API_BASE_URL}/api/stream?id=${encodeURIComponent(cleanId)}&season=${encodeURIComponent(season)}&ep=${encodeURIComponent(ep)}`;
     const res = await fetch(upstreamUrl, {
       cache: "no-store",
       headers: { Accept: "application/json" },
     });
-
     if (res.ok) {
       const data: StreamResponse = await res.json();
       const validResults = (data.results || []).filter((r) =>
         isValidEmbedUrl(r.embed)
       );
-
       if (validResults.length > 0) {
         return NextResponse.json(
-          {
-            success: true,
-            message: "Stream Found!!",
-            results: validResults,
-          },
-          {
-            headers: {
-              "Cache-Control": "no-store, no-cache, must-revalidate",
-            },
-          }
+          { success: true, message: "Stream Found!!", results: validResults },
+          { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
         );
       }
     }
   } catch {
-    // Upstream failed or timed out — proceed to direct scrape fallback
+    // upstream failed
   }
 
-  // 2. Direct scrape fallback for series episode page
-  const directResults = await scrapeDirectEpisodeStreams(cleanId, season, ep);
-
-  if (directResults.length > 0) {
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Stream Found!!",
-        results: directResults,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate",
-        },
-      }
-    );
-  }
-
-  // 3. Fallback for Movies: upstream /api/movie endpoint
+  // Fallback 2: upstream /api/movie endpoint (for movies)
   try {
     const movieUpstreamUrl = `${API_BASE_URL}/api/movie?id=${encodeURIComponent(cleanId)}`;
     const mRes = await fetch(movieUpstreamUrl, {
       cache: "no-store",
       headers: { Accept: "application/json" },
     });
-
     if (mRes.ok) {
       const mData = await mRes.json();
       const streamCandidates: StreamItem[] = mData?.results?.stream || [];
       const validMovieResults = streamCandidates.filter((r) =>
         isValidEmbedUrl(r.embed)
       );
-
       if (validMovieResults.length > 0) {
         return NextResponse.json(
-          {
-            success: true,
-            message: "Stream Found!!",
-            results: validMovieResults,
-          },
-          {
-            headers: {
-              "Cache-Control": "no-store, no-cache, must-revalidate",
-            },
-          }
+          { success: true, message: "Stream Found!!", results: validMovieResults },
+          { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
         );
       }
     }
   } catch {
-    // Upstream movie endpoint failed — try direct movie scrape
+    // upstream movie endpoint failed
   }
 
-  // 4. Fallback for Movies: direct scrape from https://animesalt.cx/movies/${cleanId}/
+  // Fallback 3: direct movie page scrape
   const movieDirectResults = await scrapeDirectMovieStreams(cleanId);
   if (movieDirectResults.length > 0) {
     return NextResponse.json(
-      {
-        success: true,
-        message: "Stream Found!!",
-        results: movieDirectResults,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate",
-        },
-      }
-    );
-  }
-
-  // 5. Fallback for Series/Movies: MultiShows (multishows.top)
-  const msResults = await scrapeMultiShowsStreams(cleanId, season, ep);
-  if (msResults.length > 0) {
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Stream Found!!",
-        results: msResults,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate",
-        },
-      }
+      { success: true, message: "Stream Found!!", results: movieDirectResults },
+      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   }
 
   return NextResponse.json(
-    {
-      success: false,
-      message: "No valid streams found",
-      results: [],
-    },
+    { success: false, message: "No valid streams found", results: [] },
     {
       status: 404,
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-      },
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
     }
   );
 }

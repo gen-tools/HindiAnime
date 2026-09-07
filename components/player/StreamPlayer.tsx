@@ -286,9 +286,10 @@ function EmbedFrame({ embed, title }: { embed: string; title: string }) {
       mozallowfullscreen="true"
       loading="eager"
       referrerPolicy="no-referrer-when-downgrade"
-      // Block redirect/pop-up ads: deny top-navigation while allowing scripts,
-      // same-origin, popups needed by the player, and fullscreen.
-      sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-presentation allow-pointer-lock"
+      // Allow scripts, same-origin storage (needed by gdmirrorbot/plyr for localStorage),
+      // user-activated top navigation (needed by some player auth flows),
+      // popups (needed by some players), forms, and fullscreen presentation.
+      sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-presentation allow-pointer-lock allow-top-navigation-by-user-activation allow-storage-access-by-user-activation"
     />
   );
 }
