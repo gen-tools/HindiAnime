@@ -66,9 +66,11 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
           <LanguageBadges languages={item.languages} max={item.languages.length} />
         )}
 
-        {item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK && (
-          <p className="max-w-3xl text-sm leading-relaxed text-text-secondary md:text-[15px]">{item.synopsis}</p>
-        )}
+        <p className="max-w-3xl text-sm leading-relaxed text-text-secondary md:text-[15px]">
+          {item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK
+            ? item.synopsis
+            : `Stream ${item.title} with Hindi dub and multi-language audio in HD quality on HindiAnime.`}
+        </p>
 
         <div className="mt-1 flex flex-wrap gap-3">
           <ButtonLink

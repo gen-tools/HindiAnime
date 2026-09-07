@@ -78,7 +78,8 @@ export async function generateMetadata({
       directData?.title || movieData?.title || undefined
     );
   } else if (directData) {
-    const formattedTitle = directData.title || movieData?.title || formatDisplayTitle(cleanSlug);
+    const isTitleOk = (t?: string) => Boolean(t && !t.toLowerCase().includes("404"));
+    const formattedTitle = (isTitleOk(directData.title) ? directData.title : "") || (isTitleOk(movieData?.title) ? movieData!.title : "") || formatDisplayTitle(cleanSlug);
     item = {
       id: cleanSlug,
       slug: cleanSlug,
@@ -141,10 +142,10 @@ export async function generateMetadata({
     item = { ...item, synopsis: directData.synopsis };
   }
 
-  // Override title if current title contains percent encoding
-  if (directData?.title && (!item.title || item.title.includes("%"))) {
+  // Override title if current title contains percent encoding or 404
+  if (directData?.title && !directData.title.toLowerCase().includes("404") && (!item.title || item.title.includes("%") || item.title.toLowerCase().includes("404"))) {
     item = { ...item, title: directData.title };
-  } else if (item.title && item.title.includes("%")) {
+  } else if (item.title && (item.title.includes("%") || item.title.toLowerCase().includes("404"))) {
     item = { ...item, title: formatDisplayTitle(item.title) };
   }
 
@@ -312,10 +313,10 @@ export default async function AnimeDetailPage({
     item = { ...item, synopsis: directData.synopsis };
   }
 
-  // Override title if current title contains percent encoding
-  if (directData?.title && (!item.title || item.title.includes("%"))) {
+  // Override title if current title contains percent encoding or 404
+  if (directData?.title && !directData.title.toLowerCase().includes("404") && (!item.title || item.title.includes("%") || item.title.toLowerCase().includes("404"))) {
     item = { ...item, title: directData.title };
-  } else if (item.title && item.title.includes("%")) {
+  } else if (item.title && (item.title.includes("%") || item.title.toLowerCase().includes("404"))) {
     item = { ...item, title: formatDisplayTitle(item.title) };
   }
 

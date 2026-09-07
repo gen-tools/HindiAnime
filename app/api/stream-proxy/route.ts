@@ -77,21 +77,7 @@ async function scrapeAnimeSaltEpisodeStreams(
     const results: StreamItem[] = [];
     const seen = new Set<string>();
 
-    // --- Extract animesalt multi-lang Plyr player (data-src on lazy-loaded iframe) ---
-    const dataSrcRegex = /data-src=["'](https:\/\/animesalt\.cx\/multi-lang-plyr[^"']+)["']/gi;
-    let plyrMatch: RegExpExecArray | null;
-    while ((plyrMatch = dataSrcRegex.exec(html)) !== null) {
-      const src = plyrMatch[1].replace(/&#038;/g, "&");
-      if (isValidEmbedUrl(src) && !seen.has(src)) {
-        seen.add(src);
-        results.push({
-          server: "AnimeSalt Multi-Audio",
-          embed: src,
-        });
-      }
-    }
-
-    // --- Extract any other iframes (src or data-src) ---
+    // --- Extract iframes (src or data-src) ---
     const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
 
@@ -100,10 +86,13 @@ async function scrapeAnimeSaltEpisodeStreams(
       if (src.startsWith("//")) src = "https:" + src;
       else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
 
+      // Filter out self-domain plyr that blocks cross-origin framing with X-Frame-Options: SAMEORIGIN
+      if (src.includes("animesalt.cx/multi-lang-plyr")) continue;
+
       if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
         seen.add(src);
         results.push({
-          server: "AnimeSalt Server",
+          server: "AnimeSalt Video",
           embed: src,
         });
       }
@@ -156,19 +145,6 @@ async function scrapeDirectMovieStreams(
     const results: StreamItem[] = [];
     const seen = new Set<string>();
 
-    const dataSrcRegex = /data-src=["'](https:\/\/animesalt\.cx\/multi-lang-plyr[^"']+)["']/gi;
-    let plyrMatch: RegExpExecArray | null;
-    while ((plyrMatch = dataSrcRegex.exec(html)) !== null) {
-      const src = plyrMatch[1].replace(/&#038;/g, "&");
-      if (isValidEmbedUrl(src) && !seen.has(src)) {
-        seen.add(src);
-        results.push({
-          server: "AnimeSalt Multi-Audio",
-          embed: src,
-        });
-      }
-    }
-
     const iframeRegex =
       /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
@@ -181,10 +157,12 @@ async function scrapeDirectMovieStreams(
         src = "https://animesalt.cx" + src;
       }
 
+      if (src.includes("animesalt.cx/multi-lang-plyr")) continue;
+
       if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
         seen.add(src);
         results.push({
-          server: "AnimeSalt Server",
+          server: "AnimeSalt Video",
           embed: src,
         });
       }

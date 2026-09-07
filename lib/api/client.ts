@@ -1223,6 +1223,13 @@ const WORKER_PROXY_URL =
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
   "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
 
+function is404Html(text: string): boolean {
+  if (!text || text.length < 500) return true;
+  if (/<title>[\s\S]*?(?:404|not found|page not found)[\s\S]*?<\/title>/i.test(text)) return true;
+  if (/class=["'][^"']*error404[^"']*["']/i.test(text)) return true;
+  return false;
+}
+
 async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
@@ -1230,7 +1237,8 @@ async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> 
       next: { revalidate: 60 },
     });
     if (res.ok) {
-      return await res.text();
+      const text = await res.text();
+      if (!is404Html(text)) return text;
     }
   } catch {
     // direct fetch error
@@ -1243,7 +1251,8 @@ async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> 
       next: { revalidate: 60 },
     });
     if (pRes.ok) {
-      return await pRes.text();
+      const text = await pRes.text();
+      if (!is404Html(text)) return text;
     }
   } catch {
     // proxy fetch error
@@ -1305,15 +1314,33 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
     }
 
     // Parse Synopsis / Overview
+    let synopsis: string | undefined;
     const overviewMatch =
       html.match(/id=["']overview-text["'][^>]*>([\s\S]*?)<\/div>/i) ||
-      html.match(/<div[^>]*class=["'][^"']*(?:description|entry-content)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
-    let synopsis: string | undefined;
+      html.match(/<div[^>]*class=["'][^"']*(?:description|entry-content|synopsis)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
     if (overviewMatch) {
+      // Pick the first <p> or the whole block
+      const pMatch = overviewMatch[1].match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+      const rawText = pMatch ? pMatch[1] : overviewMatch[1];
       const clean = decodeHtmlEntities(
-        overviewMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+        rawText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
       );
-      if (clean && clean.length > 10) synopsis = clean;
+      if (clean && clean.length > 15 && !clean.toLowerCase().startsWith("language:")) {
+        synopsis = clean;
+      }
+    }
+
+    // Fallback: meta og:description or description
+    if (!synopsis) {
+      const metaDesc =
+        html.match(/<meta\s+(?:property=["']og:description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:description["'])/i) ||
+        html.match(/<meta\s+(?:name=["']description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+name=["']description["'])/i);
+      if (metaDesc) {
+        const clean = decodeHtmlEntities(metaDesc[1] || metaDesc[2] || "").trim();
+        if (clean && clean.length > 15) {
+          synopsis = clean;
+        }
+      }
     }
 
     // Parse Title & clean brackets
@@ -1327,6 +1354,9 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
         .trim();
       const unbracketed = rawTitle.replace(/^[【\[\s]+|[】\]\s]+$/g, "").trim();
       title = unbracketed || rawTitle;
+      if (title && (title.toLowerCase().includes("404") || title.toLowerCase().includes("not found"))) {
+        title = undefined;
+      }
     }
 
     // Parse Poster

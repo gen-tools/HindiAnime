@@ -221,11 +221,13 @@ export default async function WatchPage({
     }
   }
 
-  // Enrich with scraped or movie data if title/synopsis/poster was missing
+  const isTitleValid = (t?: string) =>
+    Boolean(t && !t.toLowerCase().includes("404") && !t.toLowerCase().includes("not found"));
+
   const bestTitle =
-    directData?.title ||
-    (movieData?.title && !animeData?.title ? movieData.title : "") ||
-    anime.title ||
+    (isTitleValid(directData?.title) ? directData!.title : "") ||
+    (movieData?.title && !animeData?.title && isTitleValid(movieData.title) ? movieData.title : "") ||
+    (isTitleValid(anime.title) ? anime.title : "") ||
     formatDisplayTitle(cleanSlug);
 
   const bestPoster =
@@ -410,11 +412,11 @@ export default async function WatchPage({
             )}
           </h1>
           <p className="mt-1 text-sm text-text-secondary">{episode.title}</p>
-          {anime.synopsis && anime.synopsis !== SYNOPSIS_FALLBACK && (
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary">
-              {anime.synopsis}
-            </p>
-          )}
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary">
+            {anime.synopsis && anime.synopsis !== SYNOPSIS_FALLBACK
+              ? anime.synopsis
+              : `Watch ${anime.title} ${isMovie ? "Full Movie" : `Season ${episode.season} Episode ${episode.number}`} with Hindi dub in high quality on HindiAnime.`}
+          </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Badge tone="outline">{isMovie ? "Movie" : `Season ${episode.season}`}</Badge>
             <Badge tone="green">{anime.status}</Badge>
