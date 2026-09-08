@@ -11,10 +11,8 @@ import {
   getHomepageData,
   getHomepagePosterCatalog,
   isUsableImageUrl,
-  mapSearchItemToAnime,
-  searchAnime,
+  searchGlobalAnime,
 } from "@/lib/api/client";
-import { fuzzySearch } from "@/lib/fuzzy-search";
 import type { Anime } from "@/types/anime";
 
 export const metadata: Metadata = {
@@ -48,25 +46,11 @@ export default async function SearchPage({
   }
 
   if (rawQ) {
-    // 1. Fetch live search from deployed API
-    const apiRes = await searchAnime(rawQ, page);
-    if (apiRes?.results?.results && apiRes.results.results.length > 0) {
-      results = apiRes.results.results
-        .map((item) => mapSearchItemToAnime(item))
-        .filter((item) => isUsableImageUrl(item.poster));
-      totalPages = apiRes.results.totalPages || 1;
-    } else {
-      // Keep typo support, but only show a local record after it is matched to
-      // a real API-catalog poster. This prevents seeded placeholder IDs from
-      // becoming search-result images.
-      const fuzzyResults = fuzzySearch(rawQ, anime, 0.2);
-      results = getCatalogPosterItems(
-        fuzzyResults.map((result) => result.item),
-        await getLiveCatalog()
-      );
-      totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
-      results = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-    }
+    const globalSearch = await searchGlobalAnime(rawQ, page);
+    results = globalSearch.results
+      .map((result) => result.item)
+      .filter((item) => isUsableImageUrl(item.poster));
+    totalPages = globalSearch.totalPages;
   } else {
     const liveCatalog = await getLiveCatalog();
     // Existing genre/language controls retain their current navigation and

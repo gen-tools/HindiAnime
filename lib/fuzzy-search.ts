@@ -130,14 +130,22 @@ export function fuzzyScore(query: string, target: string): FuzzyScore {
   let tokenMatches = 0;
   for (const qTok of qTokens) {
     for (const tTok of tTokens) {
-      if (tTok.includes(qTok) || qTok.includes(tTok)) {
+      // Ignore one- and two-character fragments such as "no" inside an
+      // unrelated query; they otherwise turn a weak accidental overlap into
+      // an all-token match.
+      if (
+        (qTok.length >= 3 && tTok.includes(qTok)) ||
+        (tTok.length >= 3 &&
+          qTok.includes(tTok) &&
+          tTok.length / qTok.length >= 0.6)
+      ) {
         tokenMatches++;
         break;
       }
       // Levenshtein within tokens (1-char typo tolerance per word)
       const dist = levenshtein(qTok, tTok);
       const tolerance = qTok.length <= 4 ? 1 : 2;
-      if (dist <= tolerance) {
+      if (qTok.length >= 3 && tTok.length >= 3 && dist <= tolerance) {
         tokenMatches++;
         break;
       }
@@ -146,8 +154,15 @@ export function fuzzyScore(query: string, target: string): FuzzyScore {
   if (tokenMatches > 0 && qTokens.length > 0) {
     const tokenScore = 0.7 * (tokenMatches / qTokens.length);
     score = Math.max(score, tokenScore);
-    if (tokenMatches === qTokens.length) reasons.push("all-tokens");
-    else reasons.push(`${tokenMatches}/${qTokens.length}-tokens`);
+    if (tokenMatches === qTokens.length) {
+      // Prefer the concise title that matches the whole requested phrase over
+      // a longer title that merely starts with the same words.
+      const lengthPenalty = Math.min(0.12, Math.max(0, tTokens.length - qTokens.length) * 0.04);
+      score = Math.max(score, 0.92 - lengthPenalty);
+      reasons.push("all-tokens");
+    } else {
+      reasons.push(`${tokenMatches}/${qTokens.length}-tokens`);
+    }
   }
 
   // 5. Trigram similarity — catches partial overlaps and character scrambles
@@ -156,7 +171,7 @@ export function fuzzyScore(query: string, target: string): FuzzyScore {
   if (tg > 0.5) reasons.push(`trigram:${tg.toFixed(2)}`);
 
   // 6. Phonetic normalized match — catches transliteration variants
-  const editNorm = editSimilarity(qNorm, tNorm);
+  const editNorm = qNorm && tNorm ? editSimilarity(qNorm, tNorm) : 0;
   if (editNorm > 0.75) {
     score = Math.max(score, editNorm * 0.80);
     reasons.push(`phonetic:${editNorm.toFixed(2)}`);
@@ -228,7 +243,7 @@ export function fuzzySearch<T extends FuzzyItem>(
     .filter((r) => r.score >= threshold)
     .sort((a, b) => {
       // Primary: fuzzy score (desc)
-      if (Math.abs(b.score - a.score) > 0.05) return b.score - a.score;
+      if (b.score !== a.score) return b.score - a.score;
       // Secondary: rating (desc)
       return (b.item.rating ?? 0) - (a.item.rating ?? 0);
     });

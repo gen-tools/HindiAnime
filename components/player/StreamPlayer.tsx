@@ -52,6 +52,7 @@ export function StreamPlayer({
   const [state, setState] = useState<PlayerState>("loading");
   const [servers, setServers] = useState<ValidServer[]>([]);
   const [activeServer, setActiveServer] = useState<ValidServer | null>(null);
+  const [showServerFallback, setShowServerFallback] = useState(false);
   const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -81,6 +82,7 @@ export function StreamPlayer({
     setState("loading");
     setServers([]);
     setActiveServer(null);
+    setShowServerFallback(false);
 
     try {
       const res = await fetch(
@@ -114,6 +116,27 @@ export function StreamPlayer({
     return () => window.clearTimeout(timer);
   }, [fetchStreams]);
 
+  // Playback state inside a third-party iframe is not exposed to the parent
+  // page. If Server 1 is still selected after a short grace period, offer the
+  // user the available fallback instead of leaving them at a blank player.
+  useEffect(() => {
+    if (
+      state !== "ready" ||
+      servers.length < 2 ||
+      activeServer?.embed !== servers[0]?.embed
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setShowServerFallback(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [activeServer?.embed, servers, state]);
+
+  const selectServer = useCallback((server: ValidServer) => {
+    setShowServerFallback(false);
+    setActiveServer(server);
+  }, []);
+
   return (
     <div
       ref={containerRef}
@@ -139,6 +162,18 @@ export function StreamPlayer({
         {state === "ready" && activeServer && (
           <EmbedFrame embed={activeServer.embed} title={episodeTitle} />
         )}
+        {showServerFallback && servers[1] && (
+          <div className="absolute inset-x-3 bottom-3 z-10 flex flex-wrap items-center justify-center gap-2 rounded-lg border border-border-line bg-black/85 px-3 py-2 text-center text-xs text-text-secondary shadow-lg sm:text-sm">
+            <span>Video not starting on Server 1?</span>
+            <button
+              type="button"
+              onClick={() => selectServer(servers[1])}
+              className="focus-ring rounded-md bg-green-primary px-2.5 py-1 font-semibold text-white transition-colors hover:bg-green-bright hover:text-black"
+            >
+              Try Server 2
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Control bar: Server buttons + Theater & Fullscreen */}
@@ -156,7 +191,7 @@ export function StreamPlayer({
                 return (
                   <button
                     key={srv.embed}
-                    onClick={() => setActiveServer(srv)}
+                    onClick={() => selectServer(srv)}
                     aria-pressed={isActive}
                     className={cn(
                       "focus-ring rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all",

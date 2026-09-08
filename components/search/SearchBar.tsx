@@ -60,12 +60,15 @@ export function SearchBar({
     })
       .then((r) => r.json())
       .then((data) => {
+        if (abortRef.current !== controller) return;
         setSuggestions(data.results ?? []);
         setOpen(true);
         setActiveIndex(-1);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (abortRef.current === controller) setLoading(false);
+      });
   }, [debouncedValue]);
 
   // Close dropdown on outside click

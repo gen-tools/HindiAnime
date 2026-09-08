@@ -20,6 +20,7 @@ import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
 import type { LanguageCode } from "@/types/language";
 import { deduplicateEpisodes } from "@/lib/episodes";
+import { fuzzySearch } from "@/lib/fuzzy-search";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -567,6 +568,16 @@ interface CatalogPageResult {
   currentPage: number;
 }
 
+export interface GlobalAnimeSearchResponse {
+  results: { item: Anime; score: number }[];
+  totalPages: number;
+}
+
+const GLOBAL_SEARCH_PAGE_SIZE = 12;
+const GLOBAL_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
+let globalCatalogCache: { items: Anime[]; timestamp: number } | null = null;
+let globalCatalogPromise: Promise<Anime[]> | null = null;
+
 const catalogPageCache = new Map<string, { data: CatalogPageResult; timestamp: number }>();
 
 /**
@@ -717,6 +728,78 @@ export async function getCatalog(
   }
 
   return null;
+}
+
+async function getFullCatalog(kind: "series" | "movies"): Promise<Anime[]> {
+  const firstPage = await getCatalog(kind, 1);
+  const firstItems = firstPage?.results?.results ?? [];
+  const totalPages = Math.max(1, firstPage?.results?.totalPages ?? 1);
+  const pages = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
+  const remainingItems: AnimeSearchResult[] = [];
+
+  // Fetch a small batch at a time: this builds the full index promptly while
+  // avoiding a burst of dozens of requests to the existing API/source.
+  for (let index = 0; index < pages.length; index += 6) {
+    const batch = await Promise.all(
+      pages.slice(index, index + 6).map((page) => getCatalog(kind, page))
+    );
+    for (const catalogPage of batch) {
+      if (catalogPage?.results?.results) {
+        remainingItems.push(...catalogPage.results.results);
+      }
+    }
+  }
+
+  return uniqueBySlug(
+    [...firstItems, ...remainingItems].map((item) =>
+      mapSearchItemToAnime(item, kind === "movies" ? "Movie" : "TV")
+    )
+  );
+}
+
+async function getGlobalCatalog(): Promise<Anime[]> {
+  if (
+    globalCatalogCache &&
+    Date.now() - globalCatalogCache.timestamp < GLOBAL_CATALOG_CACHE_TTL_MS
+  ) {
+    return globalCatalogCache.items;
+  }
+
+  if (!globalCatalogPromise) {
+    globalCatalogPromise = Promise.all([getFullCatalog("series"), getFullCatalog("movies")])
+      .then(([series, movies]) => {
+        const items = uniqueBySlug([...series, ...movies]);
+        globalCatalogCache = { items, timestamp: Date.now() };
+        return items;
+      })
+      .finally(() => {
+        globalCatalogPromise = null;
+      });
+  }
+
+  return globalCatalogPromise;
+}
+
+/**
+ * Searches every title in the existing API catalog, not just titles on the
+ * current route. The shared in-memory index is refreshed every 15 minutes.
+ */
+export async function searchGlobalAnime(
+  query: string,
+  page = 1
+): Promise<GlobalAnimeSearchResponse> {
+  const catalog = await getGlobalCatalog();
+  const ranked = fuzzySearch(query, catalog, 0.55);
+  const currentPage = Math.max(1, page);
+  const start = (currentPage - 1) * GLOBAL_SEARCH_PAGE_SIZE;
+
+  return {
+    results: ranked.slice(start, start + GLOBAL_SEARCH_PAGE_SIZE).map((result) => ({
+      item: result.item,
+      score: result.score,
+    })),
+    totalPages: Math.max(1, Math.ceil(ranked.length / GLOBAL_SEARCH_PAGE_SIZE)),
+  };
 }
 
 export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null> {
