@@ -55,7 +55,7 @@ export function StreamPlayer({
   const [showServerFallback, setShowServerFallback] = useState(false);
   const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const playerFrameRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -66,10 +66,11 @@ export function StreamPlayer({
   }, []);
 
   const toggleFullscreen = useCallback(async () => {
-    if (!containerRef.current) return;
+    const el = playerFrameRef.current;
+    if (!el) return;
     try {
       if (!document.fullscreenElement) {
-        await containerRef.current.requestFullscreen();
+        await el.requestFullscreen();
       } else {
         await document.exitFullscreen();
       }
@@ -139,18 +140,17 @@ export function StreamPlayer({
 
   return (
     <div
-      ref={containerRef}
       className={cn(
         "flex flex-col gap-3 transition-all duration-200",
-        isTheater && "relative z-30 lg:-mx-16 xl:-mx-28",
-        isFullscreen && "fixed inset-0 z-50 h-screen w-screen bg-black p-0"
+        isTheater && "relative z-30 lg:-mx-16 xl:-mx-28"
       )}
     >
       <div
+        ref={playerFrameRef}
         className={cn(
           "relative w-full overflow-hidden bg-black transition-all",
           isFullscreen
-            ? "h-full w-full rounded-none border-0"
+            ? "fixed inset-0 z-50 !h-screen !w-screen !max-h-none !aspect-auto rounded-none border-0"
             : isTheater
             ? "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
             : "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
@@ -161,6 +161,17 @@ export function StreamPlayer({
         {state === "unavailable" && <UnavailableState />}
         {state === "ready" && activeServer && (
           <EmbedFrame embed={activeServer.embed} title={episodeTitle} />
+        )}
+        {isFullscreen && (
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            aria-label="Exit fullscreen"
+            className="absolute top-4 right-4 z-40 flex items-center gap-1.5 rounded-lg bg-black/75 px-3 py-1.5 text-xs font-semibold text-white shadow-xl backdrop-blur-md transition-all hover:bg-black hover:text-green-light border border-white/10"
+          >
+            <Minimize className="h-4 w-4" />
+            <span>Exit Fullscreen</span>
+          </button>
         )}
         {showServerFallback && servers[1] && (
           <div className="absolute inset-x-3 bottom-3 z-10 flex flex-wrap items-center justify-center gap-2 rounded-lg border border-border-line bg-black/85 px-3 py-2 text-center text-xs text-text-secondary shadow-lg sm:text-sm">
@@ -177,7 +188,7 @@ export function StreamPlayer({
       </div>
 
       {/* Control bar: Server buttons + Theater & Fullscreen */}
-      {state === "ready" && (
+      {state === "ready" && !isFullscreen && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-line bg-surface px-4 py-2.5">
           {/* Server selector buttons */}
           <div className="flex flex-wrap items-center gap-2">
