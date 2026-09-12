@@ -6,17 +6,81 @@ import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
 import { ListingFilters } from "@/components/search/ListingFilters";
 import { NoResultsState } from "@/components/search/SearchStates";
-import { languages } from "@/lib/mock/languages";
-import { getAnimeByLanguage } from "@/lib/mock/anime";
-import {
-  getCatalogPosterItems,
-  getHomepageData,
-  getHomepagePosterCatalog,
-} from "@/lib/api/client";
+import { getLanguageCatalog } from "@/lib/api/client";
 import { Headphones, Subtitles, Globe, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const PAGE_SIZE = 12;
+import { languages } from "@/lib/mock/languages";
+
+interface LanguagePageConfig {
+  h1: string;
+  title: string;
+  description: string;
+  intro: string;
+}
+
+const languageConfigs: Record<string, LanguagePageConfig> = {
+  hindi: {
+    h1: "Hindi Dubbed Anime",
+    title: "Hindi Dubbed Anime - Watch Anime in Hindi",
+    description:
+      "Watch Hindi dubbed anime and discover anime available in Hindi. Browse popular series, stream episodes online, and find your next favorite show.",
+    intro:
+      "Explore the best collection of Hindi dubbed anime and discover popular anime in Hindi. Stream trending series and classic favorites with authentic Hindi anime voiceovers, high-definition video, and synchronized subtitles.",
+  },
+  tamil: {
+    h1: "Tamil Dubbed Anime",
+    title: "Tamil Dubbed Anime - Watch Anime in Tamil",
+    description:
+      "Watch Tamil dubbed anime and explore top anime series in Tamil. Stream popular episodes with clear audio and discover your next favorite series.",
+    intro:
+      "Find top-rated Tamil dubbed anime and stream your favorite anime in Tamil. Browse action-packed series and fan-favorite releases featuring Tamil anime audio tracks and regional subtitle support.",
+  },
+  telugu: {
+    h1: "Telugu Dubbed Anime",
+    title: "Telugu Dubbed Anime - Watch Anime in Telugu",
+    description:
+      "Watch Telugu dubbed anime and stream anime in Telugu online. Explore trending series with Telugu audio and find exciting new shows to enjoy.",
+    intro:
+      "Watch popular Telugu dubbed anime releases and enjoy anime in Telugu with high-quality audio. Explore a curated selection of Telugu anime series and movies ready for streaming.",
+  },
+  bengali: {
+    h1: "Bengali Dubbed Anime",
+    title: "Bengali Dubbed Anime - Watch Anime in Bengali",
+    description:
+      "Watch Bengali dubbed anime and explore anime in Bengali online. Enjoy popular animated series with regional audio and find great shows to stream.",
+    intro:
+      "Browse engaging Bengali dubbed anime and enjoy anime in Bengali with localized dubs. Discover compelling stories and popular Bengali anime episodes available to watch online.",
+  },
+  kannada: {
+    h1: "Kannada Dubbed Anime",
+    title: "Kannada Dubbed Anime - Watch Anime in Kannada",
+    description:
+      "Watch Kannada dubbed anime and stream anime in Kannada online. Browse popular series with local audio tracks and find your next anime to watch.",
+    intro:
+      "Stream entertaining Kannada dubbed anime and watch anime in Kannada with regional voice dubbing. Discover trending Kannada anime series and episodes updated for fans.",
+  },
+  malayalam: {
+    h1: "Malayalam Dubbed Anime",
+    title: "Malayalam Dubbed Anime - Watch Anime in Malayalam",
+    description:
+      "Watch Malayalam dubbed anime and discover anime in Malayalam online. Stream popular series with Malayalam audio and start watching your favorites.",
+    intro:
+      "Discover quality Malayalam dubbed anime and experience anime in Malayalam with regional audio options. Stream beloved Malayalam anime series and movies in one convenient place.",
+  },
+};
+
+function getLanguageConfig(code: string, label: string): LanguagePageConfig {
+  if (languageConfigs[code]) {
+    return languageConfigs[code];
+  }
+  return {
+    h1: `${label} Dubbed Anime`,
+    title: `${label} Dubbed Anime - Watch Anime in ${label}`,
+    description: `Watch ${label.toLowerCase()} dubbed anime and explore anime in ${label}. Browse popular series and find your next favorite anime to stream.`,
+    intro: `Browse ${label} dubbed anime and enjoy watching anime in ${label}. Discover available series and movies with localized audio and subtitles.`,
+  };
+}
 
 export function generateStaticParams() {
   return languages.map((l) => ({ language: l.code }));
@@ -30,9 +94,38 @@ export async function generateMetadata({
   const { language } = await params;
   const lang = languages.find((l) => l.code === language);
   if (!lang) return {};
+
+  const config = getLanguageConfig(lang.code, lang.label);
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+  const canonicalUrl = `${siteUrl}/language/${lang.code}`;
+
   return {
-    title: `${lang.label} Anime Dubbed & Subbed | Watch Online`,
-    description: `Watch anime dubbed in ${lang.label} with full HD audio and subtitles on HindiAnime.`,
+    title: {
+      absolute: config.title,
+    },
+    description: config.description,
+    alternates: {
+      canonical: canonicalUrl,
+    },
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+      },
+    },
+    openGraph: {
+      title: config.title,
+      description: config.description,
+      url: canonicalUrl,
+      type: "website",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: config.title,
+      description: config.description,
+    },
   };
 }
 
@@ -48,26 +141,24 @@ export default async function LanguagePage({
   const lang = languages.find((l) => l.code === language);
   if (!lang) notFound();
 
+  const config = getLanguageConfig(lang.code, lang.label);
   const { genre, type, sort = "rating" } = sParams;
   const page = Math.max(1, Number(sParams.page) || 1);
 
-  const homepageData = await getHomepageData();
-  let items = getCatalogPosterItems(
-    getAnimeByLanguage(language),
-    getHomepagePosterCatalog(homepageData)
-  );
-  const years = [...new Set(items.map((a) => a.year))].sort((a, b) => b - a);
+  const langData = await getLanguageCatalog(language, page);
+  let items = langData.results;
+  const totalPages = langData.totalPages;
+  const years = [...new Set(items.map((a) => a.year).filter((y) => y > 0))].sort((a, b) => b - a);
 
   if (genre) items = items.filter((a) => a.genres.includes(genre));
   if (type) items = items.filter((a) => a.type === type);
   if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
 
-  if (sort === "rating") items = [...items].sort((a, b) => b.rating - a.rating);
+  if (sort === "rating") items = [...items].sort((a, b) => (b.rating || 0) - (a.rating || 0));
   if (sort === "recent") items = [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   if (sort === "title") items = [...items].sort((a, b) => a.title.localeCompare(b.title));
 
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paged = items;
 
   function buildHref(p: number) {
     const next = new URLSearchParams(sParams as Record<string, string>);
@@ -114,11 +205,13 @@ export default async function LanguagePage({
               <span>Language Catalog</span>
             </div>
             <h1 className="font-display mt-1 text-3xl font-extrabold text-text-primary md:text-4xl">
-              {lang.label} Anime
+              {config.h1}
             </h1>
-            <p className="mt-2 max-w-xl text-sm text-text-secondary">
-              Everything available with {lang.label} audio dubbing and localized subtitles. Total of{" "}
-              <strong className="text-white">{items.length} titles</strong> found.
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-text-secondary">
+              {config.intro}
+            </p>
+            <p className="mt-1 text-xs text-text-muted">
+              <strong className="text-white">{items.length} titles</strong> on page {page} of {totalPages} total pages.
             </p>
           </div>
 

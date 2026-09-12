@@ -10,6 +10,7 @@ import { genres, getGenre } from "@/lib/mock/genres";
 import { getAnimeByGenre } from "@/lib/mock/anime";
 import {
   getCatalogPosterItems,
+  getGenreCatalog,
   getHomepageData,
   getHomepagePosterCatalog,
 } from "@/lib/api/client";
@@ -52,23 +53,20 @@ export default async function GenrePage({
   const { language, type, sort = "rating" } = sParams;
   const page = Math.max(1, Number(sParams.page) || 1);
 
-  const homepageData = await getHomepageData();
-  let items = getCatalogPosterItems(
-    getAnimeByGenre(slug),
-    getHomepagePosterCatalog(homepageData)
-  );
-  const years = [...new Set(items.map((a) => a.year))].sort((a, b) => b - a);
+  const genreData = await getGenreCatalog(slug, page);
+  let items = genreData.results;
+  const totalPages = genreData.totalPages;
+  const years = [...new Set(items.map((a) => a.year).filter((y) => y > 0))].sort((a, b) => b - a);
 
   if (language) items = items.filter((a) => a.languages.includes(language as never));
   if (type) items = items.filter((a) => a.type === type);
   if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
 
-  if (sort === "rating") items = [...items].sort((a, b) => b.rating - a.rating);
+  if (sort === "rating") items = [...items].sort((a, b) => (b.rating || 0) - (a.rating || 0));
   if (sort === "recent") items = [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   if (sort === "title") items = [...items].sort((a, b) => a.title.localeCompare(b.title));
 
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paged = items;
 
   function buildHref(p: number) {
     const next = new URLSearchParams(sParams as Record<string, string>);

@@ -7,10 +7,14 @@ import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
 import { anime } from "@/lib/mock/anime";
 import {
+  getCatalog,
   getCatalogPosterItems,
+  getGenreCatalog,
   getHomepageData,
   getHomepagePosterCatalog,
+  getLanguageCatalog,
   isUsableImageUrl,
+  mapSearchItemToAnime,
   searchGlobalAnime,
 } from "@/lib/api/client";
 import type { Anime } from "@/types/anime";
@@ -38,38 +42,43 @@ export default async function SearchPage({
   let results: Anime[] = [];
   let totalPages = 1;
 
-  async function getLiveCatalog(): Promise<Anime[]> {
-    const data = await getHomepageData();
-    return getHomepagePosterCatalog(data).filter(
-      (item) => isUsableImageUrl(item.poster)
-    );
-  }
-
   if (rawQ) {
     const globalSearch = await searchGlobalAnime(rawQ, page);
     results = globalSearch.results
       .map((result) => result.item)
       .filter((item) => isUsableImageUrl(item.poster));
     totalPages = globalSearch.totalPages;
-  } else {
-    const liveCatalog = await getLiveCatalog();
-    // Existing genre/language controls retain their current navigation and
-    // taxonomy. The unfiltered catalog itself now comes directly from /api.
-    results = genre || language || type
-      ? getCatalogPosterItems(anime, liveCatalog)
-      : liveCatalog;
     if (genre) results = results.filter((a) => a.genres.includes(genre));
     if (language) results = results.filter((a) => a.languages.includes(language as never));
     if (type) results = results.filter((a) => a.type === type);
+  } else if (genre) {
+    const genreData = await getGenreCatalog(genre, page);
+    results = genreData.results;
+    totalPages = genreData.totalPages;
+    if (language) results = results.filter((a) => a.languages.includes(language as never));
+    if (type) results = results.filter((a) => a.type === type);
+  } else if (language) {
+    const langData = await getLanguageCatalog(language, page);
+    results = langData.results;
+    totalPages = langData.totalPages;
+    if (genre) results = results.filter((a) => a.genres.includes(genre));
+    if (type) results = results.filter((a) => a.type === type);
+  } else if (type === "Movie") {
+    const movieRes = await getCatalog("movies", page);
+    results = (movieRes?.results?.results ?? []).map((item) => mapSearchItemToAnime(item, "Movie"));
+    totalPages = movieRes?.results?.totalPages ?? 1;
+  } else {
+    const seriesRes = await getCatalog("series", page);
+    results = (seriesRes?.results?.results ?? []).map((item) => mapSearchItemToAnime(item, "TV"));
+    totalPages = seriesRes?.results?.totalPages ?? 1;
+  }
 
+  if (!rawQ && sort) {
     results = [...results].sort((a, b) => {
-      if (sort === "year") return b.year - a.year;
+      if (sort === "year") return (b.year || 0) - (a.year || 0);
       if (sort === "title") return a.title.localeCompare(b.title);
-      return b.rating - a.rating;
+      return (b.rating || 0) - (a.rating || 0);
     });
-
-    totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
-    results = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   }
 
   function buildHref(p: number) {

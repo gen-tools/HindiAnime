@@ -62,10 +62,17 @@ export function Footer() {
         <div>
           <h3 className="mb-4 text-sm font-semibold text-text-primary">Languages</h3>
           <ul className="space-y-2.5">
-            {languages.slice(0, 5).map((l) => (
-              <li key={l.code}>
+            {[
+              { label: "Hindi Dubbed Anime", href: "/language/hindi" },
+              { label: "Tamil Dubbed Anime", href: "/language/tamil" },
+              { label: "Telugu Dubbed Anime", href: "/language/telugu" },
+              { label: "Bengali Dubbed Anime", href: "/language/bengali" },
+              { label: "Kannada Dubbed Anime", href: "/language/kannada" },
+              { label: "Malayalam Dubbed Anime", href: "/language/malayalam" },
+            ].map((l) => (
+              <li key={l.href}>
                 <Link
-                  href={`/language/${l.code}`}
+                  href={l.href}
                   className="focus-ring text-sm text-text-muted hover:text-green-light"
                 >
                   {l.label}

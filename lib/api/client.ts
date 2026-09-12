@@ -21,6 +21,7 @@ import type { Episode } from "@/types/episode";
 import type { LanguageCode } from "@/types/language";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { fuzzySearch } from "@/lib/fuzzy-search";
+import { anime, getAnimeByGenre, getAnimeByLanguage } from "@/lib/mock/anime";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -580,6 +581,49 @@ let globalCatalogPromise: Promise<Anime[]> | null = null;
 
 const catalogPageCache = new Map<string, { data: CatalogPageResult; timestamp: number }>();
 
+export function parseAnimeSaltArticles(
+  html: string,
+  page: number
+): CatalogPageResult | null {
+  const results: AnimeSearchResult[] = [];
+  const artRegex = /<article[^>]*class=["'][^"']*post[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = artRegex.exec(html)) !== null) {
+    const artHtml = match[1];
+    const link = artHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
+    if (!link) continue;
+
+    const slug = cleanAnimeSlug(link);
+    if (!slug) continue;
+
+    const posterMatch =
+      artHtml.match(/data-src=["']([^"']+)["']/) ||
+      artHtml.match(/src=["'](https?:[^"']+\.(?:jpg|png|webp)[^"']*?)["']/i);
+    let poster: string | null = posterMatch ? posterMatch[1] : null;
+    if (poster?.startsWith("//")) poster = "https:" + poster;
+    if (poster?.startsWith("data:")) poster = null;
+
+    const rawTitle =
+      artHtml.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i)?.[1]?.replace(/<[^>]+>/g, "").trim() ||
+      artHtml.match(/alt=["']([^"']+)["']/)?.[1]?.trim() ||
+      slug.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+
+    results.push({
+      title: decodeHtmlEntities(rawTitle),
+      anime_id: link,
+      poster,
+    });
+  }
+
+  if (results.length === 0) return null;
+
+  const pageNums = [...html.matchAll(/\/page\/(\d+)\//g)].map((m) => parseInt(m[1], 10));
+  const totalPages = pageNums.length > 0 ? Math.max(...pageNums) : page;
+
+  return { results, totalPages, currentPage: page };
+}
+
 /**
  * Scrapes animesalt.cx/series/ or /movies/ catalog pages directly.
  * Each page returns 12 items. Series has ~38 pages (2,543 total), movies ~23 pages (2,531 total).
@@ -600,54 +644,193 @@ export async function scrapeAnimeSaltCatalog(
         ? `https://animesalt.cx/${kind}/`
         : `https://animesalt.cx/${kind}/page/${page}/`;
 
-    // AnimeSalt sometimes blocks requests originating from Vercel. Use the
-    // Worker fallback here too, so catalogue pages stay available when the
-    // legacy JSON API is challenged or unavailable.
     const html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
-    const results: AnimeSearchResult[] = [];
-    const artRegex = /<article[^>]*class=["'][^"']*post[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi;
-    let match: RegExpExecArray | null;
-
-    while ((match = artRegex.exec(html)) !== null) {
-      const artHtml = match[1];
-      const link = artHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
-      if (!link) continue;
-
-      const slug = cleanAnimeSlug(link);
-      if (!slug) continue;
-
-      const posterMatch =
-        artHtml.match(/data-src=["']([^"']+)["']/) ||
-        artHtml.match(/src=["'](https?:[^"']+\.(?:jpg|png|webp)[^"']*?)["']/i);
-      let poster: string | null = posterMatch ? posterMatch[1] : null;
-      if (poster?.startsWith("//")) poster = "https:" + poster;
-      if (poster?.startsWith("data:")) poster = null;
-
-      const rawTitle =
-        artHtml.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i)?.[1]?.replace(/<[^>]+>/g, "").trim() ||
-        artHtml.match(/alt=["']([^"']+)["']/)?.[1]?.trim() ||
-        slug.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-
-      results.push({
-        title: decodeHtmlEntities(rawTitle),
-        anime_id: link,
-        poster,
-      });
+    const result = parseAnimeSaltArticles(html, page);
+    if (result) {
+      catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
     }
-
-    if (results.length === 0) return null;
-
-    const pageNums = [...html.matchAll(/\/page\/(\d+)\//g)].map((m) => parseInt(m[1], 10));
-    const totalPages = pageNums.length > 0 ? Math.max(...pageNums) : page;
-
-    const result: CatalogPageResult = { results, totalPages, currentPage: page };
-    catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
     return result;
   } catch (err) {
     console.error(`[Scraper] Error scraping ${kind} catalog page ${page}:`, err);
     return null;
   }
+}
+
+/**
+ * Scrapes animesalt.cx search results directly. Searches full database of 2,500+ anime.
+ */
+export async function scrapeAnimeSaltSearch(
+  keyword: string,
+  page = 1
+): Promise<CatalogPageResult | null> {
+  const cleanKeyword = keyword.trim();
+  if (!cleanKeyword) return null;
+  const cacheKey = `search:${cleanKeyword}:${page}`;
+  const cached = catalogPageCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  try {
+    const url =
+      page <= 1
+        ? `https://animesalt.cx/?s=${encodeURIComponent(cleanKeyword)}`
+        : `https://animesalt.cx/page/${page}/?s=${encodeURIComponent(cleanKeyword)}`;
+
+    const html = await fetchHtmlWithWorkerFallback(url);
+    if (!html) return null;
+    const result = parseAnimeSaltArticles(html, page);
+    if (result) {
+      catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    }
+    return result;
+  } catch (err) {
+    console.error(`[Scraper] Error searching AnimeSalt for "${cleanKeyword}":`, err);
+    return null;
+  }
+}
+
+/**
+ * Scrapes animesalt.cx/category/genre/[slug]/ directly across the full anime library.
+ */
+export async function scrapeAnimeSaltGenre(
+  genreSlug: string,
+  page = 1
+): Promise<CatalogPageResult | null> {
+  const cleanGenre = genreSlug.toLowerCase().trim();
+  if (!cleanGenre) return null;
+  const cacheKey = `genre:${cleanGenre}:${page}`;
+  const cached = catalogPageCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  try {
+    const url =
+      page <= 1
+        ? `https://animesalt.cx/category/genre/${cleanGenre}/`
+        : `https://animesalt.cx/category/genre/${cleanGenre}/page/${page}/`;
+
+    const html = await fetchHtmlWithWorkerFallback(url);
+    if (!html) return null;
+    const result = parseAnimeSaltArticles(html, page);
+    if (result) {
+      catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    }
+    return result;
+  } catch (err) {
+    console.error(`[Scraper] Error scraping genre "${cleanGenre}" page ${page}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Scrapes animesalt.cx/category/[language]/ directly across the full anime library.
+ */
+export async function scrapeAnimeSaltLanguage(
+  languageCode: string,
+  page = 1
+): Promise<CatalogPageResult | null> {
+  const cleanLang = languageCode.toLowerCase().trim();
+  if (!cleanLang) return null;
+  const cacheKey = `language:${cleanLang}:${page}`;
+  const cached = catalogPageCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  try {
+    const url =
+      page <= 1
+        ? `https://animesalt.cx/category/${cleanLang}/`
+        : `https://animesalt.cx/category/${cleanLang}/page/${page}/`;
+
+    const html = await fetchHtmlWithWorkerFallback(url);
+    if (!html) return null;
+    const result = parseAnimeSaltArticles(html, page);
+    if (result) {
+      catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    }
+    return result;
+  } catch (err) {
+    console.error(`[Scraper] Error scraping language "${cleanLang}" page ${page}:`, err);
+    return null;
+  }
+}
+
+export async function getGenreCatalog(
+  genreSlug: string,
+  page = 1
+): Promise<{ results: Anime[]; totalPages: number }> {
+  const cleanSlug = genreSlug.toLowerCase().trim();
+  try {
+    const res = await scrapeAnimeSaltGenre(cleanSlug, page);
+    if (res && res.results.length > 0) {
+      const items = res.results.map((item) => {
+        const mapped = mapSearchItemToAnime(item);
+        if (!mapped.genres.includes(cleanSlug)) {
+          mapped.genres.push(cleanSlug);
+        }
+        return mapped;
+      });
+      return {
+        results: items,
+        totalPages: res.totalPages,
+      };
+    }
+  } catch (err) {
+    console.error(`getGenreCatalog error for ${cleanSlug}:`, err);
+  }
+
+  // Fallback to mock + homepage data
+  const PAGE_SIZE = 12;
+  const mockMatches = getAnimeByGenre(cleanSlug);
+  const homepageData = await getHomepageData();
+  const fallbackItems = getCatalogPosterItems(mockMatches, getHomepagePosterCatalog(homepageData));
+  const totalPages = Math.max(1, Math.ceil(fallbackItems.length / PAGE_SIZE));
+  const paged = fallbackItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  return {
+    results: paged,
+    totalPages,
+  };
+}
+
+export async function getLanguageCatalog(
+  languageCode: string,
+  page = 1
+): Promise<{ results: Anime[]; totalPages: number }> {
+  const cleanCode = languageCode.toLowerCase().trim();
+  try {
+    const res = await scrapeAnimeSaltLanguage(cleanCode, page);
+    if (res && res.results.length > 0) {
+      const items = res.results.map((item) => {
+        const mapped = mapSearchItemToAnime(item);
+        if (!mapped.languages.includes(cleanCode as never)) {
+          mapped.languages.push(cleanCode as never);
+        }
+        return mapped;
+      });
+      return {
+        results: items,
+        totalPages: res.totalPages,
+      };
+    }
+  } catch (err) {
+    console.error(`getLanguageCatalog error for ${cleanCode}:`, err);
+  }
+
+  // Fallback to mock + homepage data
+  const PAGE_SIZE = 12;
+  const mockMatches = getAnimeByLanguage(cleanCode);
+  const homepageData = await getHomepageData();
+  const fallbackItems = getCatalogPosterItems(mockMatches, getHomepagePosterCatalog(homepageData));
+  const totalPages = Math.max(1, Math.ceil(fallbackItems.length / PAGE_SIZE));
+  const paged = fallbackItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  return {
+    results: paged,
+    totalPages,
+  };
 }
 
 export async function getCatalog(
@@ -782,14 +965,50 @@ async function getGlobalCatalog(): Promise<Anime[]> {
 
 /**
  * Searches every title in the existing API catalog, not just titles on the
- * current route. The shared in-memory index is refreshed every 15 minutes.
+ * current route. Uses the API search endpoint / full dataset scraper.
  */
 export async function searchGlobalAnime(
   query: string,
   page = 1
 ): Promise<GlobalAnimeSearchResponse> {
+  const cleanQ = query.trim();
+  if (!cleanQ) {
+    return { results: [], totalPages: 1 };
+  }
+
+  // 1. Query the live API search endpoint / full dataset scraper
+  const searchResp = await searchAnime(cleanQ, page);
+  const liveResults = (searchResp?.results?.results ?? []).map((item) => ({
+    item: mapSearchItemToAnime(item),
+    score: 1.0,
+  }));
+
+  if (liveResults.length > 0) {
+    // Enrich with any known local items (fuzzy match on titles for higher detail)
+    const localMatches = fuzzySearch(cleanQ, anime, 0.6);
+    const seenSlugs = new Set(liveResults.map((r) => r.item.slug));
+    const merged = [...liveResults];
+
+    for (const match of localMatches) {
+      if (!seenSlugs.has(match.item.slug)) {
+        seenSlugs.add(match.item.slug);
+        merged.push(match);
+      }
+    }
+
+    const totalPages = Math.max(
+      searchResp?.results?.totalPages ?? 1,
+      Math.ceil(merged.length / GLOBAL_SEARCH_PAGE_SIZE)
+    );
+    return {
+      results: merged,
+      totalPages,
+    };
+  }
+
+  // 2. Fallback: fuzzy search against known catalog/mock titles
   const catalog = await getGlobalCatalog();
-  const ranked = fuzzySearch(query, catalog, 0.55);
+  const ranked = fuzzySearch(cleanQ, catalog.length > 0 ? catalog : anime, 0.55);
   const currentPage = Math.max(1, page);
   const start = (currentPage - 1) * GLOBAL_SEARCH_PAGE_SIZE;
 
@@ -1142,19 +1361,43 @@ export async function searchAnime(
   keyword: string,
   page: number = 1
 ): Promise<AnimeSearchResponse | null> {
-  if (!keyword || !keyword.trim()) return null;
+  const cleanKeyword = keyword?.trim();
+  if (!cleanKeyword) return null;
+
+  // 1. Try upstream API
   try {
-    const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(keyword.trim())}&page=${page}`;
+    const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`;
     const res = await fetch(url, {
       next: { revalidate: 60 },
     });
-    if (!res.ok) return null;
-    const data: AnimeSearchResponse = await res.json();
-    return data;
+    if (res.ok) {
+      const data: AnimeSearchResponse = await res.json();
+      if (
+        data?.results?.results &&
+        Array.isArray(data.results.results) &&
+        data.results.results.length > 0
+      ) {
+        return data;
+      }
+    }
   } catch (err) {
     console.error("searchAnime API error:", err);
-    return null;
   }
+
+  // 2. Direct search scraper fallback across full AnimeSalt database (2,500+ titles)
+  try {
+    const scraped = await scrapeAnimeSaltSearch(cleanKeyword, page);
+    if (scraped && scraped.results.length > 0) {
+      return {
+        success: true,
+        results: scraped,
+      };
+    }
+  } catch (err) {
+    console.error("searchAnime scraper fallback error:", err);
+  }
+
+  return null;
 }
 
 /**
