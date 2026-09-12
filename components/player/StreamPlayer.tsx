@@ -55,15 +55,65 @@ export function StreamPlayer({
   const [showServerFallback, setShowServerFallback] = useState(false);
   const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showExitButton, setShowExitButton] = useState(false);
   const playerFrameRef = useRef<HTMLDivElement>(null);
+  const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const triggerShowExit = useCallback(() => {
+    setShowExitButton(true);
+    if (hideExitTimerRef.current) {
+      clearTimeout(hideExitTimerRef.current);
+    }
+    hideExitTimerRef.current = setTimeout(() => {
+      setShowExitButton(false);
+    }, 3000);
+  }, []);
+
+  const cancelHideExit = useCallback(() => {
+    if (hideExitTimerRef.current) {
+      clearTimeout(hideExitTimerRef.current);
+      hideExitTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     function onFullscreenChange() {
-      setIsFullscreen(Boolean(document.fullscreenElement));
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      if (!active) {
+        setShowExitButton(false);
+        if (hideExitTimerRef.current) {
+          clearTimeout(hideExitTimerRef.current);
+          hideExitTimerRef.current = null;
+        }
+      }
     }
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      // If cursor is within bottom 100px or bottom 15% of the viewport, reveal the exit button
+      const bottomThreshold = window.innerHeight - 100;
+      if (e.clientY >= bottomThreshold) {
+        triggerShowExit();
+      } else if (e.clientY < bottomThreshold - 60) {
+        setShowExitButton(false);
+      }
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      if (hideExitTimerRef.current) {
+        clearTimeout(hideExitTimerRef.current);
+        hideExitTimerRef.current = null;
+      }
+    };
+  }, [isFullscreen, triggerShowExit]);
 
   const toggleFullscreen = useCallback(async () => {
     const el = playerFrameRef.current;
@@ -162,16 +212,50 @@ export function StreamPlayer({
         {state === "ready" && activeServer && (
           <EmbedFrame embed={activeServer.embed} title={episodeTitle} />
         )}
+        {/* Fullscreen bottom trigger zones and exit button */}
         {isFullscreen && (
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            aria-label="Exit fullscreen"
-            className="absolute top-4 right-4 z-40 flex items-center gap-1.5 rounded-lg bg-black/75 px-3 py-1.5 text-xs font-semibold text-white shadow-xl backdrop-blur-md transition-all hover:bg-black hover:text-green-light border border-white/10"
-          >
-            <Minimize className="h-4 w-4" />
-            <span>Exit Fullscreen</span>
-          </button>
+          <>
+            {/* Bottom edge hover trigger strip (catches mouse when moved to the very bottom) */}
+            <div
+              onMouseEnter={triggerShowExit}
+              onMouseMove={triggerShowExit}
+              className="absolute inset-x-0 bottom-0 z-30 h-4 pointer-events-auto"
+              aria-hidden="true"
+            />
+
+            {/* Bottom-right corner hover trigger zone */}
+            <div
+              onMouseEnter={triggerShowExit}
+              onMouseMove={triggerShowExit}
+              className="absolute bottom-0 right-0 z-30 h-24 w-60 pointer-events-auto"
+              aria-hidden="true"
+            />
+
+            {/* Exit Fullscreen button at bottom right (auto-hides unless mouse moves down to bottom) */}
+            <div
+              onMouseEnter={cancelHideExit}
+              onMouseLeave={() => {
+                if (hideExitTimerRef.current) clearTimeout(hideExitTimerRef.current);
+                hideExitTimerRef.current = setTimeout(() => setShowExitButton(false), 1200);
+              }}
+              className={cn(
+                "absolute bottom-5 right-5 z-40 transition-all duration-300 ease-out",
+                showExitButton
+                  ? "translate-y-0 opacity-100 pointer-events-auto"
+                  : "translate-y-4 opacity-0 pointer-events-none"
+              )}
+            >
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                aria-label="Exit fullscreen"
+                className="flex items-center gap-2 rounded-xl border border-white/20 bg-black/85 px-4 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-md transition-all hover:border-green-primary/50 hover:bg-black hover:text-green-light hover:scale-105 active:scale-95"
+              >
+                <Minimize className="h-4 w-4 text-green-bright" />
+                <span>Exit Fullscreen</span>
+              </button>
+            </div>
+          </>
         )}
         {showServerFallback && servers[1] && (
           <div className="absolute inset-x-3 bottom-3 z-10 flex flex-wrap items-center justify-center gap-2 rounded-lg border border-border-line bg-black/85 px-3 py-2 text-center text-xs text-text-secondary shadow-lg sm:text-sm">

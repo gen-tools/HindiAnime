@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
+import { WatchTracker } from "@/components/player/WatchTracker";
 import { EpisodeNavigation } from "@/components/episodes/EpisodeNavigation";
 import { EpisodeList } from "@/components/episodes/EpisodeList";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
 import { Badge } from "@/components/ui/Badge";
+import { FavoriteButton } from "@/components/anime/FavoriteButton";
+import { Play, ChevronRight } from "lucide-react";
 import { getAnimeBySlug } from "@/lib/mock/anime";
 import {
   getAnimeInfo,
@@ -393,6 +396,18 @@ export default async function WatchPage({
         StreamPlayer — client component with integrated Server selector, Theater mode, and Fullscreen.
         Fetches streams via /api/stream-proxy on mount.
       */}
+      <WatchTracker
+        animeSlug={anime.slug}
+        animeTitle={anime.title}
+        animePoster={anime.poster}
+        season={episode.season}
+        episode={episode.number}
+        episodeId={episode.id}
+        episodeTitle={episode.title}
+        durationMinutes={episode.durationMinutes || anime.durationMinutes}
+        genres={anime.genres}
+      />
+
       <StreamPlayer
         animeSlug={anime.slug}
         season={episode.season}
@@ -418,7 +433,7 @@ export default async function WatchPage({
               ? anime.synopsis
               : `Watch ${anime.title} ${isMovie ? "Full Movie" : `Season ${episode.season} Episode ${episode.number}`} with Hindi dub in high quality on HindiAnime.`}
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2.5">
             <Badge tone="outline">{isMovie ? "Movie" : `Season ${episode.season}`}</Badge>
             <Badge tone="green">{anime.status}</Badge>
             {!isMovie && seasonList.length > 1 && (
@@ -428,7 +443,37 @@ export default async function WatchPage({
                 watchAnimeSlug={anime.slug}
               />
             )}
+            <FavoriteButton
+              anime={{
+                animeSlug: anime.slug,
+                title: anime.title,
+                poster: anime.poster,
+                rating: anime.rating,
+                type: anime.type,
+                genres: anime.genres,
+                languages: anime.languages,
+              }}
+              variant="compact"
+            />
           </div>
+
+          {!isMovie && nextEpisode && (
+            <Link
+              href={`/watch/${anime.slug}/${nextEpisode.id}`}
+              className="group mt-3.5 inline-flex items-center gap-3 rounded-xl border border-border-line bg-surface/80 px-3.5 py-2 text-xs transition-all hover:border-green-primary/50 hover:bg-surface-elevated"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-green-primary/20 text-green-light">
+                <Play className="h-3 w-3 fill-current" />
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold uppercase text-[10px] tracking-wider text-green-bright">Up Next:</span>
+                <span className="font-medium text-text-primary group-hover:text-green-light transition-colors line-clamp-1">
+                  EP {nextEpisode.number} &mdash; {nextEpisode.title}
+                </span>
+              </div>
+              <ChevronRight className="h-3.5 w-3.5 text-text-muted group-hover:text-white transition-colors ml-1" />
+            </Link>
+          )}
         </div>
         {!isMovie && (
           <EpisodeNavigation

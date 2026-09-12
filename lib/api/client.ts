@@ -1486,26 +1486,60 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
     // Parse Poster
     let poster: string | undefined;
 
-    // 1. The post thumbnail belongs to this exact detail page. Prefer it over
-    // og:image, which AnimeSalt's WordPress theme can populate with an image
-    // from a different post.
+    // ── Strategy 1: JavaScript variable on the detail page ───────────────────
+    // AnimeSalt injects: let image = "//image.tmdb.org/t/p/w500/<hash>.jpg";
+    // This variable is always scoped to the current title — it is the most
+    // reliable single-poster signal and is set before the recommendation grid.
     {
-      const pDataMatch =
-        html.match(/<div[^>]*class=["'][^"']*post-thumbnail[^"']*["'][^>]*>[\s\S]*?<img[^>]+(?:data-src|src)=["']([^"']+)["']/i) ||
-        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+(?:data-src|src)=["']([^"']+)["']/i) ||
-        html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/w(?:342|500)\/[^"']+)["']/i) ||
-        html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i);
-
-      if (pDataMatch) {
-        let p = pDataMatch[1];
+      const scriptVarMatch =
+        html.match(/(?:let|var)\s+image\s*=\s*["']((?:https:)?\/\/[^"']+)["']/i);
+      if (scriptVarMatch) {
+        let p = scriptVarMatch[1];
         if (p.startsWith("//")) p = "https:" + p;
-        if (!p.startsWith("data:")) {
+        if (p && !p.startsWith("data:") && !p.includes("logo") && !p.includes("icon")) {
           poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
         }
       }
     }
 
-    // 2. og:image is a fallback only when the title page has no local poster.
+    // ── Strategy 2: Hero inline-styled poster img (above <h1>) ───────────────
+    // AnimeSalt renders the detail-page poster with inline style="height: 14rem".
+    // This image always belongs to the current title and appears before the
+    // recommendation section so there is no cross-contamination from other cards.
+    if (!poster) {
+      const heroImgMatch =
+        // Matches: <img style="height: 14rem; ..." data-src="..." ...>
+        html.match(/<img[^>]+style=["'][^"']*14rem[^"']*["'][^>]+data-src=["']((?:https:)?\/\/[^"']+)["']/i) ||
+        html.match(/<img[^>]+data-src=["']((?:https:)?\/\/[^"']+)["'][^>]+style=["'][^"']*14rem[^"']*["']/i) ||
+        // Matches: <img alt="Image Title"> which is unique to the main hero poster
+        html.match(/<img[^>]+alt=["']Image\s+[^"']{3,80}["'][^>]+data-src=["']((?:https:)?\/\/[^"']+)["']/i) ||
+        html.match(/<img[^>]+data-src=["']((?:https:)?\/\/[^"']+)["'][^>]+alt=["']Image\s+[^"']{3,80}["']/i);
+
+      if (heroImgMatch) {
+        let p = heroImgMatch[1];
+        if (p.startsWith("//")) p = "https:" + p;
+        if (p && !p.startsWith("data:") && !p.includes("logo") && !p.includes("icon") && !p.includes("AnimeSalt")) {
+          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
+        }
+      }
+    }
+
+    // ── Strategy 3: TPostImg class (series/movie theme image class) ───────────
+    if (!poster) {
+      const tPostImgMatch =
+        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+(?:data-src|src)=["']([^"']+)["']/i);
+      if (tPostImgMatch) {
+        let p = tPostImgMatch[1];
+        if (p.startsWith("//")) p = "https:" + p;
+        if (p && !p.startsWith("data:")) {
+          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
+        }
+      }
+    }
+
+    // ── Strategy 4: og:image (last resort) ───────────────────────────────────
+    // WARNING: AnimeSalt's WordPress theme sometimes sets og:image to the site
+    // logo (AnimeSalticon.png) instead of the post image; filter those out.
     if (!poster) {
       const ogImageMatch = html.match(
         /<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i
@@ -1526,6 +1560,7 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       }
     }
 
+    // ── Strategy 5: raw src on TMDB images (very last resort) ─────────────────
     if (!poster) {
       const pSrcMatch =
         html.match(/src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/w(?:342|500)\/[^"']+)["']/i) ||

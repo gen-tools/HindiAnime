@@ -7,6 +7,7 @@ import { PosterArt } from "./PosterArt";
 import { formatDuration } from "@/lib/utils";
 import Link from "next/link";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
+import { FavoriteButton } from "./FavoriteButton";
 
 export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeId?: string }) {
   const targetWatchHref = firstEpisodeId
@@ -72,7 +73,7 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
             : `Stream ${item.title} with Hindi dub and multi-language audio in HD quality on HindiAnime.`}
         </p>
 
-        <div className="mt-1 flex flex-wrap gap-3">
+        <div className="mt-1 flex flex-wrap items-center gap-3">
           <ButtonLink
             href={targetWatchHref}
             size="lg"
@@ -80,6 +81,17 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
           >
             Watch Now
           </ButtonLink>
+          <FavoriteButton
+            anime={{
+              animeSlug: item.slug,
+              title: item.title,
+              poster: item.poster,
+              rating: item.rating,
+              type: item.type,
+              genres: item.genres,
+              languages: item.languages,
+            }}
+          />
         </div>
 
         <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-border-line pt-4 text-sm sm:grid-cols-3">
