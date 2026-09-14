@@ -23,9 +23,9 @@ import {
 } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Anime Genres | Action, Adventure, Fantasy & More | HINDIANIME",
+  title: "Anime Genres",
   description:
-    "Discover anime across all genres including Action, Romance, Sci-Fi, Fantasy, Thriller, Comedy, and Isekai dubbed in Hindi and regional languages.",
+    "Discover anime across all genres including Action, Adventure, Fantasy, Romance, Sci-Fi, and more on Hindi Anime.",
 };
 
 const genreIcons: Record<string, LucideIcon> = {

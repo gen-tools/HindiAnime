@@ -9,7 +9,7 @@ import { getHomepageData } from "@/lib/api/client";
 
 export const metadata: Metadata = {
   title: "Popular Anime",
-  description: "The most watched and top-rated anime on HindiAnime right now.",
+  description: "The most watched and top-rated anime on Hindi Anime right now.",
 };
 
 export default async function PopularPage() {

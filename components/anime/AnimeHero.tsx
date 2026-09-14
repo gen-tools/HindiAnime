@@ -75,23 +75,26 @@ export function AnimeHero({ items }: { items: Anime[] }) {
           transition={{ opacity: { duration: 0.85, ease: "easeInOut" } }}
           className="absolute inset-0 transform-gpu"
         >
-          {/* Atmospheric blur wash */}
-          <PosterArt
-            seed={item.backdrop || item.poster}
-            title={item.title}
-            orientation="landscape"
-            priority
-            showOverlay={false}
-            showSprocket={false}
-            fillContainer
-            className="absolute inset-0 h-full w-full scale-110 opacity-35 blur-3xl"
-          />
-          {/* Crisp cinematic cover */}
+          {/* Atmospheric blur wash (desktop only to save mobile bandwidth & GPU compositing) */}
+          <div className="hidden sm:block absolute inset-0">
+            <PosterArt
+              seed={item.backdrop || item.poster}
+              title={item.title}
+              orientation="landscape"
+              priority={false}
+              showOverlay={false}
+              showSprocket={false}
+              fillContainer
+              className="absolute inset-0 h-full w-full scale-110 opacity-35 blur-3xl"
+            />
+          </div>
+          {/* Crisp cinematic cover (primary LCP visual element) */}
           <PosterArt
             seed={item.backdrop || item.poster}
             title={item.title}
             orientation="landscape"
             fit="cover"
+            priority={true}
             showOverlay={false}
             showSprocket={false}
             fillContainer

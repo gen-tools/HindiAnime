@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { LanguageBadges } from "@/components/anime/LanguageBadges";
@@ -38,22 +38,27 @@ function convertTime(timeStr: string, offsetHours: number): string {
 }
 
 export default function SchedulePage() {
-  // Get today's day of week
-  const todayDayName = useMemo<WeekDay>(() => {
-    const dayNames: WeekDay[] = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
-    const todayIndex = new Date().getDay();
-    return dayNames[todayIndex] || "Monday";
+  const DAY_NAMES: WeekDay[] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+
+  // Start with no "today" highlighted — set after mount to avoid SSR/client timezone mismatch
+  const [todayDayName, setTodayDayName] = useState<WeekDay | null>(null);
+  const [activeDay, setActiveDay] = useState<WeekDay>("Monday");
+
+  useEffect(() => {
+    const today = DAY_NAMES[new Date().getDay()] as WeekDay || "Monday";
+    setTodayDayName(today);
+    setActiveDay(today);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [activeDay, setActiveDay] = useState<WeekDay>(todayDayName);
   const [timezone, setTimezone] = useState("IST");
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"all" | "released" | "upcoming">("all");

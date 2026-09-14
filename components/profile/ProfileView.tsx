@@ -726,7 +726,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
               Local Browser Storage
             </h3>
             <p className="mt-1 text-xs text-text-secondary leading-relaxed">
-              HINDIANIME stores your guest identity, continue watching progress, watch history, and bookmarked favorites directly in your browser&apos;s IndexedDB database (<code className="rounded bg-surface-elevated px-1 py-0.5 text-green-light">hindianime_user_db</code>). No account or server-side database is required.
+              Hindi Anime stores your guest identity, continue watching progress, watch history, and bookmarked favorites directly in your browser&apos;s IndexedDB database (<code className="rounded bg-surface-elevated px-1 py-0.5 text-green-light">hindianime_user_db</code>). No account or server-side database is required.
             </p>
 
             <div className="mt-4 divide-y divide-border-line border-t border-border-line pt-3 text-xs">
@@ -751,7 +751,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
               Manage Stored Data
             </h3>
             <p className="mt-1 text-xs text-text-secondary">
-              Selectively clear specific categories or reset all HINDIANIME data.
+              Selectively clear specific categories or reset all Hindi Anime data.
             </p>
 
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -793,7 +793,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                   Reset All Local Data
                 </h4>
                 <p className="mt-1 text-xs text-red-200/70 leading-relaxed">
-                  Reset your viewing history, favorites, continue watching, preferences, and generate a new guest ID. This action only affects HINDIANIME data on this browser.
+                  Reset your viewing history, favorites, continue watching, preferences, and generate a new guest ID. This action only affects Hindi Anime data on this browser.
                 </p>
                 <button
                   type="button"
@@ -801,7 +801,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                   className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow hover:bg-red-500 transition-colors"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  <span>Clear All HINDIANIME Data</span>
+                  <span>Clear All Hindi Anime Data</span>
                 </button>
               </div>
             </div>

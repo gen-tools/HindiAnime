@@ -98,6 +98,32 @@ export interface FuzzyScore {
   reasons: string[];
 }
 
+export const COMMON_ACRONYMS: Record<string, string> = {
+  jjk: "jujutsu kaisen",
+  aot: "attack on titan",
+  snk: "shingeki no kyojin",
+  mha: "my hero academia",
+  bnha: "boku no hero academia",
+  ds: "demon slayer",
+  kny: "kimetsu no yaiba",
+  knys: "kimetsu no yaiba",
+  csm: "chainsaw man",
+  op: "one piece",
+  fma: "fullmetal alchemist",
+  fmab: "fullmetal alchemist brotherhood",
+  dbz: "dragon ball z",
+  dbs: "dragon ball super",
+  db: "dragon ball",
+  hxh: "hunter x hunter",
+  sao: "sword art online",
+  sl: "solo leveling",
+  tg: "tokyo ghoul",
+  opm: "one punch man",
+  bc: "black clover",
+  nar: "naruto",
+  bor: "boruto",
+};
+
 export function fuzzyScore(query: string, target: string): FuzzyScore {
   const q = query.toLowerCase().trim();
   const t = target.toLowerCase().trim();
@@ -124,9 +150,28 @@ export function fuzzyScore(query: string, target: string): FuzzyScore {
     reasons.push("contains");
   }
 
-  // 4. Token-level matching — checks each word of query against title tokens
   const qTokens = q.split(/\s+/).filter(Boolean);
-  const tTokens = t.split(/\s+/).filter(Boolean);
+  const tTokens = t.split(/[\s:,\-_]+/).filter(Boolean);
+
+  // 3b. Token prefix match (e.g. "nar" matches "Naruto" inside "Boruto: Naruto Next Generations")
+  if (tTokens.some((tok) => tok.startsWith(q))) {
+    score = Math.max(score, 0.88);
+    reasons.push("token-prefix");
+  }
+
+  // 3c. Acronym / Initialism match (e.g. "jjk" -> Jujutsu Kaisen, "aot" -> Attack on Titan)
+  const tInitials = tTokens.map((tok) => tok[0]).join("");
+  if (tInitials === q || (q.length >= 2 && tInitials.startsWith(q))) {
+    score = Math.max(score, 0.90);
+    reasons.push("acronym-initials");
+  }
+  const aliasTarget = COMMON_ACRONYMS[q];
+  if (aliasTarget && (t.includes(aliasTarget) || aliasTarget.includes(t))) {
+    score = Math.max(score, 0.92);
+    reasons.push("alias-match");
+  }
+
+  // 4. Token-level matching — checks each word of query against title tokens
   let tokenMatches = 0;
   for (const qTok of qTokens) {
     for (const tTok of tTokens) {

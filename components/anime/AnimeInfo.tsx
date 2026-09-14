@@ -70,7 +70,7 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
         <p className="max-w-3xl text-sm leading-relaxed text-text-secondary md:text-[15px]">
           {item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK
             ? item.synopsis
-            : `Stream ${item.title} with Hindi dub and multi-language audio in HD quality on HindiAnime.`}
+            : `Stream ${item.title} on Hindi Anime.`}
         </p>
 
         <div className="mt-1 flex flex-wrap items-center gap-3">

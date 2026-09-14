@@ -3,14 +3,14 @@ import { Sparkles, Globe2, Layers } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "About",
-  description: "About HindiAnime — a concept anime streaming interface.",
+  description: "About Hindi Anime — a multi-language anime streaming platform.",
 };
 
 const pillars = [
   {
     icon: Globe2,
     title: "Multi-language by design",
-    body: "Every title on HindiAnime is built around language availability first — audio and subtitles across ten languages, shown clearly before you press play.",
+    body: "Every title on Hindi Anime is built around language availability first — audio and subtitles across ten languages, shown clearly before you press play.",
   },
   {
     icon: Layers,
@@ -27,12 +27,12 @@ const pillars = [
 export default function AboutPage() {
   return (
     <div className="container-page py-14">
-      <span className="eyebrow text-sm text-green-light">ABOUT HINDIANIME</span>
+      <span className="eyebrow text-sm text-green-light">ABOUT HINDI ANIME</span>
       <h1 className="font-display mt-2 max-w-2xl text-3xl font-extrabold text-text-primary md:text-4xl">
         A concept for how anime streaming could feel.
       </h1>
       <p className="mt-4 max-w-2xl text-sm leading-relaxed text-text-secondary md:text-base">
-        HindiAnime is a design and frontend concept for a multi-language anime streaming platform.
+        Hindi Anime is a design and frontend concept for a multi-language anime streaming platform.
         This build focuses entirely on the interface — browsing, discovery, and a mock playback
         experience — using placeholder data rather than a live catalog or real video sources.
       </p>
@@ -49,7 +49,7 @@ export default function AboutPage() {
 
       <div className="mt-12 max-w-2xl rounded-xl border border-border-line bg-surface p-6 text-sm leading-relaxed text-text-muted">
         <p>
-          HindiAnime does not host, distribute, or claim rights to any anime content. All titles,
+          Hindi Anime does not host, distribute, or claim rights to any anime content. All titles,
           artwork, and episode data shown here are placeholders used for design purposes only.
         </p>
       </div>

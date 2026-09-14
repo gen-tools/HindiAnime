@@ -6,9 +6,9 @@ import { NoResultsState } from "@/components/search/SearchStates";
 import { getCatalog, mapSearchItemToAnime } from "@/lib/api/client";
 
 export const metadata: Metadata = {
-  title: "Anime Series Catalog | Watch All Anime Series | HINDIANIME",
+  title: "Anime Series Catalog",
   description:
-    "Explore and stream all anime TV series, simulcasts, and multi-season anime in Hindi, Tamil, Telugu, and English dubs.",
+    "Explore and stream anime TV series and multi-season anime on Hindi Anime.",
 };
 
 export default async function SeriesPage({

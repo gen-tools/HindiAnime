@@ -17,9 +17,9 @@ import { cn } from "@/lib/utils";
 import { deduplicateEpisodes, getEpisodeIdentity } from "@/lib/episodes";
 
 export const metadata: Metadata = {
-  title: "Latest Releases & New Episodes | HINDIANIME",
+  title: "Latest Releases & New Episodes",
   description:
-    "Watch newly dropped anime episodes and freshly added anime series and movies dubbed in Hindi, Tamil, Telugu, and English.",
+    "Watch newly dropped anime episodes and freshly added anime series and movies on Hindi Anime.",
 };
 
 const PAGE_SIZE = 12;

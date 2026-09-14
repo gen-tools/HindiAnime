@@ -21,7 +21,7 @@ import type { Anime } from "@/types/anime";
 
 export const metadata: Metadata = {
   title: "Search",
-  description: "Search anime, movies, and characters across HindiAnime's catalog.",
+  description: "Search anime, movies, and characters across Hindi Anime's catalog.",
 };
 
 const PAGE_SIZE = 12;

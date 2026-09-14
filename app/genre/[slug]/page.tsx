@@ -7,13 +7,8 @@ import { Pagination } from "@/components/ui/Pagination";
 import { ListingFilters } from "@/components/search/ListingFilters";
 import { NoResultsState } from "@/components/search/SearchStates";
 import { genres, getGenre } from "@/lib/mock/genres";
-import { getAnimeByGenre } from "@/lib/mock/anime";
-import {
-  getCatalogPosterItems,
-  getGenreCatalog,
-  getHomepageData,
-  getHomepagePosterCatalog,
-} from "@/lib/api/client";
+import { languages } from "@/lib/mock/languages";
+import { getGenreCatalog } from "@/lib/api/client";
 import { posterPalette } from "@/lib/poster";
 import { Layers, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -33,8 +28,8 @@ export async function generateMetadata({
   const genre = getGenre(slug);
   if (!genre) return {};
   return {
-    title: `${genre.label} Anime | Watch Dubbed & Subbed in Hindi`,
-    description: `Watch the best ${genre.label} anime on HindiAnime — ${genre.description.toLowerCase()}. Stream in HD with multi-language audio.`,
+    title: `${genre.label} Anime`,
+    description: `Explore ${genre.label.toLowerCase()} anime series and movies on Hindi Anime — ${genre.description.toLowerCase()}.`,
   };
 }
 
@@ -151,6 +146,24 @@ export default async function GenrePage({
         ) : (
           <NoResultsState />
         )}
+      </div>
+
+      {/* Internal Navigation: Dubbed Languages */}
+      <div className="mt-14 border-t border-border-line/60 pt-8">
+        <h2 className="text-sm font-semibold text-text-primary">
+          Watch Anime in Your Language
+        </h2>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {languages.map((l) => (
+            <Link
+              key={l.code}
+              href={`/language/${l.code}`}
+              className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
+            >
+              {l.label} Dubbed
+            </Link>
+          ))}
+        </div>
       </div>
     </div>
   );

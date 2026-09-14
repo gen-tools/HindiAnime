@@ -124,7 +124,7 @@ export default async function LanguagesDirectoryPage() {
             Browse Anime by Language
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-text-secondary sm:text-base">
-            HindiAnime brings you anime in your mother tongue. Switch between Hindi, Tamil, Telugu,
+            Hindi Anime brings you anime in your mother tongue. Switch between Hindi, Tamil, Telugu,
             English, Japanese, and more with crystal-clear audio dubbing and precise subtitles.
           </p>
 

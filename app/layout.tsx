@@ -15,18 +15,18 @@ const bebas = Bebas_Neue({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://hindianime.example.com"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com"),
   title: {
-    default: "HindiAnime — Watch Anime in Hindi, Tamil, Telugu & More",
-    template: "%s | HindiAnime",
+    default: "Hindi Anime | Watch Hindi Dubbed Anime Online",
+    template: "%s | Hindi Anime",
   },
   description:
-    "Stream anime dubbed and subbed across ten languages. A concept anime streaming interface with a dark, cinematic, emerald-accented design.",
+    "Watch Hindi dubbed anime online, plus anime in Tamil, Telugu, English and Japanese. Explore popular series, movies, latest episodes and genres on Hindi Anime.",
   openGraph: {
-    title: "HindiAnime — Watch Anime in Hindi, Tamil, Telugu & More",
+    title: "Hindi Anime | Watch Hindi Dubbed Anime Online",
     description:
-      "Stream anime dubbed and subbed across ten languages on HindiAnime's concept streaming interface.",
-    siteName: "HindiAnime",
+      "Watch Hindi dubbed anime online, plus anime in Tamil, Telugu, English and Japanese. Explore popular series, movies, latest episodes and genres on Hindi Anime.",
+    siteName: "Hindi Anime",
     type: "website",
   },
   robots: {

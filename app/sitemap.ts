@@ -3,7 +3,7 @@ import { anime } from "@/lib/mock/anime";
 import { genres } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
 
-const BASE_URL = "https://hindianime.example.com";
+const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const staticRoutes = [

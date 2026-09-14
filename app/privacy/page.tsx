@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { ShieldCheck, Lock, Eye, FileText } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | HINDIANIME",
-  description: "Privacy Policy and data protection guidelines for HindiAnime.",
+  title: "Privacy Policy",
+  description: "Privacy Policy and data protection guidelines for Hindi Anime.",
 };
 
 export default function PrivacyPolicyPage() {
@@ -26,7 +26,7 @@ export default function PrivacyPolicyPage() {
             1. Overview &amp; Information We Collect
           </h2>
           <p>
-            HindiAnime is committed to protecting your privacy. We do not require account creation
+            Hindi Anime is committed to protecting your privacy. We do not require account creation
             or personal identifiers to browse or stream concept content. We may collect non-personal
             diagnostic and preference data (such as chosen audio language, volume, or playback position)
             stored locally on your device via browser localStorage.

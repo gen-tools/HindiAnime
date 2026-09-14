@@ -60,10 +60,18 @@ export function HomeContinueWatching() {
 
     const handleUpdate = () => loadItems();
     window.addEventListener("hindianime:userdata-changed", handleUpdate);
-    window.addEventListener("resize", checkScroll);
+
+    let timer: ReturnType<typeof setTimeout>;
+    const handleResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(checkScroll, 120);
+    };
+    window.addEventListener("resize", handleResize, { passive: true });
+
     return () => {
       window.removeEventListener("hindianime:userdata-changed", handleUpdate);
-      window.removeEventListener("resize", checkScroll);
+      clearTimeout(timer);
+      window.removeEventListener("resize", handleResize);
     };
   }, []);
 

@@ -88,7 +88,7 @@ export async function generateMetadata({
         directData.synopsis ||
         (typeof movieData?.overview === "string"
           ? movieData.overview
-          : `Watch ${formattedTitle} in Hindi on HindiAnime.`),
+          : SYNOPSIS_FALLBACK),
       poster: directData.poster || cleanSlug,
       backdrop: directData.backdrop || directData.poster || cleanSlug,
       rating: 8.5,
@@ -164,13 +164,105 @@ export async function generateMetadata({
     item = { ...item, backdrop: directData.poster };
   }
 
+  // ── Build SEO metadata from resolved API data ─────────────────────────────
+
+  // 1. Clean promotional text from item.title (leaves item.title & visible H1 unchanged)
+  function cleanAnimeTitle(rawTitle: string): string {
+    return rawTitle
+      .replace(/\s*[-–—:]\s*Watch\s*(?:Now|Online).*$/i, "")
+      .replace(/\s*[-–—:]\s*Hindi\s*Dubbed.*$/i, "")
+      .replace(/\s*[-–—:]\s*All\s*Episodes.*$/i, "")
+      .replace(/\s*[-–—:]\s*Episodes?.*$/i, "")
+      .replace(/\s*[-–—:]\s*Anime\s*Salt.*$/i, "")
+      .replace(/\s*[([]?\s*Hindi\s*Dub(?:bed)?\s*[)\]]?\s*$/i, "")
+      .trim();
+  }
+
+  const rawBase = item.title ? cleanAnimeTitle(item.title) : "";
+  const cleanTitle = rawBase || formatDisplayTitle(cleanSlug);
+
+  // 2. Determine whether Hindi is verified by reliable data
+  //    (Do not infer from slug, title, query, branding, or hardcoded fallbacks)
+  const isHindiConfirmed = Boolean(
+    (typeof animeData?.language === "string" &&
+      animeData.language.trim().length > 0 &&
+      animeData.language.toLowerCase().includes("hindi")) ||
+    (Array.isArray(movieData?.languages) &&
+      movieData.languages.some(
+        (l) => typeof l === "string" && l.trim().toLowerCase().includes("hindi")
+      )) ||
+    (getAnimeBySlug(cleanSlug)?.languages &&
+      Array.isArray(getAnimeBySlug(cleanSlug)?.languages) &&
+      getAnimeBySlug(cleanSlug)!.languages.some(
+        (l) => typeof l === "string" && l.toLowerCase() === "hindi"
+      ))
+  );
+
+  // 3. Generate SEO title based on verified Hindi availability
+  const seoTitle = isHindiConfirmed
+    ? `${cleanTitle} Hindi Dubbed | Hindi Anime`
+    : `${cleanTitle} | Hindi Anime`;
+
+  // Build description: prefer synopsis, then construct from available fields.
+  // Never invent language/dub/sub claims — only use what the API confirmed.
+  function buildAnimeDescription(anime: Anime): string {
+    const hasSynopsis =
+      anime.synopsis &&
+      anime.synopsis !== SYNOPSIS_FALLBACK &&
+      anime.synopsis !== "No synopsis available." &&
+      anime.synopsis.length > 20;
+
+    if (hasSynopsis) {
+      // Truncate cleanly at word boundary, max 155 chars
+      const raw = anime.synopsis!.replace(/\s+/g, " ").trim();
+      if (raw.length <= 155) return raw;
+      const cut = raw.lastIndexOf(" ", 152);
+      return (cut > 80 ? raw.slice(0, cut) : raw.slice(0, 152)) + "…";
+    }
+
+    // Fallback: construct from available structured data
+    const parts: string[] = [];
+    if (anime.type === "Movie") {
+      parts.push(`Watch ${cleanTitle}`);
+    } else {
+      const epInfo =
+        anime.episodeCount && anime.episodeCount > 0
+          ? ` (${anime.episodeCount} episode${anime.episodeCount > 1 ? "s" : ""})`
+          : "";
+      const seasonInfo =
+        anime.seasons && anime.seasons > 1 ? `, ${anime.seasons} seasons` : "";
+      parts.push(`Watch ${cleanTitle}${epInfo}${seasonInfo}`);
+    }
+    if (anime.year && anime.year > 1990) parts.push(`from ${anime.year}`);
+    if (anime.genres && anime.genres.length > 0) {
+      parts.push(`— ${anime.genres.slice(0, 3).join(", ")} anime`);
+    }
+    parts.push("on Hindi Anime.");
+    return parts.join(" ");
+  }
+
+  const seoDescription = buildAnimeDescription(item);
+  const ogType = item.type === "Movie" ? "video.movie" : "video.tv_show";
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+
   return {
-    title: item.title,
-    description: item.synopsis,
+    title: {
+      absolute: seoTitle,
+    },
+    description: seoDescription,
     openGraph: {
-      title: item.title,
-      description: item.synopsis,
-      type: item.type === "Movie" ? "video.movie" : "video.tv_show",
+      title: seoTitle,
+      description: seoDescription,
+      type: ogType,
+      url: `${siteUrl}/anime/${cleanSlug}`,
+      ...(item.poster && item.poster.startsWith("http")
+        ? { images: [{ url: item.poster, alt: cleanTitle }] }
+        : {}),
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: seoTitle,
+      description: seoDescription,
     },
     alternates: { canonical: `/anime/${cleanSlug}` },
   };

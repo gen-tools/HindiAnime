@@ -1,5 +1,5 @@
 /**
- * Browser-only IndexedDB wrapper for HINDIANIME structured user data.
+ * Browser-only IndexedDB wrapper for Hindi Anime structured user data.
  * Zero external dependencies. Zero backend database.
  */
 

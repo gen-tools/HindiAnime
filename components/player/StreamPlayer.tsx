@@ -24,15 +24,44 @@ interface ValidServer {
   embed: string;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+function isSourceB(embed: string): boolean {
+  if (!embed || typeof embed !== "string") return false;
+  try {
+    const parsed = new URL(embed);
+    // Source B is a direct video endpoint (/video/), video player endpoint (/player),
+    // or contains a media content token/hash (16+ hex characters),
+    // distinct from numeric embed wrappers (/(?:public/)?embed/\d+)
+    if (parsed.pathname.includes("/video/") || parsed.pathname.includes("/player")) {
+      return true;
+    }
+    if (/[a-f0-9]{16,}/i.test(parsed.pathname) || parsed.searchParams.has("data")) {
+      return true;
+    }
+  } catch {
+    if (embed.includes("/video/") || embed.includes("/player") || /[a-f0-9]{16,}/i.test(embed)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function parseValidServers(results: StreamItem[]): ValidServer[] {
   const valid = results.filter((r) => isValidEmbedUrl(r.embed));
-  // Guarantee up to 2 distinct working servers (Server 1 and Server 2)
-  return valid.slice(0, 2).map((r, i) => ({
-    label: `Server ${i + 1}`,
-    embed: r.embed,
-  }));
+  if (valid.length === 0) return [];
+
+  // Identify Source B reliably from existing stream data:
+  // Source B provides direct video stream playback (/video/ with content hash or player endpoints).
+  const sourceB = valid.find((r) => isSourceB(r.embed));
+
+  // Prioritize Source B when available; otherwise gracefully fall back to first valid stream
+  const selected = sourceB || valid[0];
+
+  return [
+    {
+      label: "Server 1",
+      embed: selected.embed,
+    },
+  ];
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -52,7 +81,6 @@ export function StreamPlayer({
   const [state, setState] = useState<PlayerState>("loading");
   const [servers, setServers] = useState<ValidServer[]>([]);
   const [activeServer, setActiveServer] = useState<ValidServer | null>(null);
-  const [showServerFallback, setShowServerFallback] = useState(false);
   const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
@@ -133,7 +161,6 @@ export function StreamPlayer({
     setState("loading");
     setServers([]);
     setActiveServer(null);
-    setShowServerFallback(false);
 
     try {
       const res = await fetch(
@@ -167,24 +194,7 @@ export function StreamPlayer({
     return () => window.clearTimeout(timer);
   }, [fetchStreams]);
 
-  // Playback state inside a third-party iframe is not exposed to the parent
-  // page. If Server 1 is still selected after a short grace period, offer the
-  // user the available fallback instead of leaving them at a blank player.
-  useEffect(() => {
-    if (
-      state !== "ready" ||
-      servers.length < 2 ||
-      activeServer?.embed !== servers[0]?.embed
-    ) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => setShowServerFallback(true), 8000);
-    return () => window.clearTimeout(timer);
-  }, [activeServer?.embed, servers, state]);
-
   const selectServer = useCallback((server: ValidServer) => {
-    setShowServerFallback(false);
     setActiveServer(server);
   }, []);
 
@@ -256,18 +266,6 @@ export function StreamPlayer({
               </button>
             </div>
           </>
-        )}
-        {showServerFallback && servers[1] && (
-          <div className="absolute inset-x-3 bottom-3 z-10 flex flex-wrap items-center justify-center gap-2 rounded-lg border border-border-line bg-black/85 px-3 py-2 text-center text-xs text-text-secondary shadow-lg sm:text-sm">
-            <span>Video not starting on Server 1?</span>
-            <button
-              type="button"
-              onClick={() => selectServer(servers[1])}
-              className="focus-ring rounded-md bg-green-primary px-2.5 py-1 font-semibold text-white transition-colors hover:bg-green-bright hover:text-black"
-            >
-              Try Server 2
-            </button>
-          </div>
         )}
       </div>
 

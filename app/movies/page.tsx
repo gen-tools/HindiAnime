@@ -22,9 +22,9 @@ import { formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = {
-  title: "Anime Movies | Dubbed & Subbed in Hindi, Tamil, Telugu | HINDIANIME",
+  title: "Anime Movies",
   description:
-    "Stream blockbuster anime movies including Suzume, Your Name, Jujutsu Kaisen 0, Mugen Train, Spirited Away, and more in Hindi and regional dubs.",
+    "Explore and stream anime movies in Hindi and regional languages on Hindi Anime.",
 };
 
 export default async function MoviesPage({

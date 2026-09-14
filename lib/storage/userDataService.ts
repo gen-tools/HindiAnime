@@ -1,5 +1,5 @@
 /**
- * Client-side service layer for HINDIANIME user data.
+ * Client-side service layer for Hindi Anime user data.
  * Purely browser-backed (IndexedDB + localStorage guest profile).
  * Designed for easy future transition to MongoDB / backend APIs without UI redesign.
  */

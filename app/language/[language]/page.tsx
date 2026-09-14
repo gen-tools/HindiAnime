@@ -11,6 +11,7 @@ import { Headphones, Subtitles, Globe, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import { languages } from "@/lib/mock/languages";
+import { genres } from "@/lib/mock/genres";
 
 interface LanguagePageConfig {
   h1: string;
@@ -68,6 +69,38 @@ const languageConfigs: Record<string, LanguagePageConfig> = {
     intro:
       "Discover quality Malayalam dubbed anime and experience anime in Malayalam with regional audio options. Stream beloved Malayalam anime series and movies in one convenient place.",
   },
+  english: {
+    h1: "English Dubbed Anime",
+    title: "English Dubbed Anime - Watch Anime in English",
+    description:
+      "Watch English dubbed anime series and movies. Stream popular releases with high quality English voiceovers and synchronized subtitles.",
+    intro:
+      "Browse top English dubbed anime and stream favorite anime series in English. Explore a wide variety of dubbed anime releases with clear voice acting and full episode availability.",
+  },
+  japanese: {
+    h1: "Japanese Anime with Subtitles",
+    title: "Japanese Anime - Watch Original Anime in Japanese",
+    description:
+      "Watch original Japanese anime with synchronized subtitles. Stream trending and classic series with authentic Japanese audio.",
+    intro:
+      "Experience original Japanese anime broadcasts with multi-language subtitle tracks. Stream classic masterpieces and ongoing seasonal anime in authentic Japanese voice.",
+  },
+  korean: {
+    h1: "Korean Dubbed Anime",
+    title: "Korean Dubbed Anime - Watch Anime in Korean",
+    description:
+      "Watch Korean dubbed anime and manhwa adaptations online with clear audio and multi-language subtitles.",
+    intro:
+      "Explore Korean dubbed anime and webtoon adaptations with Korean audio dubs. Stream engaging anime series and special releases.",
+  },
+  marathi: {
+    h1: "Marathi Dubbed Anime",
+    title: "Marathi Dubbed Anime - Watch Anime in Marathi",
+    description:
+      "Watch Marathi dubbed anime episodes and films online with localized regional audio tracks.",
+    intro:
+      "Stream entertaining Marathi dubbed anime with regional voiceovers. Discover available Marathi anime series and movies for regional anime fans.",
+  },
 };
 
 function getLanguageConfig(code: string, label: string): LanguagePageConfig {
@@ -99,9 +132,11 @@ export async function generateMetadata({
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
   const canonicalUrl = `${siteUrl}/language/${lang.code}`;
 
+  const fullTitle = `${config.title} | Hindi Anime`;
+
   return {
     title: {
-      absolute: config.title,
+      absolute: fullTitle,
     },
     description: config.description,
     alternates: {
@@ -116,7 +151,7 @@ export async function generateMetadata({
       },
     },
     openGraph: {
-      title: config.title,
+      title: fullTitle,
       description: config.description,
       url: canonicalUrl,
       type: "website",
@@ -245,6 +280,30 @@ export default async function LanguagePage({
         ) : (
           <NoResultsState />
         )}
+      </div>
+
+      {/* Internal Navigation: Popular Genres */}
+      <div className="mt-14 border-t border-border-line/60 pt-8">
+        <h2 className="text-sm font-semibold text-text-primary">
+          Explore Popular Genres
+        </h2>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {genres.slice(0, 8).map((g) => (
+            <Link
+              key={g.slug}
+              href={`/genre/${g.slug}`}
+              className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
+            >
+              {g.label} Anime
+            </Link>
+          ))}
+          <Link
+            href="/genre"
+            className="rounded-lg border border-border-line bg-surface/60 px-3 py-1.5 text-xs font-medium text-green-light transition-colors hover:border-green-primary hover:text-white"
+          >
+            All Genres &rarr;
+          </Link>
+        </div>
       </div>
     </div>
   );

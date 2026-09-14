@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ProfileView } from "@/components/profile/ProfileView";
 
 export const metadata: Metadata = {
-  title: "Guest Profile & Library | HINDIANIME",
+  title: "Guest Profile & Library",
   description:
     "Manage your local watch progress, anime favorites list, watch history, and viewing statistics stored directly in your browser.",
 };

@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
+    formats: ["image/avif", "image/webp"],
+    minimumCacheTTL: 604800,
     remotePatterns: [
       { protocol: "https", hostname: "image.tmdb.org" },
       { protocol: "https", hostname: "img.animesalt.cx" },
@@ -19,7 +21,6 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "**.wp.com" },
     ],
     // Disable domain-based blocking for external images entirely
-    // (PosterArt already uses unoptimized={true} for all external images)
     dangerouslyAllowSVG: true,
     contentDispositionType: "inline",
   },

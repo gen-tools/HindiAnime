@@ -98,7 +98,7 @@ export function Footer() {
 
       <div className="border-t border-border-line">
         <div className="container-page flex flex-col items-center justify-between gap-2 py-5 text-xs text-text-muted sm:flex-row">
-          <p>© 2026 HindiAnime. All rights reserved.</p>
+          <p>© 2026 Hindi Anime. All rights reserved.</p>
           <p>Developed by Sheztech</p>
         </div>
       </div>

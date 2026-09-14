@@ -116,7 +116,7 @@ export async function generateMetadata({
       title: formattedTitle,
       synopsis:
         directData?.synopsis ||
-        (typeof movieData?.overview === "string" ? movieData.overview : `Watch ${formattedTitle} in Hindi on HindiAnime.`),
+        (typeof movieData?.overview === "string" ? movieData.overview : SYNOPSIS_FALLBACK),
       poster,
       backdrop: directData?.backdrop || poster,
       rating: Number(movieData?.rating) || 8.5,
@@ -136,22 +136,85 @@ export async function generateMetadata({
     };
   }
 
-  const title =
-    directData?.title ||
-    (anime.title && !anime.title.includes("%") ? anime.title : formatDisplayTitle(cleanSlug));
-
-  // Parse ep-{season}-{ep} → human-readable label
-  let episodeLabel = isMovie ? "Full Movie" : episodeId;
-  if (!isMovie) {
-    const match = episodeId.match(/ep-(\d+)-(\d+)/);
-    if (match) {
-      episodeLabel = `S${match[1]} Episode ${match[2]}`;
-    }
+  // ── Clean the anime title before using in metadata ───────────────────────
+  function cleanAnimeTitle(rawTitle: string): string {
+    return rawTitle
+      .replace(/\s*[-–—:]\s*Watch\s*(?:Now|Online).*$/i, "")
+      .replace(/\s*[-–—:]\s*Hindi\s*Dubbed.*$/i, "")
+      .replace(/\s*[-–—:]\s*(?:Hindi|Tamil|Telugu|Malayalam|Kannada|Bengali|Marathi|English|Japanese|Dubbed|Subbed).*$/i, "")
+      .replace(/\s*[-–—:]\s*All\s*Episodes.*$/i, "")
+      .replace(/\s*[-–—:]\s*Episodes?.*$/i, "")
+      .replace(/\s*[-–—:]\s*Anime\s*Salt.*$/i, "")
+      .replace(/\s*[([]?\s*Hindi\s*Dub(?:bed)?\s*[)\]]?\s*$/i, "")
+      .trim();
   }
 
+  const rawTitle =
+    directData?.title ||
+    (anime.title && !anime.title.includes("%") ? anime.title : formatDisplayTitle(cleanSlug));
+  const cleanTitle = cleanAnimeTitle(rawTitle) || formatDisplayTitle(cleanSlug);
+
+  // ── Build SEO metadata for the episode/watch page ────────────────────────
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+
+  // Episode label: "Season 1 Episode 3" or "Full Movie"
+  let episodeLabel: string;
+  if (isMovie) {
+    episodeLabel = "Full Movie";
+  } else {
+    const m = episodeId.match(/ep-(\d+)-(\d+)/);
+    episodeLabel = m ? `Season ${m[1]} Episode ${m[2]}` : episodeId;
+  }
+
+  // Concise page title — use title.absolute to avoid layout template doubling
+  const seoTitle = `${cleanTitle} — ${episodeLabel} | Hindi Anime`;
+
+  // Description: lead with episode context, append synopsis snippet if real
+  function buildWatchDescription(): string {
+    const hasSynopsis =
+      anime.synopsis &&
+      anime.synopsis !== SYNOPSIS_FALLBACK &&
+      anime.synopsis !== "No synopsis available." &&
+      anime.synopsis.length > 20;
+
+    const lead = isMovie
+      ? `Watch ${cleanTitle} full movie`
+      : `Watch ${cleanTitle} ${episodeLabel}`;
+
+    if (!hasSynopsis) return `${lead} on Hindi Anime.`;
+
+    // Append a short synopsis snippet (≤120 chars total for the sentence)
+    const raw = anime.synopsis!.replace(/\s+/g, " ").trim();
+    const maxSnippet = 120 - lead.length - 4; // 4 = " — " + "."
+    if (maxSnippet < 20) return `${lead} on Hindi Anime.`;
+    const snippet =
+      raw.length <= maxSnippet
+        ? raw
+        : raw.slice(0, raw.lastIndexOf(" ", maxSnippet - 1) || maxSnippet) + "…";
+    return `${lead} — ${snippet}`;
+  }
+
+  const seoDescription = buildWatchDescription();
+
   return {
-    title: `${title} — ${episodeLabel} | HINDIANIME`,
-    description: `Watch ${title} ${episodeLabel} in Hindi on HindiAnime.`,
+    title: {
+      absolute: seoTitle,
+    },
+    description: seoDescription,
+    openGraph: {
+      title: seoTitle,
+      description: seoDescription,
+      type: isMovie ? "video.movie" : "video.episode",
+      url: `${siteUrl}/watch/${cleanSlug}/${episodeId}`,
+      ...(anime.poster && anime.poster.startsWith("http")
+        ? { images: [{ url: anime.poster, alt: cleanTitle }] }
+        : {}),
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: seoTitle,
+      description: seoDescription,
+    },
     alternates: { canonical: `/watch/${cleanSlug}/${episodeId}` },
   };
 }
@@ -431,7 +494,7 @@ export default async function WatchPage({
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary">
             {anime.synopsis && anime.synopsis !== SYNOPSIS_FALLBACK
               ? anime.synopsis
-              : `Watch ${anime.title} ${isMovie ? "Full Movie" : `Season ${episode.season} Episode ${episode.number}`} with Hindi dub in high quality on HindiAnime.`}
+              : `Watch ${anime.title} ${isMovie ? "Full Movie" : `Season ${episode.season} Episode ${episode.number}`} on Hindi Anime.`}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2.5">
             <Badge tone="outline">{isMovie ? "Movie" : `Season ${episode.season}`}</Badge>

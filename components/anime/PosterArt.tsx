@@ -50,9 +50,9 @@ export function PosterArt({
       imageSrc.startsWith("/uploads/"))
   );
 
-  // For landscape orientation (hero banners, page headers), upgrade TMDB w500 to original HD
+  // For landscape orientation (hero banners, page headers), upgrade TMDB w500 to HD w1280
   if (orientation === "landscape" && imageSrc && imageSrc.includes("image.tmdb.org/t/p/w500/")) {
-    imageSrc = imageSrc.replace("/w500/", "/original/");
+    imageSrc = imageSrc.replace("/w500/", "/w1280/");
   }
 
   return (
@@ -82,16 +82,11 @@ export function PosterArt({
               : "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 250px"
           }
           className={cn(fit === "contain" ? "object-contain" : "object-cover", imageClassName)}
-          // Use unoptimized for external CDN images (TMDB, animesalt) to
-          // avoid Next.js image optimizer 404s when the CDN blocks proxy fetches
+          // TMDB and local images are optimized by Next.js into AVIF/WebP.
+          // Direct third-party scrape CDNs that might reject proxy fetches remain unoptimized.
           unoptimized={
-            imageSrc.includes("image.tmdb.org") ||
             imageSrc.includes("animesalt.cx") ||
-            imageSrc.includes("multishows.top") ||
-            imageSrc.includes(".webp") ||
-            imageSrc.includes(".png") ||
-            imageSrc.includes(".jpg") ||
-            imageSrc.includes(".jpeg")
+            imageSrc.includes("multishows.top")
           }
           onError={() => setFailedImageSrc(imageSrc)}
         />

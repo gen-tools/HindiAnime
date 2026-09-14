@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { FileText, CheckCircle2, AlertTriangle, Shield } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | HINDIANIME",
-  description: "Terms of Service and platform usage terms for HindiAnime.",
+  title: "Terms of Service",
+  description: "Terms of Service and platform usage terms for Hindi Anime.",
 };
 
 export default function TermsOfServicePage() {
@@ -26,7 +26,7 @@ export default function TermsOfServicePage() {
             1. Acceptance of Terms
           </h2>
           <p>
-            By accessing or using HindiAnime, you agree to comply with and be bound by these Terms of Service.
+            By accessing or using Hindi Anime, you agree to comply with and be bound by these Terms of Service.
             If you do not agree to these terms, please do not use the platform.
           </p>
         </section>
@@ -37,7 +37,7 @@ export default function TermsOfServicePage() {
             2. Intellectual Property &amp; Content Disclaimer
           </h2>
           <p>
-            HindiAnime does not host, upload, or store copyright-protected media files directly on its
+            Hindi Anime does not host, upload, or store copyright-protected media files directly on its
             servers. All video content is indexed or embedded from third-party media hosts. All trademarks,
             logos, and anime copyrights belong to their respective creators and production committees.
           </p>

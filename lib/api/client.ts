@@ -20,7 +20,7 @@ import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
 import type { LanguageCode } from "@/types/language";
 import { deduplicateEpisodes } from "@/lib/episodes";
-import { fuzzySearch } from "@/lib/fuzzy-search";
+import { fuzzySearch, fuzzyScore, COMMON_ACRONYMS } from "@/lib/fuzzy-search";
 import { anime, getAnimeByGenre, getAnimeByLanguage } from "@/lib/mock/anime";
 
 const API_BASE_URL =
@@ -743,8 +743,8 @@ export async function scrapeAnimeSaltLanguage(
   try {
     const url =
       page <= 1
-        ? `https://animesalt.cx/category/${cleanLang}/`
-        : `https://animesalt.cx/category/${cleanLang}/page/${page}/`;
+        ? `https://animesalt.cx/category/language/${cleanLang}/`
+        : `https://animesalt.cx/category/language/${cleanLang}/page/${page}/`;
 
     const html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
@@ -976,39 +976,72 @@ export async function searchGlobalAnime(
     return { results: [], totalPages: 1 };
   }
 
-  // 1. Query the live API search endpoint / full dataset scraper
-  const searchResp = await searchAnime(cleanQ, page);
-  const liveResults = (searchResp?.results?.results ?? []).map((item) => ({
-    item: mapSearchItemToAnime(item),
-    score: 1.0,
-  }));
+  const aliasTerm = COMMON_ACRONYMS[cleanQ.toLowerCase()];
 
-  if (liveResults.length > 0) {
-    // Enrich with any known local items (fuzzy match on titles for higher detail)
+  // 1. Query live search for both query and alias (e.g. jjk -> jujutsu kaisen)
+  const [searchResp, aliasResp] = await Promise.all([
+    searchAnime(cleanQ, page),
+    aliasTerm && aliasTerm !== cleanQ.toLowerCase()
+      ? searchAnime(aliasTerm, page)
+      : Promise.resolve(null),
+  ]);
+
+  const rawResults = [
+    ...(searchResp?.results?.results ?? []),
+    ...(aliasResp?.results?.results ?? []),
+  ];
+
+  if (rawResults.length > 0) {
+    const seenSlugs = new Set<string>();
+    const allAnime: Anime[] = [];
+
+    for (const raw of rawResults) {
+      const mapped = mapSearchItemToAnime(raw);
+      if (!seenSlugs.has(mapped.slug)) {
+        seenSlugs.add(mapped.slug);
+        allAnime.push(mapped);
+      }
+    }
+
+    // Score and rank all live results with fuzzyScore against query and alias
+    const scored = allAnime.map((item) => {
+      const s1 = fuzzyScore(cleanQ, item.title);
+      const s2 = aliasTerm ? fuzzyScore(aliasTerm, item.title) : { score: 0, reasons: [] };
+      const sSlug = fuzzyScore(cleanQ, item.slug.replace(/-/g, " "));
+      const bestScore = Math.max(s1.score, s2.score, sSlug.score);
+      return {
+        item,
+        score: bestScore > 0 ? bestScore : 0.4,
+      };
+    });
+
+    // Sort by relevance descending
+    scored.sort((a, b) => b.score - a.score);
+
+    // Enrich with any local mock items that match
     const localMatches = fuzzySearch(cleanQ, anime, 0.6);
-    const seenSlugs = new Set(liveResults.map((r) => r.item.slug));
-    const merged = [...liveResults];
-
     for (const match of localMatches) {
       if (!seenSlugs.has(match.item.slug)) {
         seenSlugs.add(match.item.slug);
-        merged.push(match);
+        scored.push(match);
       }
     }
 
     const totalPages = Math.max(
       searchResp?.results?.totalPages ?? 1,
-      Math.ceil(merged.length / GLOBAL_SEARCH_PAGE_SIZE)
+      aliasResp?.results?.totalPages ?? 1,
+      Math.ceil(scored.length / GLOBAL_SEARCH_PAGE_SIZE)
     );
+
     return {
-      results: merged,
+      results: scored,
       totalPages,
     };
   }
 
   // 2. Fallback: fuzzy search against known catalog/mock titles
   const catalog = await getGlobalCatalog();
-  const ranked = fuzzySearch(cleanQ, catalog.length > 0 ? catalog : anime, 0.55);
+  const ranked = fuzzySearch(cleanQ, catalog.length > 0 ? catalog : anime, 0.4);
   const currentPage = Math.max(1, page);
   const start = (currentPage - 1) * GLOBAL_SEARCH_PAGE_SIZE;
 
