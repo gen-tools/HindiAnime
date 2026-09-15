@@ -4,7 +4,7 @@ import { PosterArt } from "@/components/anime/PosterArt";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
 import { EpisodeList } from "@/components/episodes/EpisodeList";
 import { AnimeRow } from "@/components/anime/AnimeRow";
-import { getAnimeBySlug } from "@/lib/mock/anime";
+import { getAnimeBySlug, getAnimeByGenre } from "@/lib/mock/anime";
 import {
   getAnimeInfo,
   getEpisodes,
@@ -14,6 +14,7 @@ import {
   mapApiEpisodeToEpisode,
   cleanAnimeSlug,
   getHomepageFeed,
+  getGenreCatalog,
   getAvailableSeasons,
   getMovieInfo,
   mapMovieInfoToAnime,
@@ -512,19 +513,74 @@ export default async function AnimeDetailPage({
 
   const firstEpisodeId = episodes.length > 0 ? episodes[0].id : `ep-${seasonNum}-1`;
 
-  // Build related from homepage feed
-  const homepageFeed = await getHomepageFeed();
-  const feedSections = homepageFeed?.data?.results;
-  const relatedRaw = feedSections
-    ? [
-        ...(feedSections.mostWatched_Series ?? []),
-        ...(feedSections.on_air_series ?? []),
-      ]
-    : [];
-  const related = relatedRaw
-    .map((candidate) => mapSearchItemToAnime(candidate))
-    .filter((candidate) => candidate.slug !== item!.slug)
-    .slice(0, 12);
+  // ── Build "You Might Also Like" genre-based anime ─────────────────────────
+  const validGenreSlugs = [
+    "action",
+    "adventure",
+    "comedy",
+    "drama",
+    "fantasy",
+    "romance",
+    "horror",
+    "mystery",
+    "sci-fi",
+    "thriller",
+    "sports",
+    "isekai",
+    "slice-of-life",
+  ];
+
+  const matchedGenres = (item.genres || [])
+    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
+    .filter((g) => g && g !== "animation");
+
+  const primaryGenre =
+    matchedGenres.find((g) => validGenreSlugs.includes(g)) ||
+    matchedGenres[0] ||
+    "action";
+
+  const genreData = await getGenreCatalog(primaryGenre, 1).catch(() => null);
+  const genreCatalogItems = genreData?.results || [];
+
+  const seenSlugs = new Set<string>([item.slug]);
+  const youMightAlsoLikeItems: Anime[] = [];
+
+  for (const genreItem of genreCatalogItems) {
+    if (genreItem.slug && !seenSlugs.has(genreItem.slug)) {
+      seenSlugs.add(genreItem.slug);
+      youMightAlsoLikeItems.push(genreItem);
+    }
+  }
+
+  for (const g of (matchedGenres.length ? matchedGenres : [primaryGenre])) {
+    const mockGenreItems = getAnimeByGenre(g);
+    for (const mockItem of mockGenreItems) {
+      if (mockItem.slug && !seenSlugs.has(mockItem.slug)) {
+        seenSlugs.add(mockItem.slug);
+        youMightAlsoLikeItems.push(mockItem);
+      }
+    }
+  }
+
+  if (youMightAlsoLikeItems.length < 10) {
+    const homepageFeed = await getHomepageFeed();
+    const feedSections = homepageFeed?.data?.results;
+    const relatedRaw = feedSections
+      ? [
+          ...(feedSections.mostWatched_Series ?? []),
+          ...(feedSections.on_air_series ?? []),
+        ]
+      : [];
+    for (const candidate of relatedRaw) {
+      const mapped = mapSearchItemToAnime(candidate);
+      if (mapped.slug && !seenSlugs.has(mapped.slug)) {
+        seenSlugs.add(mapped.slug);
+        youMightAlsoLikeItems.push(mapped);
+      }
+    }
+  }
+
+  const related = youMightAlsoLikeItems.slice(0, 18);
 
   return (
     <div className="pb-14">
@@ -565,7 +621,11 @@ export default async function AnimeDetailPage({
       )}
 
       {related.length > 0 && (
-        <AnimeRow title="You Might Also Like" items={related} />
+        <AnimeRow
+          title="You Might Also Like"
+          items={related}
+          viewAllHref={`/genre/${primaryGenre}`}
+        />
       )}
     </div>
   );

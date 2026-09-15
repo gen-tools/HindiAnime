@@ -11,11 +11,15 @@ export function AnimeRow({
   items,
   viewAllHref,
   ranked = false,
+  className,
+  containerClassName,
 }: {
   title: string;
   items: Anime[];
   viewAllHref?: string;
   ranked?: boolean;
+  className?: string;
+  containerClassName?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -54,8 +58,8 @@ export function AnimeRow({
   if (items.length === 0) return null;
 
   return (
-    <section className="py-7 md:py-9">
-      <div className="container-page">
+    <section className={className ?? "py-7 md:py-9"}>
+      <div className={containerClassName ?? "container-page"}>
         {/* Section Header */}
         <div className="mb-4 flex items-end justify-between">
           <h2 className="font-display text-xl font-bold text-text-primary md:text-2xl">

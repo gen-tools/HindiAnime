@@ -64,6 +64,31 @@ function parseValidServers(results: StreamItem[]): ValidServer[] {
   ];
 }
 
+// ─── Auto-retry guard ─────────────────────────────────────────────────────────
+// Prevents infinite reload loops. Keyed per episode so switching episodes resets
+// the counter automatically. Stored in sessionStorage so a manual page refresh
+// always resets the counter and allows a clean start.
+
+const MAX_AUTO_RETRIES = 2;
+
+function getRetryCount(key: string): number {
+  try {
+    return parseInt(sessionStorage.getItem(key) ?? "0", 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function incrementRetryCount(key: string): number {
+  try {
+    const next = getRetryCount(key) + 1;
+    sessionStorage.setItem(key, String(next));
+    return next;
+  } catch {
+    return MAX_AUTO_RETRIES; // treat as exhausted if storage is unavailable
+  }
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function StreamPlayer({
@@ -86,6 +111,10 @@ export function StreamPlayer({
   const [showExitButton, setShowExitButton] = useState(false);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Session key for auto-retry guard — unique per episode so switching
+  // episodes always resets the counter without any explicit cleanup.
+  const retryKey = `hindianime_retry_${animeSlug}_s${season}_e${episode}`;
 
   const triggerShowExit = useCallback(() => {
     setShowExitButton(true);
@@ -194,6 +223,30 @@ export function StreamPlayer({
     return () => window.clearTimeout(timer);
   }, [fetchStreams]);
 
+  // ── Auto-recovery: handle iframe load timeout ────────────────────────────
+  // Cross-origin iframes cannot propagate internal errors (e.g. "connection
+  // was reset") to the parent page. The only reliably detectable signal from
+  // our side is that the iframe's onload event never fires within a reasonable
+  // window. When that happens we re-fetch streams via the existing fetchStreams
+  // path (which runs a fresh scrape and may return a new embed URL).
+  // The sessionStorage counter caps retries at MAX_AUTO_RETRIES per episode;
+  // after that the existing ErrorState UI is shown so the user can retry manually.
+  const handleIframeLoadTimeout = useCallback(() => {
+    const count = incrementRetryCount(retryKey);
+    if (count <= MAX_AUTO_RETRIES) {
+      console.info(
+        `[StreamPlayer] iframe load timeout — auto-retry ${count}/${MAX_AUTO_RETRIES} (${retryKey})`
+      );
+      fetchStreams();
+    } else {
+      // Retries exhausted — surface error UI; user can still press Retry manually
+      console.warn(
+        `[StreamPlayer] iframe load timeout — retry limit reached (${retryKey})`
+      );
+      setState("error");
+    }
+  }, [fetchStreams, retryKey]);
+
   const selectServer = useCallback((server: ValidServer) => {
     setActiveServer(server);
   }, []);
@@ -220,28 +273,40 @@ export function StreamPlayer({
         {state === "error" && <ErrorState onRetry={fetchStreams} />}
         {state === "unavailable" && <UnavailableState />}
         {state === "ready" && activeServer && (
-          <EmbedFrame embed={activeServer.embed} title={episodeTitle} />
+          <EmbedFrame
+            embed={activeServer.embed}
+            title={episodeTitle}
+            onLoadTimeout={handleIframeLoadTimeout}
+          />
         )}
-        {/* Fullscreen bottom trigger zones and exit button */}
+        {/* Fullscreen exit controls */}
         {isFullscreen && (
           <>
-            {/* Bottom edge hover trigger strip (catches mouse when moved to the very bottom) */}
+            {/* ── Mobile: always-visible sticky exit button (no hover on touch) ── */}
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              aria-label="Exit fullscreen"
+              className="sm:hidden absolute bottom-4 right-4 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/80 text-white shadow-xl backdrop-blur-md active:scale-90"
+            >
+              <Minimize className="h-4 w-4 text-green-bright" />
+            </button>
+
+            {/* ── Desktop: hover-reveal exit button ── */}
+            {/* Bottom edge hover trigger strip */}
             <div
               onMouseEnter={triggerShowExit}
               onMouseMove={triggerShowExit}
-              className="absolute inset-x-0 bottom-0 z-30 h-4 pointer-events-auto"
+              className="hidden sm:block absolute inset-x-0 bottom-0 z-30 h-4 pointer-events-auto"
               aria-hidden="true"
             />
-
             {/* Bottom-right corner hover trigger zone */}
             <div
               onMouseEnter={triggerShowExit}
               onMouseMove={triggerShowExit}
-              className="absolute bottom-0 right-0 z-30 h-24 w-60 pointer-events-auto"
+              className="hidden sm:block absolute bottom-0 right-0 z-30 h-24 w-60 pointer-events-auto"
               aria-hidden="true"
             />
-
-            {/* Exit Fullscreen button at bottom right (auto-hides unless mouse moves down to bottom) */}
             <div
               onMouseEnter={cancelHideExit}
               onMouseLeave={() => {
@@ -249,7 +314,7 @@ export function StreamPlayer({
                 hideExitTimerRef.current = setTimeout(() => setShowExitButton(false), 1200);
               }}
               className={cn(
-                "absolute bottom-5 right-5 z-40 transition-all duration-300 ease-out",
+                "hidden sm:flex absolute bottom-5 right-5 z-40 transition-all duration-300 ease-out",
                 showExitButton
                   ? "translate-y-0 opacity-100 pointer-events-auto"
                   : "translate-y-4 opacity-0 pointer-events-none"
@@ -259,10 +324,9 @@ export function StreamPlayer({
                 type="button"
                 onClick={toggleFullscreen}
                 aria-label="Exit fullscreen"
-                className="flex items-center gap-2 rounded-xl border border-white/20 bg-black/85 px-4 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur-md transition-all hover:border-green-primary/50 hover:bg-black hover:text-green-light hover:scale-105 active:scale-95"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black/80 text-white shadow-xl backdrop-blur-md transition-all hover:border-green-primary/50 hover:bg-black hover:text-green-light hover:scale-110 active:scale-90"
               >
                 <Minimize className="h-4 w-4 text-green-bright" />
-                <span>Exit Fullscreen</span>
               </button>
             </div>
           </>
@@ -395,7 +459,69 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-function EmbedFrame({ embed, title }: { embed: string; title: string }) {
+// ─── EmbedFrame with load-timeout detection ──────────────────────────────────
+//
+// Cross-origin iframes cannot propagate internal load failures (e.g. "connection
+// was reset") to the parent page. What we CAN observe from the parent is whether
+// the iframe's onload event fires within a reasonable window.
+//
+// Strategy:
+//   • Start a 28-second timeout when the iframe mounts (or its src changes).
+//   • If onload fires before the timeout → success; cancel the timer.
+//   • If the timeout fires before onload → the provider likely failed to serve
+//     the embed. Call onLoadTimeout so the parent can re-fetch a fresh URL.
+//   • 28 s is longer than a typical browser TCP connection timeout (~20 s) but
+//     short enough that users aren't left staring at a blank frame indefinitely.
+//   • A successful onload does NOT guarantee the video plays; that determination
+//     is entirely inside the cross-origin provider and outside our reach.
+
+const IFRAME_LOAD_TIMEOUT_MS = 28_000;
+
+function EmbedFrame({
+  embed,
+  title,
+  onLoadTimeout,
+}: {
+  embed: string;
+  title: string;
+  onLoadTimeout: () => void;
+}) {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadedRef = useRef(false);
+
+  // Stable ref so the timeout closure always calls the latest callback
+  // without the embed-change effect needing to depend on it.
+  const onLoadTimeoutRef = useRef(onLoadTimeout);
+  useEffect(() => {
+    onLoadTimeoutRef.current = onLoadTimeout;
+  }, [onLoadTimeout]);
+
+  useEffect(() => {
+    // Reset loaded flag each time the embed URL changes (retry or server switch)
+    loadedRef.current = false;
+
+    timeoutRef.current = setTimeout(() => {
+      if (!loadedRef.current) {
+        onLoadTimeoutRef.current();
+      }
+    }, IFRAME_LOAD_TIMEOUT_MS);
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, [embed]); // intentionally only re-runs when the embed URL changes
+
+  const handleLoad = useCallback(() => {
+    loadedRef.current = true;
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
   return (
     <iframe
       src={embed}
@@ -408,6 +534,7 @@ function EmbedFrame({ embed, title }: { embed: string; title: string }) {
       mozallowfullscreen="true"
       loading="eager"
       referrerPolicy="no-referrer-when-downgrade"
+      onLoad={handleLoad}
     />
   );
 }

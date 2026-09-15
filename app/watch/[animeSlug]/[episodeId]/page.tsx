@@ -7,12 +7,15 @@ import { EpisodeList } from "@/components/episodes/EpisodeList";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
 import { Badge } from "@/components/ui/Badge";
 import { FavoriteButton } from "@/components/anime/FavoriteButton";
+import { AnimeRow } from "@/components/anime/AnimeRow";
 import { Play, ChevronRight } from "lucide-react";
-import { getAnimeBySlug } from "@/lib/mock/anime";
+import { getAnimeBySlug, getAnimeByGenre, anime as mockAnimeList } from "@/lib/mock/anime";
 import {
   getAnimeInfo,
   getEpisodes,
   getAvailableSeasons,
+  getHomepageFeed,
+  getGenreCatalog,
   searchAnime,
   mapApiInfoToAnime,
   mapSearchItemToAnime,
@@ -233,13 +236,14 @@ export default async function WatchPage({
   const episodeNumber = epMatch ? parseInt(epMatch[2], 10) || 1 : 1;
 
   // ── 1. Resolve anime metadata & episodes concurrently ──────────────────────
-  const [apiInfo, movieInfo, searchRes, discoveredSeasons, directData, epApiRes] = await Promise.all([
+  const [apiInfo, movieInfo, searchRes, discoveredSeasons, directData, epApiRes, homepageFeed] = await Promise.all([
     getAnimeInfo(cleanSlug),
     getMovieInfo(cleanSlug),
     searchAnime(searchKeyword, 1),
     getAvailableSeasons(cleanSlug),
     scrapeDirectSeriesData(cleanSlug),
     getEpisodes(cleanSlug, seasonNumber),
+    getHomepageFeed(),
   ]);
 
   // Match strictly by exact slug — never hijack identity with random search results
@@ -439,6 +443,89 @@ export default async function WatchPage({
     ? `${anime.title} — Full Movie`
     : `EP ${episode.number} — ${episode.title}`;
 
+  // ── 4. Build "You Might Also Like" genre-based anime ───────────────────────
+  const validGenreSlugs = [
+    "action",
+    "adventure",
+    "comedy",
+    "drama",
+    "fantasy",
+    "romance",
+    "horror",
+    "mystery",
+    "sci-fi",
+    "thriller",
+    "sports",
+    "isekai",
+    "slice-of-life",
+  ];
+
+  const matchedGenres = (anime.genres || [])
+    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
+    .filter((g) => g && g !== "animation");
+
+  // Determine the primary genre (e.g. "action" for Action anime)
+  const primaryGenre =
+    matchedGenres.find((g) => validGenreSlugs.includes(g)) ||
+    matchedGenres[0] ||
+    "action";
+
+  // Fetch all anime from this specific genre (e.g. Action anime)
+  const genreData = await getGenreCatalog(primaryGenre, 1).catch(() => null);
+  const genreCatalogItems = genreData?.results || [];
+
+  const seenSlugs = new Set<string>([cleanSlug]);
+  const youMightAlsoLikePool: Anime[] = [];
+
+  // 1. All anime from this specific genre catalog (e.g. Action)
+  for (const item of genreCatalogItems) {
+    if (item.slug && !seenSlugs.has(item.slug)) {
+      seenSlugs.add(item.slug);
+      youMightAlsoLikePool.push(item);
+    }
+  }
+
+  // 2. Mock anime matching any of this anime's genres (e.g. action, fantasy)
+  for (const g of (matchedGenres.length ? matchedGenres : [primaryGenre])) {
+    const mockGenreItems = getAnimeByGenre(g);
+    for (const item of mockGenreItems) {
+      if (item.slug && !seenSlugs.has(item.slug)) {
+        seenSlugs.add(item.slug);
+        youMightAlsoLikePool.push(item);
+      }
+    }
+  }
+
+  // 3. Fallback: if fewer than 10 items, supplement with homepage feed items
+  if (youMightAlsoLikePool.length < 10) {
+    const feedSections = homepageFeed?.data?.results;
+    const feedCandidates = feedSections
+      ? isMovie
+        ? [
+            ...(feedSections.mostWatched_Films ?? []),
+            ...(feedSections.latest_animeMovies ?? []),
+            ...(feedSections.mostWatched_Series ?? []),
+            ...(feedSections.on_air_series ?? []),
+          ]
+        : [
+            ...(feedSections.mostWatched_Series ?? []),
+            ...(feedSections.on_air_series ?? []),
+            ...(feedSections.mostWatched_Films ?? []),
+            ...(feedSections.latest_animeMovies ?? []),
+          ]
+      : [];
+
+    for (const candidate of feedCandidates) {
+      const mapped = mapSearchItemToAnime(candidate);
+      if (mapped.slug && !seenSlugs.has(mapped.slug)) {
+        seenSlugs.add(mapped.slug);
+        youMightAlsoLikePool.push(mapped);
+      }
+    }
+  }
+
+  const youMightAlsoLike = youMightAlsoLikePool.slice(0, 18);
+
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 md:py-8 lg:max-w-6xl transition-all">
       {/* Breadcrumb — server-rendered */}
@@ -571,6 +658,19 @@ export default async function WatchPage({
             episodes={episodes}
             animeSlug={anime.slug}
             activeEpisodeId={episode.id}
+          />
+        </div>
+      )}
+
+      {/* You Might Also Like */}
+      {youMightAlsoLike.length > 0 && (
+        <div className="mt-10 pt-6 border-t border-border-line/60">
+          <AnimeRow
+            title="You Might Also Like"
+            items={youMightAlsoLike}
+            className="py-0"
+            containerClassName="w-full"
+            viewAllHref={`/genre/${primaryGenre}`}
           />
         </div>
       )}
