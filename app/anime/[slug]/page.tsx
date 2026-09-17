@@ -4,6 +4,7 @@ import { PosterArt } from "@/components/anime/PosterArt";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
 import { EpisodeList } from "@/components/episodes/EpisodeList";
 import { AnimeRow } from "@/components/anime/AnimeRow";
+import { genres } from "@/lib/mock/genres";
 import { getAnimeBySlug, getAnimeByGenre } from "@/lib/mock/anime";
 import {
   getAnimeInfo,
@@ -98,7 +99,14 @@ export async function generateMetadata({
       status: isMovie ? "Completed" : "Ongoing",
       durationMinutes: isMovie ? 110 : 24,
       episodeCount: directData.s1Episodes.length || 1,
-      genres: ["action", "animation"],
+      genres:
+        (directData.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
+        (movieData?.genres && movieData.genres.length > 0
+          ? movieData.genres.map((g) => g.toLowerCase().replace(/\s+/g, "-"))
+          : undefined) ||
+        (getAnimeBySlug(cleanSlug)?.genres && getAnimeBySlug(cleanSlug)!.genres.length > 0
+          ? getAnimeBySlug(cleanSlug)!.genres
+          : []),
       languages: ["hindi", "japanese", "english"],
       seasons: directData.seasons.length || 1,
       studio: "Anime",
@@ -435,6 +443,21 @@ export default async function AnimeDetailPage({
   // Ensure slug and id are strictly preserved
   item = { ...item, id: cleanSlug, slug: cleanSlug };
 
+  // Resolve actual genres from scraped, API, movie, or mock data
+  const mockItem = getAnimeBySlug(cleanSlug);
+  const resolvedGenres =
+    (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
+    (animeData?.genres && animeData.genres.length > 0 ? animeData.genres : undefined) ||
+    (movieData?.genres && movieData.genres.length > 0
+      ? movieData.genres.map((g) => g.toLowerCase().replace(/\s+/g, "-"))
+      : undefined) ||
+    (mockItem?.genres && mockItem.genres.length > 0 ? mockItem.genres : undefined) ||
+    [];
+
+  if (resolvedGenres.length > 0) {
+    item = { ...item, genres: resolvedGenres };
+  }
+
   // 2. Discover episodes & seasons
   let episodes: Episode[] = [];
 
@@ -514,29 +537,49 @@ export default async function AnimeDetailPage({
   const firstEpisodeId = episodes.length > 0 ? episodes[0].id : `ep-${seasonNum}-1`;
 
   // ── Build "You Might Also Like" genre-based anime ─────────────────────────
-  const validGenreSlugs = [
-    "action",
-    "adventure",
-    "comedy",
-    "drama",
-    "fantasy",
-    "romance",
-    "horror",
-    "mystery",
-    "sci-fi",
-    "thriller",
+  const nonGenreTags = new Set([
+    "animation",
+    "adult-cast",
+    "award-winning",
+    "all-episodes",
+    "subbed",
+    "dubbed",
+    "hindi",
+    "english",
+    "japanese",
+  ]);
+
+  const rawGenres = (item.genres || [])
+    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
+    .filter((g) => g && !nonGenreTags.has(g) && !g.startsWith("page"));
+
+  const knownGenres = new Set(genres.map((g) => g.slug));
+
+  const genrePriority = [
     "sports",
+    "romance",
+    "mystery",
+    "horror",
+    "thriller",
+    "comedy",
     "isekai",
+    "sci-fi",
+    "action",
+    "fantasy",
+    "adventure",
     "slice-of-life",
+    "psychological",
+    "supernatural",
+    "drama",
+    "shounen",
+    "school",
+    "super-power",
   ];
 
-  const matchedGenres = (item.genres || [])
-    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
-    .filter((g) => g && g !== "animation");
-
   const primaryGenre =
-    matchedGenres.find((g) => validGenreSlugs.includes(g)) ||
-    matchedGenres[0] ||
+    genrePriority.find((p) => rawGenres.includes(p)) ||
+    rawGenres.find((g) => knownGenres.has(g)) ||
+    rawGenres[0] ||
     "action";
 
   const genreData = await getGenreCatalog(primaryGenre, 1).catch(() => null);
@@ -552,7 +595,7 @@ export default async function AnimeDetailPage({
     }
   }
 
-  for (const g of (matchedGenres.length ? matchedGenres : [primaryGenre])) {
+  for (const g of (rawGenres.length ? rawGenres : [primaryGenre])) {
     const mockGenreItems = getAnimeByGenre(g);
     for (const mockItem of mockGenreItems) {
       if (mockItem.slug && !seenSlugs.has(mockItem.slug)) {

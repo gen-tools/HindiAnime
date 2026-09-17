@@ -21,7 +21,8 @@ import type { Episode } from "@/types/episode";
 import type { LanguageCode } from "@/types/language";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { fuzzySearch, fuzzyScore, COMMON_ACRONYMS } from "@/lib/fuzzy-search";
-import { anime, getAnimeByGenre, getAnimeByLanguage } from "@/lib/mock/anime";
+import { anime, getAnimeBySlug, getAnimeByGenre, getAnimeByLanguage, getAnimeByCountry } from "@/lib/mock/anime";
+import { matchesCountry } from "@/lib/mock/countries";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -308,25 +309,28 @@ export function mapSearchItemToAnime(
   const poster = isUsableImageUrl(item.poster) ? item.poster : "";
 
   const backdrop = getAnimeBackdrop(cleanSlug, poster || undefined);
+  const mock = getAnimeBySlug(cleanSlug);
+  const genres = mock?.genres && mock.genres.length > 0 ? mock.genres : [];
 
   return {
     id: cleanSlug,
     slug: cleanSlug,
     title: item.title || cleanSlug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-    synopsis: SYNOPSIS_FALLBACK,
+    synopsis: mock?.synopsis || SYNOPSIS_FALLBACK,
     poster,
     backdrop,
-    rating: 0,
-    year: 0,
+    rating: mock?.rating || 0,
+    year: mock?.year || 0,
     type,
     status: type === "Movie" ? "Completed" : "Ongoing",
-    durationMinutes: 0,
-    episodeCount: 0,
-    genres: [],
-    languages: [],
-    seasons: 0,
-    studio: "",
-    updatedAt: "",
+    durationMinutes: mock?.durationMinutes || 0,
+    episodeCount: mock?.episodeCount || 0,
+    genres,
+    languages: mock?.languages || [],
+    country: mock?.country,
+    seasons: mock?.seasons || 0,
+    studio: mock?.studio || "",
+    updatedAt: mock?.updatedAt || "",
   };
 }
 
@@ -759,6 +763,40 @@ export async function scrapeAnimeSaltLanguage(
   }
 }
 
+/**
+ * Scrapes animesalt.cx/category/type/cartoon/?type=series or ?type=movies directly.
+ * Contains Western/USA animated series and movies.
+ */
+export async function scrapeAnimeSaltCartoon(
+  kind: "series" | "movies",
+  page = 1
+): Promise<CatalogPageResult | null> {
+  const cacheKey = `cartoon:${kind}:${page}`;
+  const cached = catalogPageCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  try {
+    const url =
+      page <= 1
+        ? `https://animesalt.cx/category/type/cartoon/?type=${kind}`
+        : `https://animesalt.cx/category/type/cartoon/page/${page}/?type=${kind}`;
+
+    const html = await fetchHtmlWithWorkerFallback(url);
+    if (!html) return null;
+    const result = parseAnimeSaltArticles(html, page);
+    if (result) {
+      catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    }
+    return result;
+  } catch (err) {
+    console.error(`[Scraper] Error scraping cartoon ${kind} page ${page}:`, err);
+    return null;
+  }
+}
+
+
 export async function getGenreCatalog(
   genreSlug: string,
   page = 1
@@ -831,6 +869,345 @@ export async function getLanguageCatalog(
     results: paged,
     totalPages,
   };
+}
+
+export async function getCountryCatalog(
+  countryCode: string,
+  page = 1,
+  type?: string
+): Promise<{ results: Anime[]; totalPages: number }> {
+  const cleanCode = countryCode.toLowerCase().trim();
+  const PAGE_SIZE = 12;
+
+  // 1. Japan = fetch the main series/movies catalog and ensure items match Japan
+  if (cleanCode === "japan") {
+    try {
+      const kind = type === "Movie" ? "movies" : "series";
+      const pagesToFetch = [page, page + 1].slice(0, 2);
+      const fetchedPages = await Promise.all(
+        pagesToFetch.map((p) => getCatalog(kind, p).catch(() => null))
+      );
+
+      const liveItems: Anime[] = [];
+      const seenSlugs = new Set<string>();
+      let maxTotalPages = 1;
+
+      for (const res of fetchedPages) {
+        const rawList = res?.results?.results ?? [];
+        maxTotalPages = Math.max(maxTotalPages, res?.results?.totalPages ?? 1);
+        for (const raw of rawList) {
+          const mapped = mapSearchItemToAnime(raw, type === "Movie" ? "Movie" : "TV");
+          if (!seenSlugs.has(mapped.slug) && matchesCountry(mapped, "japan") && isUsableImageUrl(mapped.poster)) {
+            mapped.country = "japan";
+            seenSlugs.add(mapped.slug);
+            liveItems.push(mapped);
+          }
+        }
+      }
+
+      if (liveItems.length > 0) {
+        const totalPages = Math.max(1, Math.ceil(liveItems.length / PAGE_SIZE));
+        const paged = liveItems.slice(0, PAGE_SIZE);
+        return { results: paged, totalPages: Math.max(totalPages, maxTotalPages) };
+      }
+    } catch (err) {
+      console.error(`getCountryCatalog[japan] error:`, err);
+    }
+  }
+
+  // 2. United States (USA) = scrape cartoon series, cartoon movies, and US films from movies catalog
+  if (cleanCode === "usa" || cleanCode === "united-states") {
+    try {
+      const fetchSeries = !type || type === "TV";
+      const fetchMovies = !type || type === "Movie";
+
+      const [seriesRes, moviesRes, generalMoviesRes] = await Promise.all([
+        fetchSeries ? scrapeAnimeSaltCartoon("series", page).catch(() => null) : Promise.resolve(null),
+        fetchMovies ? scrapeAnimeSaltCartoon("movies", page).catch(() => null) : Promise.resolve(null),
+        fetchMovies ? scrapeAnimeSaltCatalog("movies", page).catch(() => null) : Promise.resolve(null),
+      ]);
+
+      const seenSlugs = new Set<string>();
+      const seriesList: Anime[] = [];
+      const movieList: Anime[] = [];
+
+      // 2a. Cartoon Series
+      if (fetchSeries && seriesRes?.results) {
+        for (const raw of seriesRes.results) {
+          const mapped = mapSearchItemToAnime(raw, "TV");
+          mapped.country = "usa";
+          if (!seenSlugs.has(mapped.slug) && isUsableImageUrl(mapped.poster)) {
+            seenSlugs.add(mapped.slug);
+            seriesList.push(mapped);
+          }
+        }
+      }
+
+      // 2b. Cartoon Movies
+      if (fetchMovies && moviesRes?.results) {
+        for (const raw of moviesRes.results) {
+          const mapped = mapSearchItemToAnime(raw, "Movie");
+          mapped.country = "usa";
+          if (!seenSlugs.has(mapped.slug) && isUsableImageUrl(mapped.poster)) {
+            seenSlugs.add(mapped.slug);
+            movieList.push(mapped);
+          }
+        }
+      }
+
+      // 2c. General Movies that are US productions (How to Train Your Dragon, The Bad Guys, Lilo & Stitch, Elio, Sinbad, etc.)
+      if (fetchMovies && generalMoviesRes?.results) {
+        for (const raw of generalMoviesRes.results) {
+          const mapped = mapSearchItemToAnime(raw, "Movie");
+          if (matchesCountry(mapped, "usa")) {
+            mapped.country = "usa";
+            if (!seenSlugs.has(mapped.slug) && isUsableImageUrl(mapped.poster)) {
+              seenSlugs.add(mapped.slug);
+              movieList.push(mapped);
+            }
+          }
+        }
+      }
+
+      // Assemble results based on type filter
+      let usaItems: Anime[] = [];
+      if (type === "Movie") {
+        usaItems = movieList;
+      } else if (type === "TV") {
+        usaItems = seriesList;
+      } else {
+        // Interleave series and movies so user gets a rich mix of both
+        const maxLen = Math.max(seriesList.length, movieList.length);
+        for (let i = 0; i < maxLen; i++) {
+          if (i < seriesList.length) usaItems.push(seriesList[i]);
+          if (i < movieList.length) usaItems.push(movieList[i]);
+        }
+      }
+
+      // 2d. Supplement with top USA searches if catalog has room on initial pages
+      if (usaItems.length < PAGE_SIZE) {
+        const topUsaQueries = [
+          "how to train your dragon", "arcane", "castlevania", "ben 10",
+          "batman", "the bad guys", "invincible", "blood of zeus", "dragon prince"
+        ];
+        const searchResps = await Promise.all(
+          topUsaQueries.map((q) => searchAnime(q, 1).catch(() => null))
+        );
+        for (const resp of searchResps) {
+          for (const raw of resp?.results?.results ?? []) {
+            const mapped = mapSearchItemToAnime(raw);
+            if (matchesCountry(mapped, "usa")) {
+              if (type && mapped.type !== type) continue;
+              mapped.country = "usa";
+              if (!seenSlugs.has(mapped.slug) && isUsableImageUrl(mapped.poster)) {
+                seenSlugs.add(mapped.slug);
+                usaItems.push(mapped);
+              }
+            }
+          }
+        }
+      }
+
+      // 2e. Local mock matches
+      const mockUsa = getAnimeByCountry("usa");
+      for (const mock of mockUsa) {
+        if (type && mock.type !== type) continue;
+        if (!seenSlugs.has(mock.slug) && isUsableImageUrl(mock.poster)) {
+          seenSlugs.add(mock.slug);
+          usaItems.push(mock);
+        }
+      }
+
+      if (usaItems.length > 0) {
+        const totalPages = Math.max(
+          seriesRes?.totalPages ?? 1,
+          moviesRes?.totalPages ?? 1,
+          generalMoviesRes?.totalPages ?? 1,
+          Math.ceil(usaItems.length / PAGE_SIZE)
+        );
+        return {
+          results: usaItems.slice(0, PAGE_SIZE),
+          totalPages,
+        };
+      }
+    } catch (err) {
+      console.error("getCountryCatalog[usa] error:", err);
+    }
+  }
+
+  // 3. China (Donghua) = fetch Chinese Donghua series, movies, and franchises
+  if (cleanCode === "china") {
+    try {
+      const chinaQueries = [
+        "immortal", "lord of mysteries", "heaven official",
+        "monkey king", "to be hero", "donghua", "link click",
+        "cultivation", "soul land"
+      ];
+
+      const seenSlugs = new Set<string>();
+      const chinaItems: Anime[] = [];
+
+      // 3a. Search responses for all known Chinese Donghua franchises
+      const searchResps = await Promise.all(
+        chinaQueries.map((q) => searchAnime(q, 1).catch(() => null))
+      );
+
+      for (const resp of searchResps) {
+        for (const raw of resp?.results?.results ?? []) {
+          const mapped = mapSearchItemToAnime(raw);
+          if (matchesCountry(mapped, "china")) {
+            if (type && mapped.type !== type) continue;
+            mapped.country = "china";
+            if (!seenSlugs.has(mapped.slug) && isUsableImageUrl(mapped.poster)) {
+              seenSlugs.add(mapped.slug);
+              chinaItems.push(mapped);
+            }
+          }
+        }
+      }
+
+      // 3b. Also check live catalog pages for any additional Chinese Donghua
+      const [seriesCat, moviesCat] = await Promise.all([
+        (!type || type === "TV") ? scrapeAnimeSaltCatalog("series", page).catch(() => null) : Promise.resolve(null),
+        (!type || type === "Movie") ? scrapeAnimeSaltCatalog("movies", page).catch(() => null) : Promise.resolve(null),
+      ]);
+
+      for (const raw of seriesCat?.results ?? []) {
+        const mapped = mapSearchItemToAnime(raw, "TV");
+        if (matchesCountry(mapped, "china")) {
+          mapped.country = "china";
+          if (!seenSlugs.has(mapped.slug) && isUsableImageUrl(mapped.poster)) {
+            seenSlugs.add(mapped.slug);
+            chinaItems.push(mapped);
+          }
+        }
+      }
+
+      for (const raw of moviesCat?.results ?? []) {
+        const mapped = mapSearchItemToAnime(raw, "Movie");
+        if (matchesCountry(mapped, "china")) {
+          mapped.country = "china";
+          if (!seenSlugs.has(mapped.slug) && isUsableImageUrl(mapped.poster)) {
+            seenSlugs.add(mapped.slug);
+            chinaItems.push(mapped);
+          }
+        }
+      }
+
+      // 3c. Local mock items matching China
+      const mockChina = getAnimeByCountry("china");
+      for (const mock of mockChina) {
+        if (type && mock.type !== type) continue;
+        if (!seenSlugs.has(mock.slug) && isUsableImageUrl(mock.poster)) {
+          seenSlugs.add(mock.slug);
+          chinaItems.push(mock);
+        }
+      }
+
+      if (chinaItems.length > 0) {
+        const totalPages = Math.max(1, Math.ceil(chinaItems.length / PAGE_SIZE));
+        const paged = chinaItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+        return {
+          results: paged,
+          totalPages,
+        };
+      }
+    } catch (err) {
+      console.error("getCountryCatalog[china] error:", err);
+    }
+  }
+
+  // 4. For other non-Japan countries (Korea, India) use targeted searches + movie catalog filtering
+  const countryQueries: Record<string, string[]> = {
+    korea: [
+      "solo leveling", "tower of god", "lookism", "the god of high school",
+      "noblesse", "sweet home", "viral hit", "dr stone", "black clover",
+    ],
+    india: [
+      "chhota bheem", "motu patlu", "roll no 21", "little singham",
+      "legend of hanuman", "mighty raju", "baahubali", "krishna",
+    ],
+  };
+
+
+  const queries = countryQueries[cleanCode] || [cleanCode];
+  const liveResults: Anime[] = [];
+  const seenSlugs = new Set<string>();
+
+  try {
+    const [searchResponses, moviesCatalogRes] = await Promise.all([
+      Promise.all(queries.map((q) => searchAnime(q, 1).catch(() => null))),
+      scrapeAnimeSaltCatalog("movies", page).catch(() => null),
+    ]);
+
+    for (const resp of searchResponses) {
+      for (const raw of resp?.results?.results ?? []) {
+        const mapped = mapSearchItemToAnime(raw);
+        if (!seenSlugs.has(mapped.slug) && matchesCountry(mapped, cleanCode) && isUsableImageUrl(mapped.poster)) {
+          mapped.country = cleanCode;
+          seenSlugs.add(mapped.slug);
+          liveResults.push(mapped);
+        }
+      }
+    }
+
+    // Also pick up country movies from the movies catalog (e.g. Indian animation films)
+    for (const raw of moviesCatalogRes?.results ?? []) {
+      const mapped = mapSearchItemToAnime(raw, "Movie");
+      if (!seenSlugs.has(mapped.slug) && matchesCountry(mapped, cleanCode) && isUsableImageUrl(mapped.poster)) {
+        mapped.country = cleanCode;
+        seenSlugs.add(mapped.slug);
+        liveResults.push(mapped);
+      }
+    }
+  } catch (err) {
+    console.error(`getCountryCatalog search error for ${cleanCode}:`, err);
+  }
+
+  // 4. Also include mock anime that match this country
+  try {
+    const mockMatches = getAnimeByCountry(cleanCode);
+    const homepageData = await getHomepageData().catch(() => null);
+    const posterCatalog: Anime[] = homepageData ? getHomepagePosterCatalog(homepageData) : [];
+    const fallbackItems = posterCatalog.length > 0
+      ? getCatalogPosterItems(mockMatches, posterCatalog)
+      : mockMatches.filter((a) => isUsableImageUrl(a.poster));
+
+    for (const item of fallbackItems) {
+      if (!seenSlugs.has(item.slug)) {
+        seenSlugs.add(item.slug);
+        liveResults.push(item);
+      }
+    }
+  } catch (err) {
+    console.error(`getCountryCatalog mock error for ${cleanCode}:`, err);
+  }
+
+  if (liveResults.length > 0) {
+    const totalPages = Math.max(1, Math.ceil(liveResults.length / PAGE_SIZE));
+    const paged = liveResults.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    return { results: paged, totalPages };
+  }
+
+  // 5. Final fallback: fetch the series catalog and filter if possible
+  try {
+    const seriesRes = await getCatalog("series", page);
+
+    const items = (seriesRes?.results?.results ?? [])
+      .map((item) => mapSearchItemToAnime(item, "TV"))
+      .filter((item) => isUsableImageUrl(item.poster));
+
+    if (items.length > 0) {
+      return {
+        results: items,
+        totalPages: seriesRes?.results?.totalPages ?? 1,
+      };
+    }
+  } catch (err) {
+    console.error(`getCountryCatalog catalog fallback error for ${cleanCode}:`, err);
+  }
+
+  return { results: [], totalPages: 1 };
 }
 
 export async function getCatalog(
@@ -1522,6 +1899,7 @@ export interface ScrapedSeriesMeta {
   poster?: string;
   backdrop?: string;
   isMovie?: boolean;
+  genres?: string[];
 }
 
 const seriesScrapeCache = new Map<string, { data: ScrapedSeriesMeta; timestamp: number }>();
@@ -1885,6 +2263,15 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       backdrop = poster;
     }
 
+    // Parse Genres
+    const genreMatches = [...html.matchAll(/\/category\/genre\/([a-zA-Z0-9_-]+)/gi)];
+    const nonGenreTags = new Set(["animation", "adult-cast", "award-winning", "subbed", "dubbed", "hindi", "english"]);
+    const scrapedGenres = [...new Set(genreMatches.map((m) => m[1].toLowerCase().trim()))].filter(
+      (g) => g && !nonGenreTags.has(g) && !g.startsWith("page")
+    );
+    const mockGenres = getAnimeBySlug(cleanId)?.genres || [];
+    const genres = scrapedGenres.length > 0 ? scrapedGenres : mockGenres;
+
     if (isMovie) {
       const meta: ScrapedSeriesMeta = {
         postId: "",
@@ -1901,6 +2288,7 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
         poster,
         backdrop: backdrop || poster,
         isMovie: true,
+        genres,
       };
       seriesScrapeCache.set(cleanId, { data: meta, timestamp: Date.now() });
       return meta;
@@ -1940,6 +2328,7 @@ export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSerie
       poster,
       backdrop: backdrop || poster,
       isMovie: false,
+      genres,
     };
     seriesScrapeCache.set(cleanId, { data: meta, timestamp: Date.now() });
     return meta;

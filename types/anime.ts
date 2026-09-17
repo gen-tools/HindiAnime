@@ -19,6 +19,7 @@ export interface Anime {
   episodeCount: number;
   genres: string[];
   languages: LanguageCode[];
+  country?: string;
   seasons: number;
   studio: string;
   popularityRank?: number;

@@ -5,26 +5,22 @@ import { SearchFilters } from "@/components/search/SearchFilters";
 import { EmptySearchState, NoResultsState } from "@/components/search/SearchStates";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
-import { anime } from "@/lib/mock/anime";
 import {
   getCatalog,
-  getCatalogPosterItems,
+  getCountryCatalog,
   getGenreCatalog,
-  getHomepageData,
-  getHomepagePosterCatalog,
   getLanguageCatalog,
   isUsableImageUrl,
   mapSearchItemToAnime,
   searchGlobalAnime,
 } from "@/lib/api/client";
+import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
 
 export const metadata: Metadata = {
   title: "Search",
   description: "Search anime, movies, and characters across Hindi Anime's catalog.",
 };
-
-const PAGE_SIZE = 12;
 
 export default async function SearchPage({
   searchParams,
@@ -35,6 +31,7 @@ export default async function SearchPage({
   const rawQ = (params.q || params.s)?.trim() ?? "";
   const genre = params.genre;
   const language = params.language;
+  const country = params.country;
   const type = params.type;
   const sort = params.sort ?? "rating";
   const page = Math.max(1, Number(params.page) || 1);
@@ -50,18 +47,26 @@ export default async function SearchPage({
     totalPages = globalSearch.totalPages;
     if (genre) results = results.filter((a) => a.genres.includes(genre));
     if (language) results = results.filter((a) => a.languages.includes(language as never));
+    if (country) results = results.filter((a) => matchesCountry(a, country));
     if (type) results = results.filter((a) => a.type === type);
   } else if (genre) {
     const genreData = await getGenreCatalog(genre, page);
     results = genreData.results;
     totalPages = genreData.totalPages;
     if (language) results = results.filter((a) => a.languages.includes(language as never));
+    if (country) results = results.filter((a) => matchesCountry(a, country));
     if (type) results = results.filter((a) => a.type === type);
   } else if (language) {
     const langData = await getLanguageCatalog(language, page);
     results = langData.results;
     totalPages = langData.totalPages;
     if (genre) results = results.filter((a) => a.genres.includes(genre));
+    if (country) results = results.filter((a) => matchesCountry(a, country));
+    if (type) results = results.filter((a) => a.type === type);
+  } else if (country) {
+    const countryData = await getCountryCatalog(country, page, type);
+    results = countryData.results;
+    totalPages = countryData.totalPages;
     if (type) results = results.filter((a) => a.type === type);
   } else if (type === "Movie") {
     const movieRes = await getCatalog("movies", page);
@@ -86,13 +91,14 @@ export default async function SearchPage({
     if (rawQ) next.set("q", rawQ);
     if (genre) next.set("genre", genre);
     if (language) next.set("language", language);
+    if (country) next.set("country", country);
     if (type) next.set("type", type);
     if (params.sort) next.set("sort", params.sort);
     next.set("page", String(p));
     return `/search?${next.toString()}`;
   }
 
-  const hasAnyFilter = Boolean(rawQ || genre || language || type);
+  const hasAnyFilter = Boolean(rawQ || genre || language || country || type);
 
   return (
     <div className="container-page py-10">

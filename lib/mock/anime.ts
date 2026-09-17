@@ -1,4 +1,5 @@
 import type { Anime } from "@/types/anime";
+import { matchesCountry } from "./countries";
 
 export const anime: Anime[] = [
   // --- POPULAR & TRENDING TV SERIES ---
@@ -43,6 +44,7 @@ export const anime: Anime[] = [
     episodeCount: 24,
     genres: ["action", "fantasy", "adventure"],
     languages: ["hindi", "tamil", "telugu", "english", "japanese", "korean"],
+    country: "korea",
     seasons: 2,
     studio: "A-1 Pictures",
     popularityRank: 2,
@@ -714,6 +716,161 @@ export const anime: Anime[] = [
     studio: "Kilnworks Studio",
     updatedAt: "2026-05-11",
   },
+  // --- CHINESE ANIME (DONGHUA) ---
+  {
+    id: "cn01",
+    slug: "the-daily-life-of-the-immortal-king",
+    title: "The Daily Life of the Immortal King",
+    alternativeTitle: "仙王的日常生活",
+    synopsis:
+      "As a cultivation genius who has achieved a new realm every two years since he was a year old, Wang Ling is a near-invincible being with prowess far beyond his control. But now that he's sixteen, he faces his greatest battle yet – Senior High School.",
+    poster: "https://image.tmdb.org/t/p/w500/fR6QmzmINCDaCJ3KDM9x3o4g6RL.jpg",
+    backdrop: "the-daily-life-of-the-immortal-king-backdrop",
+    rating: 8.4,
+    year: 2020,
+    type: "TV",
+    status: "Ongoing",
+    durationMinutes: 20,
+    episodeCount: 48,
+    genres: ["action", "comedy", "fantasy", "supernatural"],
+    languages: ["hindi", "english"],
+    seasons: 4,
+    studio: "Haoliners Animation League",
+    country: "china",
+    updatedAt: "2026-08-20",
+  },
+  {
+    id: "cn02",
+    slug: "a-mortals-journey-to-immortality",
+    title: "A Mortal's Journey to Immortality",
+    alternativeTitle: "凡人修仙传",
+    synopsis:
+      "A poor and ordinary boy from a village joins a minor sect in Jiang Hu and becomes an Unofficial Disciple by chance. How will Han Li, a commoner by birth, establish a foothold for himself in his sect and traverse the cultivation world?",
+    poster: "https://image.tmdb.org/t/p/w500/9pfqNpz2YRdLgg5FUKVbWzz5fLR.jpg",
+    backdrop: "a-mortals-journey-to-immortality-backdrop",
+    rating: 8.7,
+    year: 2020,
+    type: "TV",
+    status: "Ongoing",
+    durationMinutes: 20,
+    episodeCount: 72,
+    genres: ["action", "fantasy", "adventure"],
+    languages: ["hindi", "english"],
+    seasons: 2,
+    studio: "Bilibili",
+    country: "china",
+    updatedAt: "2026-08-22",
+  },
+  {
+    id: "cn03",
+    slug: "heaven-officials-blessing",
+    title: "Heaven Official's Blessing",
+    alternativeTitle: "天官赐福",
+    synopsis:
+      "Eight hundred years ago, Xie Lian was the Crown Prince of the Xian Le kingdom. He was loved by his citizens and considered the darling of the world. He ascended to the Heavens at a young age; however, due to unfortunate circumstances, was quickly banished back to the mortal realm.",
+    poster: "https://image.tmdb.org/t/p/w500/4psWk1qJZKXlH78DjZUnvXCwSAM.jpg",
+    backdrop: "heaven-officials-blessing-backdrop",
+    rating: 8.8,
+    year: 2020,
+    type: "TV",
+    status: "Ongoing",
+    durationMinutes: 24,
+    episodeCount: 24,
+    genres: ["fantasy", "supernatural", "mystery", "drama"],
+    languages: ["hindi", "english"],
+    seasons: 2,
+    studio: "Haoliners Animation League",
+    country: "china",
+    updatedAt: "2026-08-15",
+  },
+  {
+    id: "cn04",
+    slug: "lord-of-mysteries",
+    title: "Lord of Mysteries",
+    alternativeTitle: "诡秘之主",
+    synopsis:
+      "Zhou Mingrui awakens in the body of Klein Moretti in an alternate Victorian era world filled with machinery, airships, alchemy, and mysterious occult powers. As Klein, he navigates secret organizations, potion concoctions, and god-like entities.",
+    poster: "https://image.tmdb.org/t/p/w500/c8fHePq3yTn3WvZd4hupkHwsjm5.jpg",
+    backdrop: "lord-of-mysteries-backdrop",
+    rating: 8.9,
+    year: 2025,
+    type: "TV",
+    status: "Ongoing",
+    durationMinutes: 24,
+    episodeCount: 13,
+    genres: ["fantasy", "mystery", "supernatural"],
+    languages: ["hindi", "english"],
+    seasons: 1,
+    studio: "B.CMAY PICTURES",
+    country: "china",
+    updatedAt: "2026-08-25",
+  },
+  {
+    id: "cn05",
+    slug: "the-monkey-king-reborn",
+    title: "The Monkey King: Reborn",
+    alternativeTitle: "西游记之再世妖王",
+    synopsis:
+      "Short-tempered Sun Wukong is rescued by Tang Monk from the Five Elements Mountain. While visiting Zhenyuan Daxian's temple, conflict leads to the resurrection of the King of All Demons, threatening the balance of the three realms.",
+    poster: "https://image.tmdb.org/t/p/w500/67YXOoKGODyGvJXfXzVmgHNXYh8.jpg",
+    backdrop: "the-monkey-king-reborn-backdrop",
+    rating: 8.0,
+    year: 2021,
+    type: "Movie",
+    status: "Completed",
+    durationMinutes: 95,
+    episodeCount: 1,
+    genres: ["action", "fantasy", "adventure"],
+    languages: ["hindi", "english"],
+    seasons: 1,
+    studio: "Film Fireworks",
+    country: "china",
+    updatedAt: "2026-08-10",
+  },
+  {
+    id: "cn06",
+    slug: "to-be-hero-x",
+    title: "TO BE HERO X",
+    alternativeTitle: "凸变英雄X",
+    synopsis:
+      "In a world where people's beliefs and trust give birth to heroes, a tournament is held to determine the ranking of heroes. Hero X stands at the absolute pinnacle, until mysteries unravel around the source of heroic power.",
+    poster: "https://image.tmdb.org/t/p/w500/7ynNG9lYS9HIR8cYMgawO19VPkg.jpg",
+    backdrop: "to-be-hero-x-backdrop",
+    rating: 8.3,
+    year: 2025,
+    type: "TV",
+    status: "Ongoing",
+    durationMinutes: 24,
+    episodeCount: 12,
+    genres: ["action", "sci-fi", "supernatural"],
+    languages: ["hindi", "english"],
+    seasons: 1,
+    studio: "Haoliners Animation League / Bilibili",
+    country: "china",
+    updatedAt: "2026-08-18",
+  },
+  {
+    id: "cn07",
+    slug: "link-click",
+    title: "Link Click",
+    alternativeTitle: "时光代理人",
+    synopsis:
+      "Using superpowers to enter their clientele's photos one by one, Cheng Xiaoshi and Lu Guang take their work seriously at 'Time Photo Studio,' a small photography shop set in the backdrop of a modern metropolis.",
+    poster: "https://image.tmdb.org/t/p/w500/l6A2uW8mS9XhK0Y49iQ2V01R46f.jpg",
+    backdrop: "link-click-backdrop",
+    rating: 8.8,
+    year: 2021,
+    type: "TV",
+    status: "Completed",
+    durationMinutes: 24,
+    episodeCount: 24,
+    genres: ["mystery", "supernatural", "drama"],
+    languages: ["hindi", "english"],
+    seasons: 2,
+    studio: "Studio LAN / Haoliners",
+    country: "china",
+    updatedAt: "2026-08-20",
+  },
 ];
 
 export function getAnimeBySlug(slug: string) {
@@ -762,6 +919,10 @@ export function getAnimeByGenre(slug: string) {
 
 export function getAnimeByLanguage(code: string) {
   return anime.filter((a) => a.languages.includes(code as never));
+}
+
+export function getAnimeByCountry(code: string) {
+  return anime.filter((a) => matchesCountry(a, code));
 }
 
 export function getRelatedAnime(current: Anime, count = 6) {

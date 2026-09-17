@@ -10,6 +10,7 @@ import { FavoriteButton } from "@/components/anime/FavoriteButton";
 import { AnimeRow } from "@/components/anime/AnimeRow";
 import { Play, ChevronRight } from "lucide-react";
 import { getAnimeBySlug, getAnimeByGenre, anime as mockAnimeList } from "@/lib/mock/anime";
+import { genres } from "@/lib/mock/genres";
 import {
   getAnimeInfo,
   getEpisodes,
@@ -37,24 +38,25 @@ import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 
 function createFallbackAnime(slug: string): Anime {
+  const mock = getAnimeBySlug(slug);
   const formattedTitle = formatDisplayTitle(slug);
   return {
     id: slug,
     slug,
-    title: formattedTitle,
-    synopsis: SYNOPSIS_FALLBACK,
-    poster: slug,
-    backdrop: slug,
-    rating: 8.5,
-    year: new Date().getFullYear(),
-    type: "TV",
-    status: "Ongoing",
-    durationMinutes: 24,
-    episodeCount: 1,
-    genres: ["action", "animation"],
-    languages: ["hindi", "japanese", "english"],
-    seasons: 1,
-    studio: "Anime",
+    title: mock?.title || formattedTitle,
+    synopsis: mock?.synopsis || SYNOPSIS_FALLBACK,
+    poster: mock?.poster || slug,
+    backdrop: mock?.backdrop || slug,
+    rating: mock?.rating || 8.5,
+    year: mock?.year || new Date().getFullYear(),
+    type: mock?.type || "TV",
+    status: mock?.status || "Ongoing",
+    durationMinutes: mock?.durationMinutes || 24,
+    episodeCount: mock?.episodeCount || 1,
+    genres: mock?.genres && mock.genres.length > 0 ? mock.genres : [],
+    languages: mock?.languages && mock.languages.length > 0 ? mock.languages : ["hindi", "japanese", "english"],
+    seasons: mock?.seasons || 1,
+    studio: mock?.studio || "Anime",
     updatedAt: new Date().toISOString().split("T")[0],
   };
 }
@@ -128,10 +130,14 @@ export async function generateMetadata({
       status: isMovie ? "Completed" : "Ongoing",
       durationMinutes: isMovie ? 110 : 24,
       episodeCount: rawEpisodes.length || s1Fallback.length || 1,
-      genres: movieData?.genres?.map((g) => g.toLowerCase().replace(/\s+/g, "-")) || [
-        "action",
-        "animation",
-      ],
+      genres:
+        (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
+        (movieData?.genres && movieData.genres.length > 0
+          ? movieData.genres.map((g) => g.toLowerCase().replace(/\s+/g, "-"))
+          : undefined) ||
+        (getAnimeBySlug(cleanSlug)?.genres && getAnimeBySlug(cleanSlug)!.genres.length > 0
+          ? getAnimeBySlug(cleanSlug)!.genres
+          : []),
       languages: movieData?.languages
         ? parseLanguages(movieData.languages.join(","))
         : ["hindi", "japanese", "english"],
@@ -310,6 +316,16 @@ export default async function WatchPage({
   const totalSeasonsCount =
     discoveredSeasons.length || directData?.seasons?.length || anime.seasons || 1;
 
+  const mockAnime = getAnimeBySlug(cleanSlug);
+  const resolvedGenres =
+    (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
+    (animeData?.genres && animeData.genres.length > 0 ? animeData.genres : undefined) ||
+    (movieData?.genres && movieData.genres.length > 0
+      ? movieData.genres.map((g) => g.toLowerCase().replace(/\s+/g, "-"))
+      : undefined) ||
+    (mockAnime?.genres && mockAnime.genres.length > 0 ? mockAnime.genres : undefined) ||
+    [];
+
   anime = {
     ...anime,
     id: cleanSlug,
@@ -322,6 +338,7 @@ export default async function WatchPage({
     durationMinutes: isMovie ? 110 : 24,
     episodeCount: effectiveRawEpisodes.length || anime.episodeCount || 12,
     seasons: totalSeasonsCount,
+    genres: resolvedGenres.length > 0 ? resolvedGenres : anime.genres,
   };
 
   if (
@@ -444,30 +461,50 @@ export default async function WatchPage({
     : `EP ${episode.number} — ${episode.title}`;
 
   // ── 4. Build "You Might Also Like" genre-based anime ───────────────────────
-  const validGenreSlugs = [
-    "action",
-    "adventure",
-    "comedy",
-    "drama",
-    "fantasy",
-    "romance",
-    "horror",
-    "mystery",
-    "sci-fi",
-    "thriller",
+  const nonGenreTags = new Set([
+    "animation",
+    "adult-cast",
+    "award-winning",
+    "all-episodes",
+    "subbed",
+    "dubbed",
+    "hindi",
+    "english",
+    "japanese",
+  ]);
+
+  const rawGenres = (anime.genres || [])
+    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
+    .filter((g) => g && !nonGenreTags.has(g) && !g.startsWith("page"));
+
+  const knownGenres = new Set(genres.map((g) => g.slug));
+
+  const genrePriority = [
     "sports",
+    "romance",
+    "mystery",
+    "horror",
+    "thriller",
+    "comedy",
     "isekai",
+    "sci-fi",
+    "action",
+    "fantasy",
+    "adventure",
     "slice-of-life",
+    "psychological",
+    "supernatural",
+    "drama",
+    "shounen",
+    "school",
+    "super-power",
   ];
 
-  const matchedGenres = (anime.genres || [])
-    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
-    .filter((g) => g && g !== "animation");
-
-  // Determine the primary genre (e.g. "action" for Action anime)
+  // Determine the primary genre
   const primaryGenre =
-    matchedGenres.find((g) => validGenreSlugs.includes(g)) ||
-    matchedGenres[0] ||
+    genrePriority.find((p) => rawGenres.includes(p)) ||
+    rawGenres.find((g) => knownGenres.has(g)) ||
+    rawGenres[0] ||
     "action";
 
   // Fetch all anime from this specific genre (e.g. Action anime)
@@ -486,7 +523,7 @@ export default async function WatchPage({
   }
 
   // 2. Mock anime matching any of this anime's genres (e.g. action, fantasy)
-  for (const g of (matchedGenres.length ? matchedGenres : [primaryGenre])) {
+  for (const g of (rawGenres.length ? rawGenres : [primaryGenre])) {
     const mockGenreItems = getAnimeByGenre(g);
     for (const item of mockGenreItems) {
       if (item.slug && !seenSlugs.has(item.slug)) {

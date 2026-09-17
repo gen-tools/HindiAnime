@@ -4,6 +4,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import { genres } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
+import { countries } from "@/lib/mock/countries";
 
 export function ListingFilters({ years }: { years: number[] }) {
   const router = useRouter();
@@ -19,7 +20,7 @@ export function ListingFilters({ years }: { years: number[] }) {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <Select
         aria-label="Filter by language"
         value={searchParams.get("language") ?? ""}
@@ -29,6 +30,19 @@ export function ListingFilters({ years }: { years: number[] }) {
         {languages.map((l) => (
           <option key={l.code} value={l.code}>
             {l.label}
+          </option>
+        ))}
+      </Select>
+
+      <Select
+        aria-label="Filter by country"
+        value={searchParams.get("country") ?? ""}
+        onChange={(e) => updateParam("country", e.target.value)}
+      >
+        <option value="">All Countries</option>
+        {countries.map((c) => (
+          <option key={c.code} value={c.code}>
+            {c.label}
           </option>
         ))}
       </Select>

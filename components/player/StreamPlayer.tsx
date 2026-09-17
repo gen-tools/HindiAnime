@@ -109,8 +109,32 @@ export function StreamPlayer({
   const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [isReloading, setIsReloading] = useState(false);
+  const [showTroubleHint, setShowTroubleHint] = useState(false);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // If the video frame has been mounted for 5 seconds, show a discreet reload helper in the player
+  useEffect(() => {
+    if (state !== "ready") {
+      setShowTroubleHint(false);
+      return;
+    }
+    const hintTimer = setTimeout(() => {
+      setShowTroubleHint(true);
+    }, 5000);
+    return () => clearTimeout(hintTimer);
+  }, [state, reloadKey]);
+
+  const handleReload = useCallback(() => {
+    setIsReloading(true);
+    setShowTroubleHint(false);
+    setReloadKey((k) => k + 1);
+    setTimeout(() => {
+      setIsReloading(false);
+    }, 600);
+  }, []);
 
   // Session key for auto-retry guard — unique per episode so switching
   // episodes always resets the counter without any explicit cleanup.
@@ -273,11 +297,27 @@ export function StreamPlayer({
         {state === "error" && <ErrorState onRetry={fetchStreams} />}
         {state === "unavailable" && <UnavailableState />}
         {state === "ready" && activeServer && (
-          <EmbedFrame
-            embed={activeServer.embed}
-            title={episodeTitle}
-            onLoadTimeout={handleIframeLoadTimeout}
-          />
+          <>
+            <EmbedFrame
+              embed={activeServer.embed}
+              title={episodeTitle}
+              reloadKey={reloadKey}
+              onLoadTimeout={handleIframeLoadTimeout}
+            />
+            {showTroubleHint && !isFullscreen && (
+              <div className="absolute top-3 right-3 z-30">
+                <button
+                  type="button"
+                  onClick={handleReload}
+                  title="Reload player if screen is stuck or showing error"
+                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-black/85 px-2.5 py-1.5 text-xs font-medium text-white shadow-xl backdrop-blur-md transition-all hover:border-green-bright hover:bg-black hover:text-green-light active:scale-95"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5 text-green-bright", isReloading && "animate-spin")} />
+                  <span>Reload Player</span>
+                </button>
+              </div>
+            )}
+          </>
         )}
         {/* Fullscreen exit controls */}
         {isFullscreen && (
@@ -361,6 +401,15 @@ export function StreamPlayer({
                   </button>
                 );
               })}
+              <button
+                type="button"
+                onClick={handleReload}
+                title="Reload video player without refreshing the page"
+                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isReloading && "animate-spin text-green-bright")} />
+                <span>Reload</span>
+              </button>
             </div>
           </div>
 
@@ -475,15 +524,17 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
 //   • A successful onload does NOT guarantee the video plays; that determination
 //     is entirely inside the cross-origin provider and outside our reach.
 
-const IFRAME_LOAD_TIMEOUT_MS = 28_000;
+const IFRAME_LOAD_TIMEOUT_MS = 12_000;
 
 function EmbedFrame({
   embed,
   title,
+  reloadKey,
   onLoadTimeout,
 }: {
   embed: string;
   title: string;
+  reloadKey: number;
   onLoadTimeout: () => void;
 }) {
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -497,7 +548,7 @@ function EmbedFrame({
   }, [onLoadTimeout]);
 
   useEffect(() => {
-    // Reset loaded flag each time the embed URL changes (retry or server switch)
+    // Reset loaded flag each time the embed URL or reloadKey changes
     loadedRef.current = false;
 
     timeoutRef.current = setTimeout(() => {
@@ -512,7 +563,7 @@ function EmbedFrame({
         timeoutRef.current = null;
       }
     };
-  }, [embed]); // intentionally only re-runs when the embed URL changes
+  }, [embed, reloadKey]);
 
   const handleLoad = useCallback(() => {
     loadedRef.current = true;
@@ -522,9 +573,17 @@ function EmbedFrame({
     }
   }, []);
 
+  const srcUrl =
+    reloadKey > 0
+      ? embed.includes("?")
+        ? `${embed}&_r=${reloadKey}`
+        : `${embed}?_r=${reloadKey}`
+      : embed;
+
   return (
     <iframe
-      src={embed}
+      key={`${embed}-${reloadKey}`}
+      src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
@@ -533,7 +592,7 @@ function EmbedFrame({
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="no-referrer-when-downgrade"
+      referrerPolicy="no-referrer"
       onLoad={handleLoad}
     />
   );

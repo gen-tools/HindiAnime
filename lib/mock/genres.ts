@@ -14,6 +14,11 @@ export const genres: Genre[] = [
   { slug: "sports", label: "Sports", description: "Rivalries, training arcs, and team grit" },
   { slug: "isekai", label: "Isekai", description: "Ordinary lives dropped into new worlds" },
   { slug: "slice-of-life", label: "Slice of Life", description: "Quiet, grounded, everyday moments" },
+  { slug: "shounen", label: "Shounen", description: "Action-packed stories of growth, rivalry, and camaraderie" },
+  { slug: "supernatural", label: "Supernatural", description: "Spirits, curses, and otherworldly powers" },
+  { slug: "psychological", label: "Psychological", description: "Mind games, suspense, and moral dilemmas" },
+  { slug: "school", label: "School", description: "Youth, clubs, and campus life" },
+  { slug: "super-power", label: "Super Power", description: "Superhuman abilities and overwhelming might" },
 ];
 
 export function getGenre(slug: string) {
