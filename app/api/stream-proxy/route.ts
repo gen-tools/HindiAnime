@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { isValidEmbedUrl, cleanAnimeSlug } from "@/lib/api/client";
-import type { StreamItem, StreamResponse } from "@/types/api";
+import { isValidEmbedUrl, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
+import type { StreamItem, StreamResponse, TokoSource, TokoStreamResponse } from "@/types/api";
 
 // Stream links are short-lived. Always resolve them at request time rather
 // than letting an upstream block or empty response become a cached failure.
@@ -9,6 +9,16 @@ export const runtime = "nodejs";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
+
+/** Toko streaming aggregator — server-side only, never exposed to client */
+const TOKO_API_URL =
+  process.env.TOKO_API_URL || "http://localhost:8099";
+
+/** How long to wait for the Toko API before falling back to existing scrapers.
+ *  Toko fans out across 15+ providers; 20s gives a reasonable chance of results
+ *  while staying safely inside Vercel's 30s function limit. */
+const TOKO_TIMEOUT_MS = 20_000;
+
 
 const DEFAULT_HEADERS = {
   "User-Agent":
@@ -33,9 +43,6 @@ async function scrapeAnimeSaltEpisodeStreams(
     `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`,
     `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep.padStart(2, "0")}/`,
   ];
-  if (String(season) === "1" && String(ep) === "1") {
-    urlFormats.push(`https://animesalt.cx/movies/${encodeURIComponent(cleanId)}/`);
-  }
 
   let html: string | null = null;
 
@@ -91,8 +98,10 @@ async function scrapeAnimeSaltEpisodeStreams(
       if (src.startsWith("//")) src = "https:" + src;
       else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
 
-      // Filter out self-domain plyr that blocks cross-origin framing with X-Frame-Options: SAMEORIGIN
+      // Filter out self-domain plyr and homepages
       if (src.includes("animesalt.cx/multi-lang-plyr")) continue;
+      if (src.replace(/\/+$/, "") === "https://animesalt.cx") continue;
+      if (!src.includes("/video/") && !src.includes(".m3u8") && !src.includes("embed") && !src.includes("/v/")) continue;
 
       if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
         seen.add(src);
@@ -114,70 +123,78 @@ async function scrapeDirectMovieStreams(
   animeId: string
 ): Promise<StreamItem[]> {
   const cleanId = cleanAnimeSlug(animeId) || animeId;
-  const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(cleanId)}/`;
 
-  let html: string | null = null;
+  // Try multiple URL formats — AnimeSalt uses different patterns for movies
+  const urlsToTry = [
+    `https://animesalt.cx/movies/${encodeURIComponent(cleanId)}/`,
+    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-1x1/`,
+    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-01/`,
+    `https://animesalt.cx/${encodeURIComponent(cleanId)}/`,
+  ];
 
-  try {
-    const res = await fetch(movieUrl, {
-      headers: DEFAULT_HEADERS,
-      cache: "no-store",
-    });
-    if (res.ok) {
-      html = await res.text();
-    }
-  } catch {
-    // direct fetch failed
-  }
+  for (const movieUrl of urlsToTry) {
+    let html: string | null = null;
 
-  if (!html) {
     try {
-      const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(movieUrl)}`, {
+      const res = await fetch(movieUrl, {
         headers: DEFAULT_HEADERS,
         cache: "no-store",
       });
-      if (pRes.ok) {
-        html = await pRes.text();
+      if (res.ok) {
+        const text = await res.text();
+        if (text.length > 3000) html = text;
       }
     } catch {
-      // proxy failed
+      // direct fetch failed
     }
-  }
 
-  if (!html) return [];
-
-  try {
-    const results: StreamItem[] = [];
-    const seen = new Set<string>();
-
-    const iframeRegex =
-      /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
-    let match: RegExpExecArray | null;
-
-    while ((match = iframeRegex.exec(html)) !== null) {
-      let src = match[1].replace(/&#038;/g, "&");
-      if (src.startsWith("//")) {
-        src = "https:" + src;
-      } else if (src.startsWith("/")) {
-        src = "https://animesalt.cx" + src;
-      }
-
-      if (src.includes("animesalt.cx/multi-lang-plyr")) continue;
-
-      if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
-        seen.add(src);
-        results.push({
-          server: "AnimeSalt Video",
-          embed: src,
+    if (!html) {
+      try {
+        const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(movieUrl)}`, {
+          headers: DEFAULT_HEADERS,
+          cache: "no-store",
         });
+        if (pRes.ok) {
+          const text = await pRes.text();
+          if (text.length > 3000) html = text;
+        }
+      } catch {
+        // proxy failed
       }
     }
 
-    return results;
-  } catch (err) {
-    console.error("[stream-proxy] direct movie scrape error:", err);
-    return [];
+    if (!html) continue;
+
+    try {
+      const results: StreamItem[] = [];
+      const seen = new Set<string>();
+
+      const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
+      let match: RegExpExecArray | null;
+
+      while ((match = iframeRegex.exec(html)) !== null) {
+        let src = match[1].replace(/&#038;/g, "&");
+        if (src.startsWith("//")) src = "https:" + src;
+        else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
+
+        if (src.includes("animesalt.cx/multi-lang-plyr")) continue;
+
+        if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
+          seen.add(src);
+          results.push({
+            server: "AnimeSalt Video",
+            embed: src,
+          });
+        }
+      }
+
+      if (results.length > 0) return results;
+    } catch (err) {
+      console.error("[stream-proxy] direct movie scrape error:", err);
+    }
   }
+
+  return [];
 }
 
 async function scrapeMultiShowsStreams(
@@ -280,6 +297,150 @@ async function scrapeMultiShowsStreams(
 }
 
 
+// ─── Toko Streaming Aggregator ───────────────────────────────────────────────
+
+/**
+ * Build a human-readable title list from an anime slug.
+ * Converts "naruto-shippuden" → ["Naruto Shippuden", "naruto shippuden"]
+ * so Toko's internal AniList lookup has something to match against.
+ */
+function slugToTitleVariants(slug: string): string[] {
+  const base = formatDisplayTitle(slug); // e.g. "Naruto Shippuden"
+  if (!base) return [];
+  const lower = base.toLowerCase();
+  const variants = [base];
+  if (lower !== base) variants.push(lower);
+  return variants;
+}
+
+/**
+ * Converts a Toko source to the existing StreamItem shape.
+ * - HLS / MP4 → `url` (direct playback) + `embed` set to the same URL
+ *   so legacy players that only read `embed` still work.
+ * - embed → `embed` only, `url` left undefined.
+ */
+function tokoSourceToStreamItem(src: TokoSource, index: number): StreamItem | null {
+  const rawUrl = (src.url || "").trim();
+  if (!rawUrl) return null;
+
+  const label = src.languageLabel || src.language || src.audioLanguage || "";
+  const serverName = [
+    src.providerName || src.providerKey || "Toko",
+    label,
+    src.quality,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  if (src.type === "hls" || src.isM3U8) {
+    return {
+      server: serverName || `Toko HLS ${index + 1}`,
+      embed: rawUrl,
+      url: rawUrl,
+      type: "hls",
+      languageLabel: label || undefined,
+      audioLanguage: src.audioLanguage || undefined,
+    };
+  }
+
+  if (src.type === "mp4") {
+    return {
+      server: serverName || `Toko MP4 ${index + 1}`,
+      embed: rawUrl,
+      url: rawUrl,
+      type: "mp4",
+      languageLabel: label || undefined,
+      audioLanguage: src.audioLanguage || undefined,
+    };
+  }
+
+  // embed — validate before accepting
+  if (!isValidEmbedUrl(rawUrl)) return null;
+  return {
+    server: serverName || `Toko Embed ${index + 1}`,
+    embed: rawUrl,
+    type: "embed",
+    languageLabel: label || undefined,
+    audioLanguage: src.audioLanguage || undefined,
+  };
+}
+
+/**
+ * Calls the Toko /api/v3/toko/stream endpoint with a bounded timeout.
+ * Returns an empty array if Toko is unavailable, times out, or returns
+ * no usable sources — the existing scraper pipeline then runs normally.
+ */
+async function fetchTokoSources(
+  slug: string,
+  episodeNumber: string
+): Promise<StreamItem[]> {
+  const tokoBase = TOKO_API_URL;
+  if (!tokoBase) return [];
+
+  // Build query params: prefer titles[] since we don't have an anilistId here.
+  // The Toko server will use these titles to query AniList internally.
+  const titleVariants = slugToTitleVariants(slug);
+  if (titleVariants.length === 0) return [];
+
+  const params = new URLSearchParams();
+  for (const t of titleVariants) params.append("titles[]", t);
+  params.set("episode", episodeNumber);
+  params.set("stream", "0"); // plain JSON, not SSE
+
+  const url = `${tokoBase}/api/v3/toko/stream?${params.toString()}`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
+
+    let data: TokoStreamResponse | null = null;
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        data = (await res.json()) as TokoStreamResponse;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!data || !Array.isArray(data.sources) || data.sources.length === 0) {
+      return [];
+    }
+
+    // Convert and filter, keeping direct streams (HLS/MP4) ahead of embeds
+    // while preserving Toko's language-tier priority (Hindi > Indic > English > Japanese)
+    const direct: StreamItem[] = [];
+    const embeds: StreamItem[] = [];
+
+    data.sources.forEach((src, i) => {
+      // Skip torrents — they're not playable in the browser player
+      if (src.type === "torrent") return;
+      const item = tokoSourceToStreamItem(src, i);
+      if (!item) return;
+      if (item.type === "hls" || item.type === "mp4") {
+        direct.push(item);
+      } else {
+        embeds.push(item);
+      }
+    });
+
+    return [...direct, ...embeds];
+  } catch (err: unknown) {
+    // AbortError = timeout; any other fetch error = network issue
+    const name = err instanceof Error ? err.name : "";
+    if (name !== "AbortError") {
+      console.error("[stream-proxy] Toko fetch error:", err);
+    }
+    return [];
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Proxy route: GET /api/stream-proxy?id=naruto-shippuden&season=1&ep=1
  */
@@ -323,54 +484,90 @@ export async function GET(request: Request) {
     );
   }
 
-  // Run all scrapers in parallel
-  const [initialAnimeSaltResults, msResults] = await Promise.all([
+  // Run Toko + existing scrapers in parallel.
+  // Toko has its own bounded timeout (TOKO_TIMEOUT_MS) so it cannot stall
+  // the route; existing scrapers proceed independently.
+  const [tokoResults, initialAnimeSaltResults, msResults] = await Promise.all([
+    fetchTokoSources(cleanId, ep),
     scrapeAnimeSaltEpisodeStreams(cleanId, season, ep),
     scrapeMultiShowsStreams(cleanId, season, ep),
   ]);
   let animeSaltResults = initialAnimeSaltResults;
 
-  // Fallback to direct movie scrape if no results found
-  if (animeSaltResults.length === 0 && msResults.length === 0) {
+  // Fallback to direct movie scrape if AnimeSalt episode scraper found nothing
+  // (movies don't have /episode/ pages so this is the primary path for movies)
+  if (animeSaltResults.length === 0) {
     animeSaltResults = await scrapeDirectMovieStreams(cleanId);
   }
 
-  // Build merged servers:
-  // Server 1 = Primary MultiShows (Hindi Dub Sony Yay / Multi Server)
-  // Server 2 = Primary AnimeSalt (Multi-Language Plyr / as-cdn)
-  // Remaining servers = Additional alternates
+  // Build merged list:
+  //   1. Toko direct HLS/MP4 sources  (highest quality, prepended)
+  //   2. MultiShows Server 1           (Hindi Dub / multi-server)
+  //   3. AnimeSalt Server 1            (multi-language embed)
+  //   4. Remaining Toko embeds
+  //   5. Remaining MultiShows servers
+  //   6. Remaining AnimeSalt servers
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
-  if (msResults.length > 0) {
-    const firstMs = msResults[0];
-    seen.add(firstMs.embed);
-    mergedResults.push({ server: "Server 1", embed: firstMs.embed });
-  }
-
+  // 1. Primary AnimeSalt embed (clean multi-language player with built-in audio tracks) -> Server 1 default
   if (animeSaltResults.length > 0) {
     const firstAs = animeSaltResults[0];
     if (!seen.has(firstAs.embed)) {
       seen.add(firstAs.embed);
-      mergedResults.push({ server: `Server ${mergedResults.length + 1}`, embed: firstAs.embed });
+      mergedResults.push({
+        server: "Server 1",
+        embed: firstAs.embed,
+        type: "embed",
+      });
     }
   }
 
-  // Append remaining MultiShows servers
-  for (let i = 1; i < msResults.length; i++) {
-    const r = msResults[i];
-    if (!seen.has(r.embed)) {
+  // 2. Toko direct streams (HLS/MP4) -> Server 2 & Server 3
+  for (const r of tokoResults) {
+    if ((r.type === "hls" || r.type === "mp4") && r.embed && !seen.has(r.embed)) {
       seen.add(r.embed);
-      mergedResults.push({ server: `Server ${mergedResults.length + 1}`, embed: r.embed });
+      mergedResults.push({
+        ...r,
+        server: `Server ${mergedResults.length + 1}`,
+      });
     }
   }
 
-  // Append remaining AnimeSalt servers
+  // 3. MultiShows embed (only used if AnimeSalt was unavailable)
+  if (animeSaltResults.length === 0 && msResults.length > 0) {
+    const firstMs = msResults[0];
+    if (!seen.has(firstMs.embed)) {
+      seen.add(firstMs.embed);
+      mergedResults.push({
+        server: `Server ${mergedResults.length + 1}`,
+        embed: firstMs.embed,
+        type: "embed",
+      });
+    }
+  }
+
+  // 4. Remaining Toko embed sources
+  for (const r of tokoResults) {
+    if (r.type === "embed" && r.embed && !seen.has(r.embed)) {
+      seen.add(r.embed);
+      mergedResults.push({
+        ...r,
+        server: `Server ${mergedResults.length + 1}`,
+      });
+    }
+  }
+
+  // 5. Remaining AnimeSalt servers
   for (let i = 1; i < animeSaltResults.length; i++) {
     const r = animeSaltResults[i];
     if (!seen.has(r.embed)) {
       seen.add(r.embed);
-      mergedResults.push({ server: `Server ${mergedResults.length + 1}`, embed: r.embed });
+      mergedResults.push({
+        server: `Server ${mergedResults.length + 1}`,
+        embed: r.embed,
+        type: "embed",
+      });
     }
   }
 
@@ -380,8 +577,6 @@ export async function GET(request: Request) {
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   }
-
-
 
   // Fallback 1: upstream API /api/stream endpoint
   try {

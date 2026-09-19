@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import Hls from "hls.js";
 import {
   Loader2,
   WifiOff,
@@ -20,63 +21,53 @@ import { cn } from "@/lib/utils";
 type PlayerState = "loading" | "ready" | "unavailable" | "error";
 
 interface ValidServer {
+  id: string;
   label: string;
   embed: string;
+  url?: string;
+  type: "hls" | "mp4" | "embed";
+  isDirect: boolean;
 }
 
-function isSourceB(embed: string): boolean {
-  if (!embed || typeof embed !== "string") return false;
-  try {
-    const parsed = new URL(embed);
-    // Source B is a direct video endpoint (/video/), video player endpoint (/player),
-    // or contains a media content token/hash (16+ hex characters),
-    // distinct from numeric embed wrappers (/(?:public/)?embed/\d+)
-    if (parsed.pathname.includes("/video/") || parsed.pathname.includes("/player")) {
-      return true;
-    }
-    if (/[a-f0-9]{16,}/i.test(parsed.pathname) || parsed.searchParams.has("data")) {
-      return true;
-    }
-  } catch {
-    if (embed.includes("/video/") || embed.includes("/player") || /[a-f0-9]{16,}/i.test(embed)) {
-      return true;
-    }
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Parse raw stream results into up to 3 deduped ValidServer entries.
+ *  The stream-proxy already returns them in the correct priority order:
+ *  Server 1 = AnimeSalt embed (multi-language), Server 2/3 = HLS direct streams. */
+function parseServers(results: StreamItem[]): ValidServer[] {
+  const servers: ValidServer[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < results.length && servers.length < 3; i++) {
+    const item = results[i];
+    const isDirect = (item.type === "hls" || item.type === "mp4") && Boolean(item.url || item.embed);
+    const streamUrl = item.url || item.embed;
+
+    if (!streamUrl || typeof streamUrl !== "string") continue;
+    if (seen.has(streamUrl)) continue;
+    if (!isValidEmbedUrl(streamUrl)) continue;
+
+    seen.add(streamUrl);
+    const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
+    servers.push({
+      id: `${finalType}-${i}-${streamUrl}`,
+      label: `Server ${servers.length + 1}`,
+      embed: streamUrl,
+      url: isDirect ? streamUrl : undefined,
+      type: finalType,
+      isDirect,
+    });
   }
-  return false;
-}
 
-function parseValidServers(results: StreamItem[]): ValidServer[] {
-  const valid = results.filter((r) => isValidEmbedUrl(r.embed));
-  if (valid.length === 0) return [];
-
-  // Identify Source B reliably from existing stream data:
-  // Source B provides direct video stream playback (/video/ with content hash or player endpoints).
-  const sourceB = valid.find((r) => isSourceB(r.embed));
-
-  // Prioritize Source B when available; otherwise gracefully fall back to first valid stream
-  const selected = sourceB || valid[0];
-
-  return [
-    {
-      label: "Server 1",
-      embed: selected.embed,
-    },
-  ];
+  return servers;
 }
 
 // ─── Auto-retry guard ─────────────────────────────────────────────────────────
-// Prevents infinite reload loops. Keyed per episode so switching episodes resets
-// the counter automatically. Stored in sessionStorage so a manual page refresh
-// always resets the counter and allows a clean start.
 
 const MAX_AUTO_RETRIES = 2;
 
 function getRetryCount(key: string): number {
-  try {
-    return parseInt(sessionStorage.getItem(key) ?? "0", 10) || 0;
-  } catch {
-    return 0;
-  }
+  try { return parseInt(sessionStorage.getItem(key) ?? "0", 10) || 0; } catch { return 0; }
 }
 
 function incrementRetryCount(key: string): number {
@@ -84,9 +75,7 @@ function incrementRetryCount(key: string): number {
     const next = getRetryCount(key) + 1;
     sessionStorage.setItem(key, String(next));
     return next;
-  } catch {
-    return MAX_AUTO_RETRIES; // treat as exhausted if storage is unavailable
-  }
+  } catch { return MAX_AUTO_RETRIES; }
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -115,124 +104,79 @@ export function StreamPlayer({
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // If the video frame has been mounted for 5 seconds, show a discreet reload helper in the player
+  const retryKey = `hindianime_retry_${animeSlug}_s${season}_e${episode}`;
+
   useEffect(() => {
-    if (state !== "ready") {
-      setShowTroubleHint(false);
-      return;
-    }
-    const hintTimer = setTimeout(() => {
-      setShowTroubleHint(true);
-    }, 5000);
-    return () => clearTimeout(hintTimer);
+    if (state !== "ready") { setShowTroubleHint(false); return; }
+    const t = setTimeout(() => setShowTroubleHint(true), 5000);
+    return () => clearTimeout(t);
   }, [state, reloadKey]);
 
   const handleReload = useCallback(() => {
     setIsReloading(true);
     setShowTroubleHint(false);
     setReloadKey((k) => k + 1);
-    setTimeout(() => {
-      setIsReloading(false);
-    }, 600);
+    setTimeout(() => setIsReloading(false), 600);
   }, []);
-
-  // Session key for auto-retry guard — unique per episode so switching
-  // episodes always resets the counter without any explicit cleanup.
-  const retryKey = `hindianime_retry_${animeSlug}_s${season}_e${episode}`;
 
   const triggerShowExit = useCallback(() => {
     setShowExitButton(true);
-    if (hideExitTimerRef.current) {
-      clearTimeout(hideExitTimerRef.current);
-    }
-    hideExitTimerRef.current = setTimeout(() => {
-      setShowExitButton(false);
-    }, 3000);
+    if (hideExitTimerRef.current) clearTimeout(hideExitTimerRef.current);
+    hideExitTimerRef.current = setTimeout(() => setShowExitButton(false), 3000);
   }, []);
 
   const cancelHideExit = useCallback(() => {
-    if (hideExitTimerRef.current) {
-      clearTimeout(hideExitTimerRef.current);
-      hideExitTimerRef.current = null;
-    }
+    if (hideExitTimerRef.current) { clearTimeout(hideExitTimerRef.current); hideExitTimerRef.current = null; }
   }, []);
 
   useEffect(() => {
-    function onFullscreenChange() {
+    function onFsChange() {
       const active = Boolean(document.fullscreenElement);
       setIsFullscreen(active);
       if (!active) {
         setShowExitButton(false);
-        if (hideExitTimerRef.current) {
-          clearTimeout(hideExitTimerRef.current);
-          hideExitTimerRef.current = null;
-        }
+        if (hideExitTimerRef.current) { clearTimeout(hideExitTimerRef.current); hideExitTimerRef.current = null; }
       }
     }
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
 
   useEffect(() => {
     if (!isFullscreen) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      // If cursor is within bottom 100px or bottom 15% of the viewport, reveal the exit button
-      const bottomThreshold = window.innerHeight - 100;
-      if (e.clientY >= bottomThreshold) {
-        triggerShowExit();
-      } else if (e.clientY < bottomThreshold - 60) {
-        setShowExitButton(false);
-      }
+    const onMouseMove = (e: MouseEvent) => {
+      if (e.clientY >= window.innerHeight - 100) triggerShowExit();
+      else if (e.clientY < window.innerHeight - 160) setShowExitButton(false);
     };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      if (hideExitTimerRef.current) {
-        clearTimeout(hideExitTimerRef.current);
-        hideExitTimerRef.current = null;
-      }
-    };
+    window.addEventListener("mousemove", onMouseMove);
+    return () => { window.removeEventListener("mousemove", onMouseMove); if (hideExitTimerRef.current) clearTimeout(hideExitTimerRef.current); };
   }, [isFullscreen, triggerShowExit]);
 
   const toggleFullscreen = useCallback(async () => {
     const el = playerFrameRef.current;
     if (!el) return;
     try {
-      if (!document.fullscreenElement) {
-        await el.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (err) {
-      console.warn("Fullscreen toggle error:", err);
-    }
+      if (!document.fullscreenElement) await el.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch (err) { console.warn("Fullscreen toggle error:", err); }
   }, []);
 
   const fetchStreams = useCallback(async () => {
     setState("loading");
     setServers([]);
     setActiveServer(null);
-
     try {
       const res = await fetch(
         `/api/stream-proxy?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`
       );
-
-      if (!res.ok) {
-        setState("error");
-        return;
-      }
-
+      if (!res.ok) { setState("error"); return; }
       const data = await res.json();
-      const validServers = parseValidServers(data?.results ?? []);
-
-      if (validServers.length === 0) {
+      const parsed = parseServers(data?.results ?? []);
+      if (parsed.length === 0) {
         setState("unavailable");
       } else {
-        setServers(validServers);
-        setActiveServer(validServers[0]);
+        setServers(parsed);
+        setActiveServer(parsed[0]);
         setState("ready");
       }
     } catch {
@@ -241,37 +185,31 @@ export function StreamPlayer({
   }, [animeSlug, season, episode]);
 
   useEffect(() => {
-    // Defer the first load so the effect only schedules external work; the
-    // fetch callback owns the subsequent loading/error state transitions.
-    const timer = window.setTimeout(fetchStreams, 0);
-    return () => window.clearTimeout(timer);
+    const t = window.setTimeout(fetchStreams, 0);
+    return () => window.clearTimeout(t);
   }, [fetchStreams]);
 
-  // ── Auto-recovery: handle iframe load timeout ────────────────────────────
-  // Cross-origin iframes cannot propagate internal errors (e.g. "connection
-  // was reset") to the parent page. The only reliably detectable signal from
-  // our side is that the iframe's onload event never fires within a reasonable
-  // window. When that happens we re-fetch streams via the existing fetchStreams
-  // path (which runs a fresh scrape and may return a new embed URL).
-  // The sessionStorage counter caps retries at MAX_AUTO_RETRIES per episode;
-  // after that the existing ErrorState UI is shown so the user can retry manually.
   const handleIframeLoadTimeout = useCallback(() => {
     const count = incrementRetryCount(retryKey);
     if (count <= MAX_AUTO_RETRIES) {
-      console.info(
-        `[StreamPlayer] iframe load timeout — auto-retry ${count}/${MAX_AUTO_RETRIES} (${retryKey})`
-      );
       fetchStreams();
     } else {
-      // Retries exhausted — surface error UI; user can still press Retry manually
-      console.warn(
-        `[StreamPlayer] iframe load timeout — retry limit reached (${retryKey})`
-      );
       setState("error");
     }
   }, [fetchStreams, retryKey]);
 
-  const selectServer = useCallback((server: ValidServer) => {
+  const handleDirectPlaybackError = useCallback(() => {
+    // On direct stream failure, try to fall back to the next server (or the embed)
+    setServers((prev) => {
+      const idx = prev.findIndex((s) => s.id === activeServer?.id);
+      const next = prev[idx + 1] || prev.find((s) => !s.isDirect) || null;
+      if (next) setActiveServer(next);
+      else setState("error");
+      return prev;
+    });
+  }, [activeServer]);
+
+  const handleServerSelect = useCallback((server: ValidServer) => {
     setActiveServer(server);
   }, []);
 
@@ -298,12 +236,31 @@ export function StreamPlayer({
         {state === "unavailable" && <UnavailableState />}
         {state === "ready" && activeServer && (
           <>
-            <EmbedFrame
-              embed={activeServer.embed}
-              title={episodeTitle}
-              reloadKey={reloadKey}
-              onLoadTimeout={handleIframeLoadTimeout}
-            />
+            {activeServer.type === "hls" && activeServer.url ? (
+              <HlsPlayer
+                key={activeServer.id}
+                url={activeServer.url}
+                title={episodeTitle}
+                reloadKey={reloadKey}
+                onError={handleDirectPlaybackError}
+              />
+            ) : activeServer.type === "mp4" && activeServer.url ? (
+              <Mp4Player
+                key={activeServer.id}
+                url={activeServer.url}
+                title={episodeTitle}
+                reloadKey={reloadKey}
+                onError={handleDirectPlaybackError}
+              />
+            ) : (
+              <EmbedFrame
+                key={activeServer.id}
+                embed={activeServer.embed}
+                title={episodeTitle}
+                reloadKey={reloadKey}
+                onLoadTimeout={handleIframeLoadTimeout}
+              />
+            )}
             {showTroubleHint && !isFullscreen && (
               <div className="absolute top-3 right-3 z-30">
                 <button
@@ -373,78 +330,82 @@ export function StreamPlayer({
         )}
       </div>
 
-      {/* Control bar: Server buttons + Theater & Fullscreen */}
+      {/* Control bar: Server row on top, Audio Languages row underneath */}
       {state === "ready" && !isFullscreen && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-line bg-surface px-4 py-2.5">
-          {/* Server selector buttons */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
-              <Server className="h-3.5 w-3.5 text-green-bright" />
-              <span>Server:</span>
+        <div className="flex flex-col gap-2.5 rounded-xl border border-border-line bg-surface p-3 sm:px-4 sm:py-3">
+          {/* Top row: Server button + Reload + Theater & Fullscreen */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Server selector */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
+                <Server className="h-3.5 w-3.5 text-green-bright" />
+                <span>Server:</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Streaming server">
+                {servers.map((srv) => {
+                  const isActive = srv.id === activeServer?.id;
+                  return (
+                    <button
+                      key={srv.id}
+                      type="button"
+                      onClick={() => handleServerSelect(srv)}
+                      aria-pressed={isActive}
+                      className={cn(
+                        "focus-ring rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all",
+                        isActive
+                          ? "border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_8px_rgba(34,197,94,0.3)]"
+                          : "border-border-line bg-surface-elevated/40 text-text-secondary hover:border-green-primary/50 hover:text-white"
+                      )}
+                    >
+                      {srv.label}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={handleReload}
+                  title="Reload video player without refreshing the page"
+                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", isReloading && "animate-spin text-green-bright")} />
+                  <span>Reload</span>
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Select streaming server">
-              {servers.map((srv) => {
-                const isActive = srv.embed === activeServer?.embed;
-                return (
-                  <button
-                    key={srv.embed}
-                    onClick={() => selectServer(srv)}
-                    aria-pressed={isActive}
-                    className={cn(
-                      "focus-ring rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all",
-                      isActive
-                        ? "border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_8px_rgba(34,197,94,0.3)]"
-                        : "border-border-line bg-surface-elevated/40 text-text-secondary hover:border-green-primary/50 hover:text-white"
-                    )}
-                  >
-                    {srv.label}
-                  </button>
-                );
-              })}
+
+            {/* Theater & Fullscreen controls */}
+            <div className="flex items-center gap-2">
               <button
-                type="button"
-                onClick={handleReload}
-                title="Reload video player without refreshing the page"
-                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95"
+                onClick={() => setIsTheater((t) => !t)}
+                title={isTheater ? "Default view" : "Theater mode"}
+                aria-label={isTheater ? "Default view" : "Theater mode"}
+                className={cn(
+                  "hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white",
+                  isTheater && "border-green-bright bg-green-primary/20 text-green-light font-bold"
+                )}
               >
-                <RefreshCw className={cn("h-3.5 w-3.5", isReloading && "animate-spin text-green-bright")} />
-                <span>Reload</span>
+                <RectangleHorizontal className="h-4 w-4" />
+                <span>{isTheater ? "Normal" : "Theater"}</span>
+              </button>
+              <button
+                onClick={toggleFullscreen}
+                title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
+              >
+                {isFullscreen ? (
+                  <>
+                    <Minimize className="h-4 w-4" />
+                    <span className="hidden sm:inline">Exit</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize className="h-4 w-4" />
+                    <span className="hidden sm:inline">Fullscreen</span>
+                  </>
+                )}
               </button>
             </div>
-          </div>
-
-          {/* Theater & Fullscreen controls */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsTheater((t) => !t)}
-              title={isTheater ? "Default view" : "Theater mode"}
-              aria-label={isTheater ? "Default view" : "Theater mode"}
-              className={cn(
-                "hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white",
-                isTheater && "border-green-bright bg-green-primary/20 text-green-light font-bold"
-              )}
-            >
-              <RectangleHorizontal className="h-4 w-4" />
-              <span>{isTheater ? "Normal" : "Theater"}</span>
-            </button>
-            <button
-              onClick={toggleFullscreen}
-              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-              aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
-            >
-              {isFullscreen ? (
-                <>
-                  <Minimize className="h-4 w-4" />
-                  <span className="hidden sm:inline">Exit</span>
-                </>
-              ) : (
-                <>
-                  <Maximize className="h-4 w-4" />
-                  <span className="hidden sm:inline">Fullscreen</span>
-                </>
-              )}
-            </button>
           </div>
         </div>
       )}
@@ -537,40 +498,31 @@ function EmbedFrame({
   reloadKey: number;
   onLoadTimeout: () => void;
 }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedRef = useRef(false);
 
-  // Stable ref so the timeout closure always calls the latest callback
-  // without the embed-change effect needing to depend on it.
   const onLoadTimeoutRef = useRef(onLoadTimeout);
-  useEffect(() => {
-    onLoadTimeoutRef.current = onLoadTimeout;
-  }, [onLoadTimeout]);
+  useEffect(() => { onLoadTimeoutRef.current = onLoadTimeout; }, [onLoadTimeout]);
 
   useEffect(() => {
-    // Reset loaded flag each time the embed URL or reloadKey changes
     loadedRef.current = false;
-
     timeoutRef.current = setTimeout(() => {
-      if (!loadedRef.current) {
-        onLoadTimeoutRef.current();
-      }
+      if (!loadedRef.current) onLoadTimeoutRef.current();
     }, IFRAME_LOAD_TIMEOUT_MS);
-
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-    };
+    return () => { if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; } };
   }, [embed, reloadKey]);
+
+  // Block popup ads from embed scripts
+  useEffect(() => {
+    const orig = window.open;
+    window.open = () => null;
+    return () => { window.open = orig; };
+  }, []);
 
   const handleLoad = useCallback(() => {
     loadedRef.current = true;
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
   }, []);
 
   const srcUrl =
@@ -582,10 +534,12 @@ function EmbedFrame({
 
   return (
     <iframe
+      ref={iframeRef}
       key={`${embed}-${reloadKey}`}
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes
@@ -597,3 +551,156 @@ function EmbedFrame({
     />
   );
 }
+
+// ─── Native / HLS.js Player ──────────────────────────────────────────────────
+
+function HlsPlayer({
+  url,
+  title,
+  reloadKey,
+  onError,
+}: {
+  url: string;
+  title: string;
+  reloadKey: number;
+  onError: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    let hls: Hls | null = null;
+    let networkRetries = 0;
+
+    const timeout = setTimeout(() => {
+      console.warn("[HlsPlayer] HLS stream loading timed out");
+      onErrorRef.current();
+    }, 15_000);
+
+    const handleCanPlay = () => {
+      clearTimeout(timeout);
+    };
+
+    video.addEventListener("canplay", handleCanPlay);
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // Native HLS support (Safari, iOS Safari)
+      video.src = url;
+      video.play().catch(() => {});
+    } else if (Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true,
+      });
+
+      hls.loadSource(url);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          console.warn("[HlsPlayer] Fatal HLS error:", data.type, data.details);
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 1) {
+            networkRetries++;
+            hls?.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls?.recoverMediaError();
+          } else {
+            clearTimeout(timeout);
+            hls?.destroy();
+            onErrorRef.current();
+          }
+        }
+      });
+    } else {
+      clearTimeout(timeout);
+      onErrorRef.current();
+    }
+
+    return () => {
+      clearTimeout(timeout);
+      video.removeEventListener("canplay", handleCanPlay);
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+    };
+  }, [url, reloadKey]);
+
+  return (
+    <video
+      ref={videoRef}
+      title={title}
+      className="absolute inset-0 h-full w-full bg-black object-contain"
+      controls
+      autoPlay
+      playsInline
+      onError={() => onErrorRef.current()}
+    />
+  );
+}
+
+// ─── Native MP4 Player ───────────────────────────────────────────────────────
+
+function Mp4Player({
+  url,
+  title,
+  reloadKey,
+  onError,
+}: {
+  url: string;
+  title: string;
+  reloadKey: number;
+  onError: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const timeout = setTimeout(() => {
+      console.warn("[Mp4Player] MP4 stream loading timed out");
+      onErrorRef.current();
+    }, 15_000);
+
+    const handleCanPlay = () => {
+      clearTimeout(timeout);
+    };
+
+    video.addEventListener("canplay", handleCanPlay);
+    video.play().catch(() => {});
+
+    return () => {
+      clearTimeout(timeout);
+      video.removeEventListener("canplay", handleCanPlay);
+    };
+  }, [url, reloadKey]);
+
+  return (
+    <video
+      key={`${url}-${reloadKey}`}
+      ref={videoRef}
+      src={url}
+      title={title}
+      className="absolute inset-0 h-full w-full bg-black object-contain"
+      controls
+      autoPlay
+      playsInline
+      onError={() => onErrorRef.current()}
+    />
+  );
+}
+

@@ -177,6 +177,14 @@ export interface StreamItem {
    * Always validate with isValidEmbedUrl() before use.
    */
   embed: string;
+  /** Direct HLS/MP4 URL returned by the Toko streaming aggregator */
+  url?: string;
+  /** Source type: hls | mp4 | embed (from Toko) */
+  type?: "hls" | "mp4" | "embed";
+  /** Human-readable language label e.g. "🇮🇳 Hindi Dub" */
+  languageLabel?: string;
+  /** BCP-47 audio language code e.g. "hi", "ja", "en" */
+  audioLanguage?: string;
 }
 
 export interface StreamResponse {
@@ -184,3 +192,51 @@ export interface StreamResponse {
   message?: string;
   results?: StreamItem[];
 }
+
+// ─── Toko Streaming Aggregator Types ─────────────────────────────────────────
+
+/** A single streaming source returned by the Toko API */
+export interface TokoSource {
+  url: string;
+  providerName: string;
+  providerKey: string;
+  /** BCP-47 code e.g. "hi", "ja", "en", "de" */
+  audioLanguage: string;
+  language: string;
+  /** Human label e.g. "🇮🇳 Hindi Dub" */
+  languageLabel: string;
+  isDub: boolean;
+  type: "hls" | "mp4" | "embed" | "torrent";
+  isM3U8: boolean;
+  isEmbed: boolean;
+  /** Optional server/quality hint */
+  server?: string;
+  quality?: string;
+  source?: string;
+}
+
+export interface TokoLanguageGroup {
+  code: string;
+  label: string;
+  flag?: string;
+  isDub: boolean;
+  sources: TokoSource[];
+}
+
+/** JSON response from GET /api/v3/toko/stream?stream=0 */
+export interface TokoStreamResponse {
+  sources: TokoSource[];
+  byLanguage: Record<string, TokoLanguageGroup>;
+  byType: Record<string, TokoSource[]>;
+  providerStatus: Array<{
+    provider: string;
+    success: boolean;
+    count: number;
+    error?: string;
+  }>;
+  count: number;
+  cached: boolean;
+  fetchedAt: string;
+  error?: string;
+}
+

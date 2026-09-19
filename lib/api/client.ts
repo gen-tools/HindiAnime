@@ -2478,7 +2478,15 @@ export function isValidEmbedUrl(embed: string | null | undefined): boolean {
   if (trimmed.startsWith("data:")) return false;
   try {
     const url = new URL(trimmed);
-    return url.protocol === "http:" || url.protocol === "https:";
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    // Reject root homepages (e.g. https://animesalt.cx/ or https://domain.com)
+    const cleanPath = url.pathname.replace(/\/+$/, "");
+    if (!cleanPath || cleanPath === "") return false;
+    // Reject entire site homepages or self-domain non-player paths
+    if (url.hostname.includes("animesalt.cx") && !cleanPath.includes("/video/") && !cleanPath.includes("/embed/")) {
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
