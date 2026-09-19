@@ -1969,6 +1969,7 @@ function parseEpisodesFromHtml(html: string): EpisodeItem[] {
 
 const WORKER_PROXY_URL =
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
+  process.env.CF_PROXY_URL ||
   "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
 
 function is404Html(text: string): boolean {

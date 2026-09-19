@@ -12,7 +12,7 @@ const API_BASE_URL =
 
 /** Toko streaming aggregator — server-side only, never exposed to client */
 const TOKO_API_URL =
-  process.env.TOKO_API_URL || "http://localhost:8099";
+  process.env.TOKO_API_URL || "https://api-delta-taupe-46.vercel.app";
 
 /** How long to wait for the Toko API before falling back to existing scrapers.
  *  Toko fans out across 15+ providers; 20s gives a reasonable chance of results
@@ -31,6 +31,7 @@ const DEFAULT_HEADERS = {
 
 const CF_PROXY_URL =
   process.env.CF_PROXY_URL ||
+  process.env.NEXT_PUBLIC_CF_PROXY_URL ||
   "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
 
 async function scrapeAnimeSaltEpisodeStreams(
@@ -500,31 +501,19 @@ export async function GET(request: Request) {
     animeSaltResults = await scrapeDirectMovieStreams(cleanId);
   }
 
-  // Build merged list:
-  //   1. Toko direct HLS/MP4 sources  (highest quality, prepended)
-  //   2. MultiShows Server 1           (Hindi Dub / multi-server)
-  //   3. AnimeSalt Server 1            (multi-language embed)
-  //   4. Remaining Toko embeds
-  //   5. Remaining MultiShows servers
-  //   6. Remaining AnimeSalt servers
+  // Build merged list — priority order:
+  //   Server 1 = Toko HLS/MP4 direct stream (no Cloudflare iframe issues)
+  //   Server 2 = Toko HLS/MP4 direct stream
+  //   Server 3 = AnimeSalt embed (multi-language, falls back if Toko unavailable)
+  //   MultiShows = emergency fallback if both above unavailable
+  // NOTE: Toko embed sources are intentionally excluded — they contain
+  //       in-player ad overlays ("Choose Security Mode" etc.).
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
-  // 1. Primary AnimeSalt embed (clean multi-language player with built-in audio tracks) -> Server 1 default
-  if (animeSaltResults.length > 0) {
-    const firstAs = animeSaltResults[0];
-    if (!seen.has(firstAs.embed)) {
-      seen.add(firstAs.embed);
-      mergedResults.push({
-        server: "Server 1",
-        embed: firstAs.embed,
-        type: "embed",
-      });
-    }
-  }
-
-  // 2. Toko direct streams (HLS/MP4) -> Server 2 & Server 3
+  // 1 & 2. Toko DIRECT streams (HLS/MP4) → Server 1, Server 2
   for (const r of tokoResults) {
+    if (mergedResults.length >= 2) break;
     if ((r.type === "hls" || r.type === "mp4") && r.embed && !seen.has(r.embed)) {
       seen.add(r.embed);
       mergedResults.push({
@@ -534,32 +523,34 @@ export async function GET(request: Request) {
     }
   }
 
-  // 3. MultiShows embed (only used if AnimeSalt was unavailable)
-  if (animeSaltResults.length === 0 && msResults.length > 0) {
+  // 3. AnimeSalt embed → Server 3 (or Server 1 if Toko had no results)
+  if (animeSaltResults.length > 0) {
+    const firstAs = animeSaltResults[0];
+    if (!seen.has(firstAs.embed)) {
+      seen.add(firstAs.embed);
+      mergedResults.push({
+        server: `Server ${mergedResults.length + 1}`,
+        embed: firstAs.embed,
+        type: "embed",
+      });
+    }
+  }
+
+  // Fallback: if AnimeSalt + Toko both empty, use MultiShows
+  if (mergedResults.length === 0 && msResults.length > 0) {
     const firstMs = msResults[0];
     if (!seen.has(firstMs.embed)) {
       seen.add(firstMs.embed);
       mergedResults.push({
-        server: `Server ${mergedResults.length + 1}`,
+        server: "Server 1",
         embed: firstMs.embed,
         type: "embed",
       });
     }
   }
 
-  // 4. Remaining Toko embed sources
-  for (const r of tokoResults) {
-    if (r.type === "embed" && r.embed && !seen.has(r.embed)) {
-      seen.add(r.embed);
-      mergedResults.push({
-        ...r,
-        server: `Server ${mergedResults.length + 1}`,
-      });
-    }
-  }
-
-  // 5. Remaining AnimeSalt servers
-  for (let i = 1; i < animeSaltResults.length; i++) {
+  // Extra AnimeSalt embeds if we still have room
+  for (let i = 1; i < animeSaltResults.length && mergedResults.length < 3; i++) {
     const r = animeSaltResults[i];
     if (!seen.has(r.embed)) {
       seen.add(r.embed);
