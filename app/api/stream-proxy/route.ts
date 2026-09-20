@@ -438,20 +438,30 @@ async function validateDirectStream(
     // Range GET failed or timed out
   }
 
-  // 3. Fallback to CF Worker probe if direct was blocked by datacenter IP firewalls
+  // 3. Fallback to CF Worker probe if direct was blocked by datacenter IP firewalls.
+  // A Worker may return a 200 response while forwarding a source 403/challenge
+  // HTML page, so status alone is not evidence that the media is playable.
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1800);
     const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(url)}`;
     const res = await fetch(proxyUrl, {
-      method: "HEAD",
-      headers: probeHeaders,
+      method: "GET",
+      headers: { ...probeHeaders, Range: "bytes=0-1024" },
       signal: controller.signal,
       cache: "no-store",
     });
     clearTimeout(timer);
 
-    if (res.ok || res.status === 206) return true;
+    if (res.ok || res.status === 206) {
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (contentType.includes("html")) return false;
+      const body = await res.text();
+      if (body.includes("#EXTM3U")) return true;
+      // MP4/octet-stream responses are binary; the Worker must not have
+      // converted them into an HTML error page before accepting them.
+      return contentType.includes("mp4") || contentType.includes("octet-stream");
+    }
   } catch {
     // Proxy probe failed
   }
@@ -569,11 +579,9 @@ async function fetchTokoSources(
     else if (item.type === "mp4") validDirectMp4.push(item);
   }
 
-  // Use validated streams first; if all probes were blocked by network/CORS, fall back to top candidates
-  const finalHls = validDirectHls.length > 0 ? validDirectHls : hlsCandidates.slice(0, 3).map((c) => c.item);
-  const finalMp4 = validDirectMp4.length > 0 ? validDirectMp4 : mp4Candidates.slice(0, 2).map((c) => c.item);
-
-  return [...finalHls, ...finalMp4, ...embeds];
+  // Never expose candidates that could not be validated: source providers can
+  // return 403 pages, challenges, expired URLs, or ad redirects with HTTP 200.
+  return [...validDirectHls, ...validDirectMp4, ...embeds];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -624,10 +632,9 @@ export async function GET(request: Request) {
   // Run Toko + existing scrapers in parallel.
   // Toko has its own bounded timeout (TOKO_TIMEOUT_MS) so it cannot stall
   // the route; existing scrapers proceed independently.
-  const [tokoResults, initialAnimeSaltResults, msResults] = await Promise.all([
+  const [tokoResults, initialAnimeSaltResults] = await Promise.all([
     fetchTokoSources(cleanId, ep),
     scrapeAnimeSaltEpisodeStreams(cleanId, season, ep),
-    scrapeMultiShowsStreams(cleanId, season, ep),
   ]);
   let animeSaltResults = initialAnimeSaltResults;
 
@@ -639,13 +646,11 @@ export async function GET(request: Request) {
 
   // ── Build merged server list ─────────────────────────────────────────────────
   // Priority (strict):
-  //   1. ALL Toko HLS direct streams  → ad-free, native HLS.js player, no iframe
-  //   2. ALL Toko MP4 direct streams  → ad-free, native <video> player
-  //   3. AnimeSalt embed              → multi-language iframe player
-  //   4. MultiShows embed             → Hindi Dub iframe player
+  //   1. AnimeSalt embed → existing sandboxed, ad-blocked iframe Server 1
+  //   2. Validated Toko HLS sources → native HLS.js Server 2+
   //
-  // Up to 4 servers total. Direct streams are tagged adFree=true so the UI
-  // can render an "⚡ Ad-free" badge on those server buttons.
+  // Do not turn third-party embeds, MP4s, or unvalidated candidates into
+  // alternate buttons. The player keeps its existing four-server limit.
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
@@ -661,34 +666,15 @@ export async function GET(request: Request) {
     });
   };
 
-  // Phase 1: all Toko HLS direct streams (ad-free)
+  // Phase 1: the established AnimeSalt embed is always Server 1.
+  if (animeSaltResults.length > 0) {
+    addStream(animeSaltResults[0], "embed");
+  }
+
+  // Phase 2: only validated Toko HLS sources are eligible as alternates.
   for (const r of tokoResults) {
     if (mergedResults.length >= 4) break;
     if (r.type === "hls") addStream(r, "hls", true);
-  }
-
-  // Phase 2: all Toko MP4 direct streams (ad-free)
-  for (const r of tokoResults) {
-    if (mergedResults.length >= 4) break;
-    if (r.type === "mp4") addStream(r, "mp4", true);
-  }
-
-  // Phase 3: AnimeSalt embed(s)
-  for (const r of animeSaltResults) {
-    if (mergedResults.length >= 4) break;
-    addStream(r, "embed", false);
-  }
-
-  // Phase 4: MultiShows embed(s)
-  for (const r of msResults) {
-    if (mergedResults.length >= 4) break;
-    addStream(r, "embed", false);
-  }
-
-  // Phase 5: remaining Toko embeds as last resort
-  for (const r of tokoResults) {
-    if (mergedResults.length >= 4) break;
-    if (r.type === "embed") addStream(r, "embed", false);
   }
 
   if (mergedResults.length > 0) {
