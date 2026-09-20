@@ -435,7 +435,25 @@ async function validateDirectStream(
       if (text.includes("#EXTM3U")) return true;
     }
   } catch {
-    // Both attempts failed or timed out
+    // Range GET failed or timed out
+  }
+
+  // 3. Fallback to CF Worker probe if direct was blocked by datacenter IP firewalls
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1800);
+    const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(url)}`;
+    const res = await fetch(proxyUrl, {
+      method: "HEAD",
+      headers: probeHeaders,
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    clearTimeout(timer);
+
+    if (res.ok || res.status === 206) return true;
+  } catch {
+    // Proxy probe failed
   }
 
   return false;
@@ -551,7 +569,11 @@ async function fetchTokoSources(
     else if (item.type === "mp4") validDirectMp4.push(item);
   }
 
-  return [...validDirectHls, ...validDirectMp4, ...embeds];
+  // Use validated streams first; if all probes were blocked by network/CORS, fall back to top candidates
+  const finalHls = validDirectHls.length > 0 ? validDirectHls : hlsCandidates.slice(0, 3).map((c) => c.item);
+  const finalMp4 = validDirectMp4.length > 0 ? validDirectMp4 : mp4Candidates.slice(0, 2).map((c) => c.item);
+
+  return [...finalHls, ...finalMp4, ...embeds];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
