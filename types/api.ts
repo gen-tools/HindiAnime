@@ -185,6 +185,8 @@ export interface StreamItem {
   languageLabel?: string;
   /** BCP-47 audio language code e.g. "hi", "ja", "en" */
   audioLanguage?: string;
+  /** True when the stream is a direct HLS/MP4 (no ads, no iframe) */
+  adFree?: boolean;
 }
 
 export interface StreamResponse {

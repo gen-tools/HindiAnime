@@ -27,13 +27,12 @@ interface ValidServer {
   url?: string;
   type: "hls" | "mp4" | "embed";
   isDirect: boolean;
+  /** True when this is a direct HLS/MP4 stream — no ads, no iframe */
+  adFree: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Parse raw stream results into up to 3 deduped ValidServer entries.
- *  The stream-proxy already returns them in the correct priority order:
- *  Server 1 = AnimeSalt embed (multi-language), Server 2/3 = HLS direct streams. */
 function parseServers(results: StreamItem[]): ValidServer[] {
   const servers: ValidServer[] = [];
   const seen = new Set<string>();
@@ -56,6 +55,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       url: isDirect ? streamUrl : undefined,
       type: finalType,
       isDirect,
+      adFree: Boolean(item.adFree) || isDirect,
     });
   }
 
@@ -342,7 +342,7 @@ export function StreamPlayer({
                 <span>Server:</span>
               </div>
               <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Streaming server">
-                {servers.map((srv) => {
+              {servers.map((srv) => {
                   const isActive = srv.id === activeServer?.id;
                   return (
                     <button
@@ -351,13 +351,28 @@ export function StreamPlayer({
                       onClick={() => handleServerSelect(srv)}
                       aria-pressed={isActive}
                       className={cn(
-                        "focus-ring rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all",
+                        "focus-ring relative rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all",
                         isActive
                           ? "border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_8px_rgba(34,197,94,0.3)]"
                           : "border-border-line bg-surface-elevated/40 text-text-secondary hover:border-green-primary/50 hover:text-white"
                       )}
                     >
-                      {srv.label}
+                      <span className="flex items-center gap-1.5">
+                        {srv.label}
+                        {srv.adFree && (
+                          <span
+                            title="Direct stream — no ads"
+                            className={cn(
+                              "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
+                              isActive
+                                ? "bg-green-bright/25 text-green-bright"
+                                : "bg-amber-500/20 text-amber-400"
+                            )}
+                          >
+                            ⚡ Ad-free
+                          </span>
+                        )}
+                      </span>
                     </button>
                   );
                 })}

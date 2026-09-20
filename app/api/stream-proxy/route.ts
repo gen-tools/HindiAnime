@@ -364,6 +364,7 @@ function tokoSourceToStreamItem(src: TokoSource, index: number): StreamItem | nu
       type: "hls",
       languageLabel: label || undefined,
       audioLanguage: src.audioLanguage || undefined,
+      adFree: true,
     };
   }
 
@@ -375,6 +376,7 @@ function tokoSourceToStreamItem(src: TokoSource, index: number): StreamItem | nu
       type: "mp4",
       languageLabel: label || undefined,
       audioLanguage: src.audioLanguage || undefined,
+      adFree: true,
     };
   }
 
@@ -524,77 +526,58 @@ export async function GET(request: Request) {
     animeSaltResults = await scrapeDirectMovieStreams(cleanId);
   }
 
-  // Build merged list — priority order:
-  //   Server 1 = Toko HLS Direct Stream (fast, ad-free)
-  //   Server 2 = Toko HLS / MP4 Direct Stream (Server 2 has HLS direct stream)
-  //   Server 3 = AnimeSalt Video (multi-language audio player)
-  //   Server 4 = MultiShows Embed (Hindi Dub / multi-server)
+  // ── Build merged server list ─────────────────────────────────────────────────
+  // Priority (strict):
+  //   1. ALL Toko HLS direct streams  → ad-free, native HLS.js player, no iframe
+  //   2. ALL Toko MP4 direct streams  → ad-free, native <video> player
+  //   3. AnimeSalt embed              → multi-language iframe player
+  //   4. MultiShows embed             → Hindi Dub iframe player
+  //
+  // Up to 4 servers total. Direct streams are tagged adFree=true so the UI
+  // can render an "⚡ Ad-free" badge on those server buttons.
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
-  const addStream = (item: StreamItem, desiredType?: "hls" | "mp4" | "embed") => {
+  const addStream = (item: StreamItem, desiredType?: "hls" | "mp4" | "embed", isAdFree = false) => {
     const key = item.url || item.embed;
     if (!key || seen.has(key)) return;
     seen.add(key);
     mergedResults.push({
       ...item,
-      type: desiredType || item.type,
+      type: desiredType ?? item.type,
       server: `Server ${mergedResults.length + 1}`,
+      adFree: isAdFree || item.adFree,
     });
   };
 
-  // Find Toko HLS source (direct .m3u8 stream)
-  const tokoHls = tokoResults.find((r) => r.type === "hls");
-  // Find Toko MP4 source (direct .mp4 stream)
-  const tokoMp4 = tokoResults.find((r) => r.type === "mp4" && (r.url || r.embed) !== tokoHls?.url);
-
-  // 1. Server 1: Toko HLS direct stream OR AnimeSalt OR MultiShows
-  if (tokoHls) {
-    addStream(tokoHls, "hls");
-  } else if (animeSaltResults.length > 0) {
-    addStream(animeSaltResults[0], "embed");
-  } else if (msResults.length > 0) {
-    addStream(msResults[0], "embed");
-  }
-
-  // 2. Server 2: Alternate Toko HLS or MP4 direct stream OR AnimeSalt
-  const secondTokoHls = tokoResults.find(
-    (r) => r.type === "hls" && !seen.has(r.url || r.embed)
-  );
-  if (secondTokoHls) {
-    addStream(secondTokoHls, "hls");
-  } else if (tokoMp4 && !seen.has(tokoMp4.url || tokoMp4.embed)) {
-    addStream(tokoMp4, "mp4");
-  } else if (animeSaltResults.length > 0 && !seen.has(animeSaltResults[0].embed)) {
-    addStream(animeSaltResults[0], "embed");
-  } else if (msResults.length > 0 && !seen.has(msResults[0].embed)) {
-    addStream(msResults[0], "embed");
-  }
-
-  // 3. Server 3: AnimeSalt Multi-Language Video Player (or alternate direct stream)
-  if (animeSaltResults.length > 0 && !seen.has(animeSaltResults[0].embed)) {
-    addStream(animeSaltResults[0], "embed");
-  } else if (tokoMp4 && !seen.has(tokoMp4.url || tokoMp4.embed)) {
-    addStream(tokoMp4, "mp4");
-  }
-
-  // 4. Server 4: MultiShows Embed (Hindi Dub / multi-server)
-  if (msResults.length > 0 && !seen.has(msResults[0].embed)) {
-    addStream(msResults[0], "embed");
-  }
-
-  // Fill up to 4 servers if extra distinct sources are available
+  // Phase 1: all Toko HLS direct streams (ad-free)
   for (const r of tokoResults) {
     if (mergedResults.length >= 4) break;
-    if (r.type === "hls" || r.type === "mp4") addStream(r);
+    if (r.type === "hls") addStream(r, "hls", true);
   }
+
+  // Phase 2: all Toko MP4 direct streams (ad-free)
+  for (const r of tokoResults) {
+    if (mergedResults.length >= 4) break;
+    if (r.type === "mp4") addStream(r, "mp4", true);
+  }
+
+  // Phase 3: AnimeSalt embed(s)
   for (const r of animeSaltResults) {
     if (mergedResults.length >= 4) break;
-    addStream(r, "embed");
+    addStream(r, "embed", false);
   }
+
+  // Phase 4: MultiShows embed(s)
   for (const r of msResults) {
     if (mergedResults.length >= 4) break;
-    addStream(r, "embed");
+    addStream(r, "embed", false);
+  }
+
+  // Phase 5: remaining Toko embeds as last resort
+  for (const r of tokoResults) {
+    if (mergedResults.length >= 4) break;
+    if (r.type === "embed") addStream(r, "embed", false);
   }
 
   if (mergedResults.length > 0) {
