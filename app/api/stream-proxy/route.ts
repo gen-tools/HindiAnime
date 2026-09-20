@@ -6,6 +6,7 @@ import type { StreamItem, StreamResponse, TokoSource, TokoStreamResponse } from 
 // than letting an upstream block or empty response become a cached failure.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -15,9 +16,9 @@ const TOKO_API_URL =
   process.env.TOKO_API_URL || "https://api-delta-taupe-46.vercel.app";
 
 /** How long to wait for the Toko API before falling back to existing scrapers.
- *  Toko fans out across 15+ providers; 20s gives a reasonable chance of results
- *  while staying safely inside Vercel's 30s function limit. */
-const TOKO_TIMEOUT_MS = 20_000;
+ *  Toko fans out across 15+ providers; 25s gives enough time for cold cache
+ *  resolution while staying safely inside Vercel's 60s maxDuration. */
+const TOKO_TIMEOUT_MS = 25_000;
 
 
 const DEFAULT_HEADERS = {
@@ -34,6 +35,20 @@ const CF_PROXY_URL =
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
   "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
 
+function isValidAnimeSaltHtml(text: string): boolean {
+  if (!text || text.length < 1500) return false;
+  if (
+    text.includes("Just a moment...") ||
+    text.includes("cf-chl-widget") ||
+    text.includes("challenge-platform") ||
+    text.includes("enable-javascript") ||
+    text.includes("cf-browser-verification")
+  ) {
+    return false;
+  }
+  return text.includes("<iframe") || text.includes("data-src=");
+}
+
 async function scrapeAnimeSaltEpisodeStreams(
   animeId: string,
   season: string,
@@ -49,15 +64,19 @@ async function scrapeAnimeSaltEpisodeStreams(
 
   for (const episodeUrl of urlFormats) {
     if (html) break;
-    // 1. Try direct fetch
+    // 1. Try direct fetch with short timeout
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(episodeUrl, {
         headers: DEFAULT_HEADERS,
         cache: "no-store",
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       if (res.ok) {
         const text = await res.text();
-        if (text.length > 5000) {
+        if (isValidAnimeSaltHtml(text)) {
           html = text;
         }
       }
@@ -65,7 +84,7 @@ async function scrapeAnimeSaltEpisodeStreams(
       // direct fetch failed
     }
 
-    // 2. Try Cloudflare Worker proxy if direct fetch failed
+    // 2. Try Cloudflare Worker proxy if direct fetch failed or hit Cloudflare challenge
     if (!html) {
       try {
         const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(episodeUrl)}`, {
@@ -74,7 +93,7 @@ async function scrapeAnimeSaltEpisodeStreams(
         });
         if (pRes.ok) {
           const text = await pRes.text();
-          if (text.length > 5000) {
+          if (isValidAnimeSaltHtml(text)) {
             html = text;
           }
         }
@@ -137,13 +156,17 @@ async function scrapeDirectMovieStreams(
     let html: string | null = null;
 
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(movieUrl, {
         headers: DEFAULT_HEADERS,
         cache: "no-store",
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       if (res.ok) {
         const text = await res.text();
-        if (text.length > 3000) html = text;
+        if (isValidAnimeSaltHtml(text)) html = text;
       }
     } catch {
       // direct fetch failed
@@ -157,7 +180,7 @@ async function scrapeDirectMovieStreams(
         });
         if (pRes.ok) {
           const text = await pRes.text();
-          if (text.length > 3000) html = text;
+          if (isValidAnimeSaltHtml(text)) html = text;
         }
       } catch {
         // proxy failed
@@ -502,64 +525,76 @@ export async function GET(request: Request) {
   }
 
   // Build merged list — priority order:
-  //   Server 1 = Toko HLS/MP4 direct stream (no Cloudflare iframe issues)
-  //   Server 2 = Toko HLS/MP4 direct stream
-  //   Server 3 = AnimeSalt embed (multi-language, falls back if Toko unavailable)
-  //   MultiShows = emergency fallback if both above unavailable
-  // NOTE: Toko embed sources are intentionally excluded — they contain
-  //       in-player ad overlays ("Choose Security Mode" etc.).
+  //   Server 1 = Toko HLS Direct Stream (fast, ad-free)
+  //   Server 2 = Toko HLS / MP4 Direct Stream (Server 2 has HLS direct stream)
+  //   Server 3 = AnimeSalt Video (multi-language audio player)
+  //   Server 4 = MultiShows Embed (Hindi Dub / multi-server)
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
-  // 1 & 2. Toko DIRECT streams (HLS/MP4) → Server 1, Server 2
+  const addStream = (item: StreamItem, desiredType?: "hls" | "mp4" | "embed") => {
+    const key = item.url || item.embed;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    mergedResults.push({
+      ...item,
+      type: desiredType || item.type,
+      server: `Server ${mergedResults.length + 1}`,
+    });
+  };
+
+  // Find Toko HLS source (direct .m3u8 stream)
+  const tokoHls = tokoResults.find((r) => r.type === "hls");
+  // Find Toko MP4 source (direct .mp4 stream)
+  const tokoMp4 = tokoResults.find((r) => r.type === "mp4" && (r.url || r.embed) !== tokoHls?.url);
+
+  // 1. Server 1: Toko HLS direct stream OR AnimeSalt OR MultiShows
+  if (tokoHls) {
+    addStream(tokoHls, "hls");
+  } else if (animeSaltResults.length > 0) {
+    addStream(animeSaltResults[0], "embed");
+  } else if (msResults.length > 0) {
+    addStream(msResults[0], "embed");
+  }
+
+  // 2. Server 2: Alternate Toko HLS or MP4 direct stream OR AnimeSalt
+  const secondTokoHls = tokoResults.find(
+    (r) => r.type === "hls" && !seen.has(r.url || r.embed)
+  );
+  if (secondTokoHls) {
+    addStream(secondTokoHls, "hls");
+  } else if (tokoMp4 && !seen.has(tokoMp4.url || tokoMp4.embed)) {
+    addStream(tokoMp4, "mp4");
+  } else if (animeSaltResults.length > 0 && !seen.has(animeSaltResults[0].embed)) {
+    addStream(animeSaltResults[0], "embed");
+  } else if (msResults.length > 0 && !seen.has(msResults[0].embed)) {
+    addStream(msResults[0], "embed");
+  }
+
+  // 3. Server 3: AnimeSalt Multi-Language Video Player (or alternate direct stream)
+  if (animeSaltResults.length > 0 && !seen.has(animeSaltResults[0].embed)) {
+    addStream(animeSaltResults[0], "embed");
+  } else if (tokoMp4 && !seen.has(tokoMp4.url || tokoMp4.embed)) {
+    addStream(tokoMp4, "mp4");
+  }
+
+  // 4. Server 4: MultiShows Embed (Hindi Dub / multi-server)
+  if (msResults.length > 0 && !seen.has(msResults[0].embed)) {
+    addStream(msResults[0], "embed");
+  }
+
+  // Fill up to 4 servers if extra distinct sources are available
   for (const r of tokoResults) {
-    if (mergedResults.length >= 2) break;
-    if ((r.type === "hls" || r.type === "mp4") && r.embed && !seen.has(r.embed)) {
-      seen.add(r.embed);
-      mergedResults.push({
-        ...r,
-        server: `Server ${mergedResults.length + 1}`,
-      });
-    }
+    if (mergedResults.length >= 4) break;
+    if (r.type === "hls" || r.type === "mp4") addStream(r);
   }
-
-  // 3. AnimeSalt embed → Server 3 (or Server 1 if Toko had no results)
-  if (animeSaltResults.length > 0) {
-    const firstAs = animeSaltResults[0];
-    if (!seen.has(firstAs.embed)) {
-      seen.add(firstAs.embed);
-      mergedResults.push({
-        server: `Server ${mergedResults.length + 1}`,
-        embed: firstAs.embed,
-        type: "embed",
-      });
-    }
+  for (const r of animeSaltResults) {
+    if (mergedResults.length >= 4) break;
+    addStream(r, "embed");
   }
-
-  // Fallback: if AnimeSalt + Toko both empty, use MultiShows
-  if (mergedResults.length === 0 && msResults.length > 0) {
-    const firstMs = msResults[0];
-    if (!seen.has(firstMs.embed)) {
-      seen.add(firstMs.embed);
-      mergedResults.push({
-        server: "Server 1",
-        embed: firstMs.embed,
-        type: "embed",
-      });
-    }
-  }
-
-  // Extra AnimeSalt embeds if we still have room
-  for (let i = 1; i < animeSaltResults.length && mergedResults.length < 3; i++) {
-    const r = animeSaltResults[i];
-    if (!seen.has(r.embed)) {
-      seen.add(r.embed);
-      mergedResults.push({
-        server: `Server ${mergedResults.length + 1}`,
-        embed: r.embed,
-        type: "embed",
-      });
-    }
+  for (const r of msResults) {
+    if (mergedResults.length >= 4) break;
+    addStream(r, "embed");
   }
 
   if (mergedResults.length > 0) {
