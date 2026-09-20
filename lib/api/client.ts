@@ -1974,6 +1974,18 @@ const WORKER_PROXY_URL =
 
 function is404Html(text: string): boolean {
   if (!text || text.length < 500) return true;
+  // Cloudflare challenge / verification / security check
+  if (
+    text.includes("Just a moment...") ||
+    text.includes("cf-chl-widget") ||
+    text.includes("challenge-platform") ||
+    text.includes("cf-browser-verification") ||
+    text.includes("Attention Required! | Cloudflare") ||
+    text.includes("enable-javascript") ||
+    text.includes("security check")
+  ) {
+    return true;
+  }
   if (/<title>[\s\S]*?(?:404|not found|page not found)[\s\S]*?<\/title>/i.test(text)) return true;
   if (/class=["'][^"']*error404[^"']*["']/i.test(text)) return true;
   // The Worker can turn a source 404 into HTTP 200. AnimeSalt's compact 404
@@ -2001,10 +2013,14 @@ function isAnimeDetailHtml(html: string | null): html is string {
 
 async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> {
   try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(url, {
       headers: DEFAULT_SCRAPER_HEADERS,
       next: { revalidate: 60 },
+      signal: controller.signal,
     });
+    clearTimeout(t);
     if (res.ok) {
       const text = await res.text();
       if (!is404Html(text)) return text;

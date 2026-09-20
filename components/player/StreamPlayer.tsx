@@ -38,7 +38,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   const servers: ValidServer[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < results.length && servers.length < 3; i++) {
+  for (let i = 0; i < results.length && servers.length < 4; i++) {
     const item = results[i];
     const isDirect = (item.type === "hls" || item.type === "mp4") && Boolean(item.url || item.embed);
     const streamUrl = item.url || item.embed;
