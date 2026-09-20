@@ -2503,6 +2503,10 @@ export function isValidEmbedUrl(embed: string | null | undefined): boolean {
     if (url.hostname.includes("animesalt.cx") && !cleanPath.includes("/video/") && !cleanPath.includes("/embed/")) {
       return false;
     }
+    // Reject known ad verification gates and redirectors
+    if (url.hostname.includes("multishows.top") && cleanPath.startsWith("/embed")) {
+      return false;
+    }
     return true;
   } catch {
     return false;

@@ -215,6 +215,8 @@ export interface TokoSource {
   server?: string;
   quality?: string;
   source?: string;
+  /** Optional request headers required by the source CDN */
+  headers?: Record<string, string>;
 }
 
 export interface TokoLanguageGroup {
