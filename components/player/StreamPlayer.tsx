@@ -62,22 +62,6 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   return servers;
 }
 
-// ─── Auto-retry guard ─────────────────────────────────────────────────────────
-
-const MAX_AUTO_RETRIES = 2;
-
-function getRetryCount(key: string): number {
-  try { return parseInt(sessionStorage.getItem(key) ?? "0", 10) || 0; } catch { return 0; }
-}
-
-function incrementRetryCount(key: string): number {
-  try {
-    const next = getRetryCount(key) + 1;
-    sessionStorage.setItem(key, String(next));
-    return next;
-  } catch { return MAX_AUTO_RETRIES; }
-}
-
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function StreamPlayer({
@@ -103,8 +87,6 @@ export function StreamPlayer({
   const [showTroubleHint, setShowTroubleHint] = useState(false);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const retryKey = `hindianime_retry_${animeSlug}_s${season}_e${episode}`;
 
   useEffect(() => {
     if (state !== "ready") { setShowTroubleHint(false); return; }
@@ -189,15 +171,6 @@ export function StreamPlayer({
     return () => window.clearTimeout(t);
   }, [fetchStreams]);
 
-  const handleIframeLoadTimeout = useCallback(() => {
-    const count = incrementRetryCount(retryKey);
-    if (count <= MAX_AUTO_RETRIES) {
-      fetchStreams();
-    } else {
-      setState("error");
-    }
-  }, [fetchStreams, retryKey]);
-
   const handleDirectPlaybackError = useCallback(() => {
     // On direct stream failure, try to fall back to the next server (or the embed)
     setServers((prev) => {
@@ -258,7 +231,6 @@ export function StreamPlayer({
                 embed={activeServer.embed}
                 title={episodeTitle}
                 reloadKey={reloadKey}
-                onLoadTimeout={handleIframeLoadTimeout}
               />
             )}
             {showTroubleHint && !isFullscreen && (
@@ -484,62 +456,39 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-// ─── EmbedFrame with load-timeout detection ──────────────────────────────────
+// ─── EmbedFrame ──────────────────────────────────────────────────────────────
 //
-// Cross-origin iframes cannot propagate internal load failures (e.g. "connection
-// was reset") to the parent page. What we CAN observe from the parent is whether
-// the iframe's onload event fires within a reasonable window.
-//
-// Strategy:
-//   • Start a 28-second timeout when the iframe mounts (or its src changes).
-//   • If onload fires before the timeout → success; cancel the timer.
-//   • If the timeout fires before onload → the provider likely failed to serve
-//     the embed. Call onLoadTimeout so the parent can re-fetch a fresh URL.
-//   • 28 s is longer than a typical browser TCP connection timeout (~20 s) but
-//     short enough that users aren't left staring at a blank frame indefinitely.
-//   • A successful onload does NOT guarantee the video plays; that determination
-//     is entirely inside the cross-origin provider and outside our reach.
-
-const IFRAME_LOAD_TIMEOUT_MS = 12_000;
+// AnimeSalt serves the stream as a cross-origin player page
+// (`as-cdn26.top/video/<id>`) inside a sandboxed iframe. We use the known-working
+// `87fa14b` sandbox token set so the player's scripts, same-origin storage,
+// popups, pointer-lock, top-navigation-by-user-activation and storage access
+// all function. We intentionally do NOT gate player health on the iframe
+// `onload` event: cross-origin embeds initialize their video via deferred
+// subresource/script loads whose completion the parent frame cannot observe,
+// and a short onload-timeout falsely reports a reachable server as
+// "Could not reach the stream server". A manual Reload is offered via the
+// trouble hint instead.
 
 function EmbedFrame({
   embed,
   title,
   reloadKey,
-  onLoadTimeout,
 }: {
   embed: string;
   title: string;
   reloadKey: number;
-  onLoadTimeout: () => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const loadedRef = useRef(false);
 
-  const onLoadTimeoutRef = useRef(onLoadTimeout);
-  useEffect(() => { onLoadTimeoutRef.current = onLoadTimeout; }, [onLoadTimeout]);
-
-  useEffect(() => {
-    loadedRef.current = false;
-    timeoutRef.current = setTimeout(() => {
-      if (!loadedRef.current) onLoadTimeoutRef.current();
-    }, IFRAME_LOAD_TIMEOUT_MS);
-    return () => { if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; } };
-  }, [embed, reloadKey]);
-
-  // Block popup ads from embed scripts
+  // Block popup ads launched from the parent scope while the embed is mounted
   useEffect(() => {
     const orig = window.open;
     window.open = () => null;
     return () => { window.open = orig; };
   }, []);
 
-  const handleLoad = useCallback(() => {
-    loadedRef.current = true;
-    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
-  }, []);
-
+  // Cache-bust only on manual reload so a stale embed is re-fetched; the
+  // initial render always uses the original `embed` URL untouched.
   const srcUrl =
     reloadKey > 0
       ? embed.includes("?")
@@ -554,15 +503,14 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-presentation allow-pointer-lock allow-top-navigation-by-user-activation allow-storage-access-by-user-activation"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="no-referrer"
-      onLoad={handleLoad}
+      referrerPolicy="no-referrer-when-downgrade"
     />
   );
 }
