@@ -2503,9 +2503,12 @@ export function isValidEmbedUrl(embed: string | null | undefined): boolean {
     if (url.hostname.includes("animesalt.cx") && !cleanPath.includes("/video/") && !cleanPath.includes("/embed/")) {
       return false;
     }
-    // Reject known ad verification gates and redirectors
+    // Reject known ad verification gates — but allow numeric embed IDs
+    // e.g. /embed/19548 is a real content player; /embed/verify is an ad gate
     if (url.hostname.includes("multishows.top") && cleanPath.startsWith("/embed")) {
-      return false;
+      const embedSegment = cleanPath.replace(/^\/embed\/?/, "");
+      // If the path after /embed/ is not a pure integer, it's a gate/challenge page
+      if (embedSegment && !/^\d+$/.test(embedSegment)) return false;
     }
     return true;
   } catch {
