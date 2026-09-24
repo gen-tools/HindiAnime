@@ -50,7 +50,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
     servers.push({
       id: `${finalType}-${i}-${streamUrl}`,
-      label: `Server ${servers.length + 1}`,
+      label: item.server || (isDirect ? `Server ${servers.length + 2}` : `Server ${servers.length + 1}`),
       embed: streamUrl,
       url: isDirect ? streamUrl : undefined,
       type: finalType,

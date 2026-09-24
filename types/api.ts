@@ -187,6 +187,8 @@ export interface StreamItem {
   audioLanguage?: string;
   /** True when the stream is a direct HLS/MP4 (no ads, no iframe) */
   adFree?: boolean;
+  /** Optional request headers required by the source CDN */
+  headers?: Record<string, string>;
 }
 
 export interface StreamResponse {

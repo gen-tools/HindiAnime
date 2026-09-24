@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isValidEmbedUrl, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
-import type { StreamItem, StreamResponse, TokoSource, TokoStreamResponse } from "@/types/api";
+import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
 
 // Stream links are short-lived. Always resolve them at request time rather
 // than letting an upstream block or empty response become a cached failure.
@@ -8,8 +8,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
 
 /** Toko streaming aggregator — server-side only, never exposed to client */
 const TOKO_API_URL = (
@@ -17,9 +15,9 @@ const TOKO_API_URL = (
 ).replace(/\/+$/, "");
 
 /** How long to wait for the Toko API before falling back to existing scrapers.
- *  Toko fans out across 15+ providers; 25s gives enough time for cold cache
+ *  Toko fans out across 15+ providers; 45s gives enough time for cold cache
  *  resolution while staying safely inside Vercel's 60s maxDuration. */
-const TOKO_TIMEOUT_MS = 25_000;
+const TOKO_TIMEOUT_MS = 45_000;
 
 
 const DEFAULT_HEADERS = {
@@ -50,67 +48,53 @@ function isValidAnimeSaltHtml(text: string): boolean {
   return text.includes("<iframe") || text.includes("data-src=");
 }
 
-async function scrapeAnimeSaltEpisodeStreams(
-  animeId: string,
-  season: string,
-  ep: string
-): Promise<StreamItem[]> {
-  const cleanId = cleanAnimeSlug(animeId) || animeId;
-  const urlFormats = [
-    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`,
-    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep.padStart(2, "0")}/`,
-  ];
-
-  let html: string | null = null;
-
-  for (const episodeUrl of urlFormats) {
-    if (html) break;
-    // 1. Try direct fetch with short timeout
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3500);
-      const res = await fetch(episodeUrl, {
-        headers: DEFAULT_HEADERS,
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const text = await res.text();
-        if (isValidAnimeSaltHtml(text)) {
-          html = text;
-        }
-      }
-    } catch {
-      // direct fetch failed
+async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
+  // 1. Direct fetch with short 2000ms timeout
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(url, {
+      headers: DEFAULT_HEADERS,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const text = await res.text();
+      if (isValidAnimeSaltHtml(text)) return text;
     }
-
-    // 2. Try Cloudflare Worker proxy if direct fetch failed or hit Cloudflare challenge
-    if (!html) {
-      try {
-        const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(episodeUrl)}`, {
-          headers: DEFAULT_HEADERS,
-          cache: "no-store",
-        });
-        if (pRes.ok) {
-          const text = await pRes.text();
-          if (isValidAnimeSaltHtml(text)) {
-            html = text;
-          }
-        }
-      } catch {
-        // proxy failed
-      }
-    }
+    // Origin is unreachable (Cloudflare 520-525 error): CF worker won't reach it either
+    if (res.status >= 520 && res.status <= 525) return null;
+  } catch {
+    // direct fetch failed
   }
 
-  if (!html) return [];
+  // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or blocked
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(url)}`, {
+      headers: DEFAULT_HEADERS,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (pRes.ok) {
+      const text = await pRes.text();
+      if (isValidAnimeSaltHtml(text)) return text;
+    }
+  } catch {
+    // proxy failed
+  }
 
+  return null;
+}
+
+function extractAnimeSaltIframes(html: string): StreamItem[] {
   try {
     const results: StreamItem[] = [];
     const seen = new Set<string>();
 
-    // --- Extract iframes (src or data-src) ---
     const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
 
@@ -140,86 +124,36 @@ async function scrapeAnimeSaltEpisodeStreams(
   }
 }
 
+async function scrapeAnimeSaltEpisodeStreams(
+  animeId: string,
+  season: string,
+  ep: string
+): Promise<StreamItem[]> {
+  const cleanId = cleanAnimeSlug(animeId) || animeId;
+  const urlFormats = [
+    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep}/`,
+    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-${season}x${ep.padStart(2, "0")}/`,
+  ];
+
+  const htmlResults = await Promise.all(urlFormats.map(fetchAnimeSaltHtml));
+  const html = htmlResults.find(Boolean);
+  if (!html) return [];
+  return extractAnimeSaltIframes(html);
+}
+
 async function scrapeDirectMovieStreams(
   animeId: string
 ): Promise<StreamItem[]> {
   const cleanId = cleanAnimeSlug(animeId) || animeId;
-
-  // Try multiple URL formats — AnimeSalt uses different patterns for movies
   const urlsToTry = [
     `https://animesalt.cx/movies/${encodeURIComponent(cleanId)}/`,
-    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-1x1/`,
-    `https://animesalt.cx/episode/${encodeURIComponent(cleanId)}-01/`,
     `https://animesalt.cx/${encodeURIComponent(cleanId)}/`,
   ];
 
-  for (const movieUrl of urlsToTry) {
-    let html: string | null = null;
-
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3500);
-      const res = await fetch(movieUrl, {
-        headers: DEFAULT_HEADERS,
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const text = await res.text();
-        if (isValidAnimeSaltHtml(text)) html = text;
-      }
-    } catch {
-      // direct fetch failed
-    }
-
-    if (!html) {
-      try {
-        const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(movieUrl)}`, {
-          headers: DEFAULT_HEADERS,
-          cache: "no-store",
-        });
-        if (pRes.ok) {
-          const text = await pRes.text();
-          if (isValidAnimeSaltHtml(text)) html = text;
-        }
-      } catch {
-        // proxy failed
-      }
-    }
-
-    if (!html) continue;
-
-    try {
-      const results: StreamItem[] = [];
-      const seen = new Set<string>();
-
-      const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
-      let match: RegExpExecArray | null;
-
-      while ((match = iframeRegex.exec(html)) !== null) {
-        let src = match[1].replace(/&#038;/g, "&");
-        if (src.startsWith("//")) src = "https:" + src;
-        else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
-
-        if (src.includes("animesalt.cx/multi-lang-plyr")) continue;
-
-        if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
-          seen.add(src);
-          results.push({
-            server: "AnimeSalt Video",
-            embed: src,
-          });
-        }
-      }
-
-      if (results.length > 0) return results;
-    } catch (err) {
-      console.error("[stream-proxy] direct movie scrape error:", err);
-    }
-  }
-
-  return [];
+  const htmlResults = await Promise.all(urlsToTry.map(fetchAnimeSaltHtml));
+  const html = htmlResults.find(Boolean);
+  if (!html) return [];
+  return extractAnimeSaltIframes(html);
 }
 
 async function scrapeMultiShowsStreams(
@@ -352,6 +286,7 @@ function tokoSourceToStreamItem(src: TokoSource, index: number): StreamItem | nu
       languageLabel: label || undefined,
       audioLanguage: src.audioLanguage || undefined,
       adFree: true,
+      headers: src.headers || undefined,
     };
   }
 
@@ -470,10 +405,60 @@ async function validateDirectStream(
 }
 
 /**
+ * Lenient reachability check for Toko/provider HLS sources.
+ *
+ * Unlike validateDirectStream, this accepts 403/timeout as "probably valid".
+ * CDN hosts (vmpx.online, vidzy.cc, fastream.to) geo-block Vercel's US IPs
+ * and require provider-specific Referer headers that we do not have server-side.
+ * A geo-block or timeout does NOT prove the stream is dead for a browser client.
+ * Only definitively dead responses (404/410) or explicit HTML challenge pages
+ * (served as HTTP 200) are hard-rejected.
+ */
+async function isTokoHlsReachable(
+  url: string,
+  headers?: Record<string, string>
+): Promise<boolean> {
+  if (!url || !url.startsWith("http")) return false;
+  if (!url.includes(".m3u8")) return false;
+
+  const probeHeaders: Record<string, string> = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ...(headers || {}),
+  };
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch(url, {
+      method: "HEAD",
+      headers: probeHeaders,
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    clearTimeout(timer);
+
+    // Hard reject: definitively dead
+    if (res.status === 404 || res.status === 410 || res.status === 451) return false;
+
+    // Hard reject: HTML challenge/error page returned as HTTP 200
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("text/html") && !ct.includes("mpegurl")) return false;
+
+    // 2xx, 206, 403, 429, 5xx — cannot prove dead; keep
+    return true;
+  } catch {
+    // Timeout or network error — cannot prove the stream is dead.
+    // Trust the Toko backend's own provider health audit.
+    return true;
+  }
+}
+
+/**
  * Calls the Toko /api/v3/toko/stream endpoint with a bounded timeout.
  * Employs direct fetch with immediate Cloudflare Worker proxy fallback
  * so production Vercel bot challenges never block source discovery.
- * Candidate direct streams are validated before being returned.
+ * HLS candidates are validated with isTokoHlsReachable (lenient probe).
  */
 async function fetchTokoSources(
   slug: string,
@@ -495,10 +480,10 @@ async function fetchTokoSources(
 
   let data: TokoStreamResponse | null = null;
 
-  // 1. Try direct fetch with short timeout (works locally if not challenged)
+  // 1. Try direct fetch (works locally and server-to-server on Vercel)
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 40000);
     const res = await fetch(directUrl, {
       signal: controller.signal,
       cache: "no-store",
@@ -560,28 +545,26 @@ async function fetchTokoSources(
     }
   });
 
-  // Concurrently validate top candidate streams (probe up to 8 HLS + 4 MP4 in parallel)
-  const probeList = [...hlsCandidates.slice(0, 8), ...mp4Candidates.slice(0, 4)];
-  const validated = await Promise.all(
-    probeList.map(async ({ item, headers }) => {
+  // Validate HLS candidates with the lenient isTokoHlsReachable probe.
+  // Toko CDN hosts geo-block Vercel US IPs and need provider Referer headers
+  // we do not have server-side, so the strict HEAD/GET validation creates false
+  // negatives.  isTokoHlsReachable only hard-rejects 404/410/HTML challenge
+  // pages; it accepts 403/timeout as "probably valid" for the browser client.
+  const validDirectHls: StreamItem[] = [];
+  const hlsProbeResults = await Promise.all(
+    hlsCandidates.slice(0, 8).map(async ({ item, headers }) => {
       const streamUrl = item.url || item.embed;
-      const ok = await validateDirectStream(streamUrl, headers);
+      if (!streamUrl) return null;
+      const ok = await isTokoHlsReachable(streamUrl, headers);
       return ok ? item : null;
     })
   );
-
-  const validDirectHls: StreamItem[] = [];
-  const validDirectMp4: StreamItem[] = [];
-
-  for (const item of validated) {
-    if (!item) continue;
-    if (item.type === "hls") validDirectHls.push(item);
-    else if (item.type === "mp4") validDirectMp4.push(item);
+  for (const item of hlsProbeResults) {
+    if (item) validDirectHls.push(item);
   }
 
-  // Never expose candidates that could not be validated: source providers can
-  // return 403 pages, challenges, expired URLs, or ad redirects with HTTP 200.
-  return [...validDirectHls, ...validDirectMp4, ...embeds];
+  // MP4 and embeds are never surfaced as HLS server buttons; skip probing them.
+  return validDirectHls;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -639,8 +622,8 @@ export async function GET(request: Request) {
   let animeSaltResults = initialAnimeSaltResults;
 
   // Fallback to direct movie scrape if AnimeSalt episode scraper found nothing
-  // (movies don't have /episode/ pages so this is the primary path for movies)
-  if (animeSaltResults.length === 0) {
+  // (only applies to season 1 episode 1 since movies don't have season/episode numbering)
+  if (animeSaltResults.length === 0 && season === "1" && ep === "1") {
     animeSaltResults = await scrapeDirectMovieStreams(cleanId);
   }
 
@@ -649,93 +632,50 @@ export async function GET(request: Request) {
   //   1. AnimeSalt embed → existing sandboxed, ad-blocked iframe Server 1
   //   2. Validated Toko HLS sources → native HLS.js Server 2+
   //
-  // Do not turn third-party embeds, MP4s, or unvalidated candidates into
-  // alternate buttons. The player keeps its existing four-server limit.
+  // Strict server numbering:
+  //   - If AnimeSalt exists → Server 1.
+  //   - HLS sources ALWAYS start at Server 2 (Server 2, Server 3, Server 4...).
+  //   - If AnimeSalt is unavailable → do NOT rename HLS to Server 1;
+  //     keep Server 1 reserved for AnimeSalt and show available HLS as Server 2+.
+  //   - If no HLS exists, do not create fake buttons.
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
-  const addStream = (item: StreamItem, desiredType?: "hls" | "mp4" | "embed", isAdFree = false) => {
-    const key = item.url || item.embed;
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    mergedResults.push({
-      ...item,
-      type: desiredType ?? item.type,
-      server: `Server ${mergedResults.length + 1}`,
-      adFree: isAdFree || item.adFree,
-    });
-  };
-
   // Phase 1: the established AnimeSalt embed is always Server 1.
   if (animeSaltResults.length > 0) {
-    addStream(animeSaltResults[0], "embed");
+    const saltItem = animeSaltResults[0];
+    const key = saltItem.url || saltItem.embed;
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      mergedResults.push({
+        ...saltItem,
+        type: "embed",
+        server: "Server 1",
+      });
+    }
   }
 
-  // Phase 2: only validated Toko HLS sources are eligible as alternates.
+  // Phase 2: validated Toko HLS sources ALWAYS start at Server 2+.
+  let hlsServerIndex = 2;
   for (const r of tokoResults) {
     if (mergedResults.length >= 4) break;
-    if (r.type === "hls") addStream(r, "hls", true);
+    if (r.type !== "hls") continue;
+    const key = r.url || r.embed;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    mergedResults.push({
+      ...r,
+      type: "hls",
+      server: `Server ${hlsServerIndex}`,
+      adFree: true,
+      headers: r.headers,
+    });
+    hlsServerIndex++;
   }
 
   if (mergedResults.length > 0) {
     return NextResponse.json(
       { success: true, message: "Stream Found!!", results: mergedResults },
-      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
-    );
-  }
-
-  // Fallback 1: upstream API /api/stream endpoint
-  try {
-    const upstreamUrl = `${API_BASE_URL}/api/stream?id=${encodeURIComponent(cleanId)}&season=${encodeURIComponent(season)}&ep=${encodeURIComponent(ep)}`;
-    const res = await fetch(upstreamUrl, {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-    if (res.ok) {
-      const data: StreamResponse = await res.json();
-      const validResults = (data.results || []).filter((r) =>
-        isValidEmbedUrl(r.embed)
-      );
-      if (validResults.length > 0) {
-        return NextResponse.json(
-          { success: true, message: "Stream Found!!", results: validResults },
-          { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
-        );
-      }
-    }
-  } catch {
-    // upstream failed
-  }
-
-  // Fallback 2: upstream /api/movie endpoint (for movies)
-  try {
-    const movieUpstreamUrl = `${API_BASE_URL}/api/movie?id=${encodeURIComponent(cleanId)}`;
-    const mRes = await fetch(movieUpstreamUrl, {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-    if (mRes.ok) {
-      const mData = await mRes.json();
-      const streamCandidates: StreamItem[] = mData?.results?.stream || [];
-      const validMovieResults = streamCandidates.filter((r) =>
-        isValidEmbedUrl(r.embed)
-      );
-      if (validMovieResults.length > 0) {
-        return NextResponse.json(
-          { success: true, message: "Stream Found!!", results: validMovieResults },
-          { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
-        );
-      }
-    }
-  } catch {
-    // upstream movie endpoint failed
-  }
-
-  // Fallback 3: direct movie page scrape
-  const movieDirectResults = await scrapeDirectMovieStreams(cleanId);
-  if (movieDirectResults.length > 0) {
-    return NextResponse.json(
-      { success: true, message: "Stream Found!!", results: movieDirectResults },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   }
