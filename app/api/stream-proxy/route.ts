@@ -83,7 +83,14 @@ async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
   return attempt(url, 4000);
 }
 
-function extractAnimeSaltIframes(html: string): StreamItem[] {
+interface AnimeSaltDiag {
+  receivedValidHtml: boolean;
+  htmlLength: number;
+  hasMultiLangPlyr: boolean;
+  rejectionReason: string | null;
+}
+
+function extractAnimeSaltIframes(html: string, diag?: AnimeSaltDiag): StreamItem[] {
   try {
     const results: StreamItem[] = [];
     const seen = new Set<string>();
@@ -105,6 +112,30 @@ function extractAnimeSaltIframes(html: string): StreamItem[] {
           embed: src,
         });
         return results;
+      } else if (diag) {
+        let reason = "isValidEmbedUrl(src) returned false";
+        try {
+          const parsed = new URL(src);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            reason = `Protocol '${parsed.protocol}' is not http/https`;
+          } else if (
+            parsed.hostname.includes("animesalt.cx") &&
+            !parsed.pathname.includes("/video/") &&
+            !parsed.pathname.includes("/embed/") &&
+            !parsed.pathname.includes("multi-lang-plyr")
+          ) {
+            reason = `Hostname animesalt.cx pathname '${parsed.pathname}' rejected by isValidEmbedUrl`;
+          }
+        } catch {
+          reason = "URL parsing failed for extracted iframe src";
+        }
+        diag.rejectionReason = reason;
+      }
+    } else if (diag) {
+      if (html.includes("multi-lang-plyr")) {
+        diag.rejectionReason = "HTML contains 'multi-lang-plyr' text but multiLangRegex did not match any <iframe (src|data-src) attribute";
+      } else {
+        diag.rejectionReason = "HTML does not contain 'multi-lang-plyr'";
       }
     }
 
@@ -133,6 +164,7 @@ function extractAnimeSaltIframes(html: string): StreamItem[] {
 
     return results;
   } catch (err) {
+    if (diag) diag.rejectionReason = `Extraction error: ${err instanceof Error ? err.message : String(err)}`;
     console.error("[stream-proxy] animesalt scrape error:", err);
     return [];
   }
@@ -141,7 +173,8 @@ function extractAnimeSaltIframes(html: string): StreamItem[] {
 async function scrapeAnimeSaltEpisodeStreams(
   animeId: string,
   season: string,
-  ep: string
+  ep: string,
+  diag?: AnimeSaltDiag
 ): Promise<StreamItem[]> {
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   const urlFormats = [
@@ -151,8 +184,21 @@ async function scrapeAnimeSaltEpisodeStreams(
 
   const htmlResults = await Promise.all(urlFormats.map(fetchAnimeSaltHtml));
   const html = htmlResults.find(Boolean);
+
+  if (diag) {
+    if (html) {
+      diag.receivedValidHtml = true;
+      diag.htmlLength = html.length;
+      diag.hasMultiLangPlyr = html.includes("multi-lang-plyr");
+    } else {
+      diag.receivedValidHtml = false;
+      diag.htmlLength = 0;
+      diag.hasMultiLangPlyr = false;
+    }
+  }
+
   if (!html) return [];
-  return extractAnimeSaltIframes(html);
+  return extractAnimeSaltIframes(html, diag);
 }
 
 async function scrapeDirectMovieStreams(
@@ -630,14 +676,41 @@ export async function GET(request: Request) {
     );
   }
 
+  // 1. cleanId, season, ep
+  console.log(`[stream-proxy-diag] 1. cleanId: "${cleanId}", season: "${season}", ep: "${ep}"`);
+
+  const saltDiag: AnimeSaltDiag = {
+    receivedValidHtml: false,
+    htmlLength: 0,
+    hasMultiLangPlyr: false,
+    rejectionReason: null,
+  };
+
   // Run Toko + existing scrapers in parallel.
   // Toko has its own bounded timeout (TOKO_TIMEOUT_MS) so it cannot stall
   // the route; existing scrapers proceed independently.
   const [tokoResults, initialAnimeSaltResults] = await Promise.all([
     fetchTokoSources(cleanId, ep),
-    scrapeAnimeSaltEpisodeStreams(cleanId, season, ep),
+    scrapeAnimeSaltEpisodeStreams(cleanId, season, ep, saltDiag),
   ]);
   let animeSaltResults = initialAnimeSaltResults;
+
+  // 2. AnimeSalt result count after scrapeAnimeSaltEpisodeStreams()
+  console.log(`[stream-proxy-diag] 2. AnimeSalt result count after scrapeAnimeSaltEpisodeStreams(): ${initialAnimeSaltResults.length}`);
+
+  // 3. Toko result count after fetchTokoSources()
+  console.log(`[stream-proxy-diag] 3. Toko result count after fetchTokoSources(): ${tokoResults.length}`);
+
+  // 4, 5, 6. If AnimeSalt result count is 0
+  if (initialAnimeSaltResults.length === 0) {
+    console.log(`[stream-proxy-diag] 4. fetchAnimeSaltHtml() received valid HTML: ${saltDiag.receivedValidHtml}, length: ${saltDiag.htmlLength}`);
+    if (saltDiag.receivedValidHtml) {
+      console.log(`[stream-proxy-diag] 5. html.includes("multi-lang-plyr"): ${saltDiag.hasMultiLangPlyr}`);
+      if (saltDiag.rejectionReason) {
+        console.log(`[stream-proxy-diag] 6. extractAnimeSaltIframes() rejection reason: ${saltDiag.rejectionReason}`);
+      }
+    }
+  }
 
   // Fallback to direct movie scrape if AnimeSalt episode scraper found nothing
   // (only applies to season 1 episode 1 since movies don't have season/episode numbering)
