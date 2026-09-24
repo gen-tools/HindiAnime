@@ -53,10 +53,10 @@ function isValidAnimeSaltHtml(text: string): boolean {
 }
 
 async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
-  // 1. Direct fetch with short 2000ms timeout
+  // 1. Direct fetch — 3000ms gives warm CDN edges enough time while staying fast
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
+    const timer = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(url, {
       headers: DEFAULT_HEADERS,
       cache: "no-store",
@@ -71,10 +71,11 @@ async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
     // direct fetch failed
   }
 
-  // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or blocked
+  // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or blocked.
+  //    7000ms covers the extra round-trip: Vercel (iad1) → CF Worker → animesalt.cx origin → back.
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
+    const timer = setTimeout(() => controller.abort(), 7000);
     const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(url)}`, {
       headers: DEFAULT_HEADERS,
       cache: "no-store",
