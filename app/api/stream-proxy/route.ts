@@ -53,44 +53,35 @@ function isValidAnimeSaltHtml(text: string): boolean {
 }
 
 async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
-  // 1. Direct fetch — 3000ms gives warm CDN edges enough time while staying fast
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(url, {
-      headers: DEFAULT_HEADERS,
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (isValidAnimeSaltHtml(text)) return text;
+  const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(url)}`;
+
+  async function attempt(fetchUrl: string, timeoutMs: number): Promise<string | null> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const res = await fetch(fetchUrl, {
+        headers: DEFAULT_HEADERS,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const text = await res.text();
+        return isValidAnimeSaltHtml(text) ? text : null;
+      }
+    } catch {
+      // fetch failed or timed out
     }
-  } catch {
-    // direct fetch failed
+    return null;
   }
 
-  // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or blocked.
-  //    7000ms covers the extra round-trip: Vercel (iad1) → CF Worker → animesalt.cx origin → back.
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
-    const pRes = await fetch(`${CF_PROXY_URL}${encodeURIComponent(url)}`, {
-      headers: DEFAULT_HEADERS,
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (pRes.ok) {
-      const text = await pRes.text();
-      if (isValidAnimeSaltHtml(text)) return text;
-    }
-  } catch {
-    // proxy failed
-  }
+  // 1. Primary: Cloudflare Worker proxy (Vercel -> existing CF Worker -> AnimeSalt)
+  // Ensures production does not depend on Vercel's direct AnimeSalt connection.
+  const proxyResult = await attempt(proxyUrl, 8000);
+  if (proxyResult) return proxyResult;
 
-  return null;
+  // 2. Fallback: Direct AnimeSalt connection if the CF Worker proxy is unavailable
+  return attempt(url, 4000);
 }
 
 function extractAnimeSaltIframes(html: string): StreamItem[] {
