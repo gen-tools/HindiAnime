@@ -54,7 +54,7 @@ function isValidAnimeSaltHtml(text: string): boolean {
 async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
   const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(url)}`;
 
-  async function attempt(fetchUrl: string, timeoutMs: number): Promise<string | null> {
+  async function attempt(fetchUrl: string, timeoutMs: number, fetchType: "Worker" | "Direct"): Promise<string | null> {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -64,23 +64,26 @@ async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
         signal: controller.signal,
       });
       clearTimeout(timer);
+      const contentType = res.headers.get("content-type") || "";
+      const text = await res.text();
+      const preview = text.slice(0, 100).replace(/\s+/g, " ");
+      console.log(`[stream-proxy-debug][AnimeSalt] ${fetchType} fetch: status=${res.status}, ok=${res.ok}, content-type="${contentType}", length=${text.length}, preview="${preview}"`);
       if (res.ok) {
-        const text = await res.text();
         return isValidAnimeSaltHtml(text) ? text : null;
       }
-    } catch {
-      // fetch failed or timed out
+    } catch (err) {
+      console.warn(`[stream-proxy-debug][AnimeSalt] ${fetchType} fetch error: ${err instanceof Error ? err.message : String(err)}`);
     }
     return null;
   }
 
   // 1. Primary: Cloudflare Worker proxy (Vercel -> existing CF Worker -> AnimeSalt)
   // Ensures production does not depend on Vercel's direct AnimeSalt connection.
-  const proxyResult = await attempt(proxyUrl, 8000);
+  const proxyResult = await attempt(proxyUrl, 8000, "Worker");
   if (proxyResult) return proxyResult;
 
   // 2. Fallback: Direct AnimeSalt connection if the CF Worker proxy is unavailable
-  return attempt(url, 4000);
+  return attempt(url, 4000, "Direct");
 }
 
 interface AnimeSaltDiag {
@@ -554,14 +557,21 @@ async function fetchTokoSources(
         },
       });
       clearTimeout(timer);
+      const contentType = res.headers.get("content-type") || "";
+      const text = await res.text();
+      const preview = text.slice(0, 100).replace(/\s+/g, " ");
+      console.log(`[stream-proxy-debug][Toko] Direct fetch: status=${res.status}, ok=${res.ok}, content-type="${contentType}", length=${text.length}, preview="${preview}"`);
       if (res.ok) {
-        const text = await res.text();
         if (!text.includes("Vercel Security Checkpoint") && !text.includes("<!DOCTYPE html>")) {
-          data = JSON.parse(text) as TokoStreamResponse;
+          try {
+            data = JSON.parse(text) as TokoStreamResponse;
+          } catch (jsonErr) {
+            console.warn(`[stream-proxy-debug][Toko] Direct JSON parse error: ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)}`);
+          }
         }
       }
-    } catch {
-      // Direct fetch failed or timed out
+    } catch (err) {
+      console.warn(`[stream-proxy-debug][Toko] Direct fetch error: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or failed (5s timeout)
@@ -575,11 +585,19 @@ async function fetchTokoSources(
           headers: { Accept: "application/json" },
         });
         clearTimeout(timer);
+        const contentType = res.headers.get("content-type") || "";
+        const text = await res.text();
+        const preview = text.slice(0, 100).replace(/\s+/g, " ");
+        console.log(`[stream-proxy-debug][Toko] Worker fetch: status=${res.status}, ok=${res.ok}, content-type="${contentType}", length=${text.length}, preview="${preview}"`);
         if (res.ok) {
-          data = (await res.json()) as TokoStreamResponse;
+          try {
+            data = JSON.parse(text) as TokoStreamResponse;
+          } catch (jsonErr) {
+            console.warn(`[stream-proxy-debug][Toko] Worker JSON parse error: ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)}`);
+          }
         }
       } catch (err) {
-        console.warn("[stream-proxy] Toko fetch via CF proxy failed:", err);
+        console.warn(`[stream-proxy-debug][Toko] Worker fetch error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
