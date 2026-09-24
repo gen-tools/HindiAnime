@@ -44,7 +44,14 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
     if (!streamUrl || typeof streamUrl !== "string") continue;
     if (seen.has(streamUrl)) continue;
-    if (!isValidEmbedUrl(streamUrl)) continue;
+
+    // Our own /api/ proxy URLs and Cloudflare Worker proxy URLs are safe by
+    // construction — skip the external URL validator (which rejects root-path URLs).
+    const isOwnProxy =
+      streamUrl.startsWith("/api/") ||
+      streamUrl.includes(".workers.dev");
+    if (!isOwnProxy && !isValidEmbedUrl(streamUrl)) continue;
+
 
     seen.add(streamUrl);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
@@ -61,6 +68,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
   return servers;
 }
+
 
 // ─── Component ───────────────────────────────────────────────────────────────
 

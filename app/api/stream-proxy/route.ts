@@ -29,10 +29,14 @@ const DEFAULT_HEADERS = {
   Referer: "https://animesalt.cx/",
 };
 
-const CF_PROXY_URL =
+const rawCfProxy =
   process.env.CF_PROXY_URL ||
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
   "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
+
+const CF_PROXY_URL = rawCfProxy.includes("?url=")
+  ? rawCfProxy
+  : `${rawCfProxy.replace(/\/+$/, "")}/?url=`;
 
 function isValidAnimeSaltHtml(text: string): boolean {
   if (!text || text.length < 1500) return false;
@@ -63,8 +67,6 @@ async function fetchAnimeSaltHtml(url: string): Promise<string | null> {
       const text = await res.text();
       if (isValidAnimeSaltHtml(text)) return text;
     }
-    // Origin is unreachable (Cloudflare 520-525 error): CF worker won't reach it either
-    if (res.status >= 520 && res.status <= 525) return null;
   } catch {
     // direct fetch failed
   }
@@ -95,6 +97,27 @@ function extractAnimeSaltIframes(html: string): StreamItem[] {
     const results: StreamItem[] = [];
     const seen = new Set<string>();
 
+    // 1. Primary: Extract AnimeSalt multi-language Plyr iframe (Multi-audio player)
+    const multiLangRegex =
+      /<iframe[^>]+(?:src|data-src)=["']([^"']*multi-lang-plyr[^"']+)["'][^>]*>/i;
+    const multiMatch = multiLangRegex.exec(html);
+
+    if (multiMatch) {
+      let src = multiMatch[1].replace(/&#038;/g, "&");
+      if (src.startsWith("//")) src = "https:" + src;
+      else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
+
+      if (isValidEmbedUrl(src)) {
+        seen.add(src);
+        results.push({
+          server: "Server 1",
+          embed: src,
+        });
+        return results;
+      }
+    }
+
+    // 2. Fallback: Extract any other valid iframe (e.g. for movies or single-source episodes)
     const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
 
@@ -103,15 +126,13 @@ function extractAnimeSaltIframes(html: string): StreamItem[] {
       if (src.startsWith("//")) src = "https:" + src;
       else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
 
-      // Filter out self-domain plyr and homepages
-      if (src.includes("animesalt.cx/multi-lang-plyr")) continue;
       if (src.replace(/\/+$/, "") === "https://animesalt.cx") continue;
       if (!src.includes("/video/") && !src.includes(".m3u8") && !src.includes("embed") && !src.includes("/v/")) continue;
 
       if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
         seen.add(src);
         results.push({
-          server: "AnimeSalt Video",
+          server: "Server 1",
           embed: src,
         });
       }
@@ -443,7 +464,7 @@ async function isTokoHlsReachable(
 
     // Hard reject: HTML challenge/error page returned as HTTP 200
     const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (ct.includes("text/html") && !ct.includes("mpegurl")) return false;
+    if (res.status === 200 && ct.includes("text/html") && !ct.includes("mpegurl")) return false;
 
     // 2xx, 206, 403, 429, 5xx — cannot prove dead; keep
     return true;
@@ -649,11 +670,14 @@ export async function GET(request: Request) {
       seen.add(key);
       mergedResults.push({
         ...saltItem,
+        embed: key,
+        url: undefined,
         type: "embed",
         server: "Server 1",
       });
     }
   }
+
 
   // Phase 2: validated Toko HLS sources ALWAYS start at Server 2+.
   let hlsServerIndex = 2;

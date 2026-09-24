@@ -2500,7 +2500,12 @@ export function isValidEmbedUrl(embed: string | null | undefined): boolean {
     const cleanPath = url.pathname.replace(/\/+$/, "");
     if (!cleanPath || cleanPath === "") return false;
     // Reject entire site homepages or self-domain non-player paths
-    if (url.hostname.includes("animesalt.cx") && !cleanPath.includes("/video/") && !cleanPath.includes("/embed/")) {
+    if (
+      url.hostname.includes("animesalt.cx") &&
+      !cleanPath.includes("/video/") &&
+      !cleanPath.includes("/embed/") &&
+      !cleanPath.includes("multi-lang-plyr")
+    ) {
       return false;
     }
     // Reject known ad verification gates — but allow numeric embed IDs
