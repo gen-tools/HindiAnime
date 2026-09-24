@@ -14,10 +14,9 @@ const TOKO_API_URL = (
   process.env.TOKO_API_URL || "https://api-delta-taupe-46.vercel.app"
 ).replace(/\/+$/, "");
 
-/** How long to wait for the Toko API before falling back to existing scrapers.
- *  Toko fans out across 15+ providers; 45s gives enough time for cold cache
- *  resolution while staying safely inside Vercel's 60s maxDuration. */
-const TOKO_TIMEOUT_MS = 45_000;
+/** Maximum overall duration to wait for Toko source resolution and validation.
+ *  Prevents Toko from blocking the route for more than ~12s. */
+const TOKO_TIMEOUT_MS = 12_000;
 
 
 const DEFAULT_HEADERS = {
@@ -110,6 +109,7 @@ function extractAnimeSaltIframes(html: string): StreamItem[] {
     }
 
     // 2. Fallback: Extract any other valid iframe (e.g. for movies or single-source episodes)
+    // NEVER accept as-cdn26.top/video URLs; multi-lang-plyr.php is the preferred Server 1 source.
     const iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
     let match: RegExpExecArray | null;
 
@@ -119,7 +119,8 @@ function extractAnimeSaltIframes(html: string): StreamItem[] {
       else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
 
       if (src.replace(/\/+$/, "") === "https://animesalt.cx") continue;
-      if (!src.includes("/video/") && !src.includes(".m3u8") && !src.includes("embed") && !src.includes("/v/")) continue;
+      if (src.includes("as-cdn26.top")) continue;
+      if (!src.includes(".m3u8") && !src.includes("embed") && !src.includes("/v/")) continue;
 
       if (isValidEmbedUrl(src) && !src.includes("about:blank") && !seen.has(src)) {
         seen.add(src);
@@ -477,107 +478,111 @@ async function fetchTokoSources(
   slug: string,
   episodeNumber: string
 ): Promise<StreamItem[]> {
-  const tokoBase = TOKO_API_URL;
-  if (!tokoBase) return [];
+  const resolveSources = async (): Promise<StreamItem[]> => {
+    const tokoBase = TOKO_API_URL;
+    if (!tokoBase) return [];
 
-  const titleVariants = slugToTitleVariants(slug);
-  if (titleVariants.length === 0) return [];
+    const titleVariants = slugToTitleVariants(slug);
+    if (titleVariants.length === 0) return [];
 
-  const params = new URLSearchParams();
-  for (const t of titleVariants) params.append("titles[]", t);
-  params.set("episode", episodeNumber);
-  params.set("stream", "0"); // plain JSON, not SSE
+    const params = new URLSearchParams();
+    for (const t of titleVariants) params.append("titles[]", t);
+    params.set("episode", episodeNumber);
+    params.set("stream", "0"); // plain JSON, not SSE
 
-  const directUrl = `${tokoBase}/api/v3/toko/stream?${params.toString()}`;
-  const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(directUrl)}`;
+    const directUrl = `${tokoBase}/api/v3/toko/stream?${params.toString()}`;
+    const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(directUrl)}`;
 
-  let data: TokoStreamResponse | null = null;
+    let data: TokoStreamResponse | null = null;
 
-  // 1. Try direct fetch (works locally and server-to-server on Vercel)
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 40000);
-    const res = await fetch(directUrl, {
-      signal: controller.signal,
-      cache: "no-store",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": DEFAULT_HEADERS["User-Agent"],
-      },
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const text = await res.text();
-      if (!text.includes("Vercel Security Checkpoint") && !text.includes("<!DOCTYPE html>")) {
-        data = JSON.parse(text) as TokoStreamResponse;
-      }
-    }
-  } catch {
-    // Direct fetch failed or timed out
-  }
-
-  // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or failed
-  if (!data) {
+    // 1. Try direct fetch (8s timeout)
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch(proxyUrl, {
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(directUrl, {
         signal: controller.signal,
         cache: "no-store",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          "User-Agent": DEFAULT_HEADERS["User-Agent"],
+        },
       });
       clearTimeout(timer);
       if (res.ok) {
-        data = (await res.json()) as TokoStreamResponse;
+        const text = await res.text();
+        if (!text.includes("Vercel Security Checkpoint") && !text.includes("<!DOCTYPE html>")) {
+          data = JSON.parse(text) as TokoStreamResponse;
+        }
       }
-    } catch (err) {
-      console.warn("[stream-proxy] Toko fetch via CF proxy failed:", err);
+    } catch {
+      // Direct fetch failed or timed out
     }
-  }
 
-  if (!data || !Array.isArray(data.sources) || data.sources.length === 0) {
-    return [];
-  }
-
-  // Convert and filter candidates, keeping HLS direct streams strictly ahead of MP4
-  const hlsCandidates: { item: StreamItem; headers?: Record<string, string> }[] = [];
-  const mp4Candidates: { item: StreamItem; headers?: Record<string, string> }[] = [];
-  const embeds: StreamItem[] = [];
-
-  data.sources.forEach((src, i) => {
-    // Skip torrents — they're not playable in the browser player
-    if (src.type === "torrent") return;
-    const item = tokoSourceToStreamItem(src, i);
-    if (!item) return;
-    if (item.type === "hls") {
-      hlsCandidates.push({ item, headers: src.headers });
-    } else if (item.type === "mp4") {
-      mp4Candidates.push({ item, headers: src.headers });
-    } else if (isValidEmbedUrl(item.embed)) {
-      embeds.push(item);
+    // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or failed (5s timeout)
+    if (!data) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(proxyUrl, {
+          signal: controller.signal,
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          data = (await res.json()) as TokoStreamResponse;
+        }
+      } catch (err) {
+        console.warn("[stream-proxy] Toko fetch via CF proxy failed:", err);
+      }
     }
-  });
 
-  // Validate HLS candidates with the lenient isTokoHlsReachable probe.
-  // Toko CDN hosts geo-block Vercel US IPs and need provider Referer headers
-  // we do not have server-side, so the strict HEAD/GET validation creates false
-  // negatives.  isTokoHlsReachable only hard-rejects 404/410/HTML challenge
-  // pages; it accepts 403/timeout as "probably valid" for the browser client.
-  const validDirectHls: StreamItem[] = [];
-  const hlsProbeResults = await Promise.all(
-    hlsCandidates.slice(0, 8).map(async ({ item, headers }) => {
-      const streamUrl = item.url || item.embed;
-      if (!streamUrl) return null;
-      const ok = await isTokoHlsReachable(streamUrl, headers);
-      return ok ? item : null;
-    })
+    if (!data || !Array.isArray(data.sources) || data.sources.length === 0) {
+      return [];
+    }
+
+    // Convert and filter candidates, keeping HLS direct streams strictly ahead of MP4
+    const hlsCandidates: { item: StreamItem; headers?: Record<string, string> }[] = [];
+    const mp4Candidates: { item: StreamItem; headers?: Record<string, string> }[] = [];
+    const embeds: StreamItem[] = [];
+
+    data.sources.forEach((src, i) => {
+      // Skip torrents — they're not playable in the browser player
+      if (src.type === "torrent") return;
+      const item = tokoSourceToStreamItem(src, i);
+      if (!item) return;
+      if (item.type === "hls") {
+        hlsCandidates.push({ item, headers: src.headers });
+      } else if (item.type === "mp4") {
+        mp4Candidates.push({ item, headers: src.headers });
+      } else if (isValidEmbedUrl(item.embed)) {
+        embeds.push(item);
+      }
+    });
+
+    // Validate HLS candidates with the lenient isTokoHlsReachable probe.
+    const validDirectHls: StreamItem[] = [];
+    const hlsProbeResults = await Promise.all(
+      hlsCandidates.slice(0, 8).map(async ({ item, headers }) => {
+        const streamUrl = item.url || item.embed;
+        if (!streamUrl) return null;
+        const ok = await isTokoHlsReachable(streamUrl, headers);
+        return ok ? item : null;
+      })
+    );
+    for (const item of hlsProbeResults) {
+      if (item) validDirectHls.push(item);
+    }
+
+    return validDirectHls;
+  };
+
+  // Enforce total Toko timeout of ~12s so it never blocks the route
+  const timeoutPromise = new Promise<StreamItem[]>((resolve) =>
+    setTimeout(() => resolve([]), TOKO_TIMEOUT_MS)
   );
-  for (const item of hlsProbeResults) {
-    if (item) validDirectHls.push(item);
-  }
 
-  // MP4 and embeds are never surfaced as HLS server buttons; skip probing them.
-  return validDirectHls;
+  return Promise.race([resolveSources(), timeoutPromise]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
