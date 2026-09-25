@@ -1883,6 +1883,12 @@ export async function enrichAnimeSynopses(items: Anime[]): Promise<Anime[]> {
         }
       } catch {}
 
+      // Fallback 2: mock item synopsis
+      const mock = getAnimeBySlug(item.slug);
+      if (mock?.synopsis && mock.synopsis !== SYNOPSIS_FALLBACK) {
+        return { ...item, synopsis: mock.synopsis };
+      }
+
       return item;
     })
   );

@@ -151,18 +151,37 @@ export function StreamPlayer({
     } catch (err) { console.warn("Fullscreen toggle error:", err); }
   }, []);
 
-  const fetchStreams = useCallback(async () => {
-    setState("loading");
-    setServers([]);
-    setActiveServer(null);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchStreams = useCallback(async (isRetry = false) => {
+    if (!isRetry) {
+      setState("loading");
+      setServers([]);
+      setActiveServer(null);
+    }
     try {
       const res = await fetch(
         `/api/stream-proxy?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`
       );
-      if (!res.ok) { setState("error"); return; }
+      if (!res.ok) {
+        if (!isRetry) {
+          retryTimerRef.current = setTimeout(() => {
+            fetchStreams(true);
+          }, 1500);
+          return;
+        }
+        setState("error");
+        return;
+      }
       const data = await res.json();
       const parsed = parseServers(data?.results ?? []);
       if (parsed.length === 0) {
+        if (!isRetry) {
+          retryTimerRef.current = setTimeout(() => {
+            fetchStreams(true);
+          }, 1500);
+          return;
+        }
         setState("unavailable");
       } else {
         setServers(parsed);
@@ -170,13 +189,22 @@ export function StreamPlayer({
         setState("ready");
       }
     } catch {
+      if (!isRetry) {
+        retryTimerRef.current = setTimeout(() => {
+          fetchStreams(true);
+        }, 1500);
+        return;
+      }
       setState("error");
     }
   }, [animeSlug, season, episode]);
 
   useEffect(() => {
-    const t = window.setTimeout(fetchStreams, 0);
-    return () => window.clearTimeout(t);
+    const t = window.setTimeout(() => fetchStreams(false), 0);
+    return () => {
+      window.clearTimeout(t);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
   }, [fetchStreams]);
 
   const handleDirectPlaybackError = useCallback(() => {
@@ -213,7 +241,7 @@ export function StreamPlayer({
         )}
       >
         {state === "loading" && <LoadingState episodeTitle={episodeTitle} />}
-        {state === "error" && <ErrorState onRetry={fetchStreams} />}
+        {state === "error" && <ErrorState onRetry={() => fetchStreams(false)} />}
         {state === "unavailable" && <UnavailableState />}
         {state === "ready" && activeServer && (
           <>
