@@ -733,9 +733,13 @@ export async function GET(request: Request) {
     }
   }
 
-  // Fallback to direct movie scrape if AnimeSalt episode scraper found nothing
-  // (only applies to season 1 episode 1 since movies don't have season/episode numbering)
-  if (animeSaltResults.length === 0 && season === "1" && ep === "1") {
+  // Do NOT call the AnimeSalt movie URL for episode requests
+  const isEpisodeRequest =
+    searchParams.has("ep") ||
+    searchParams.has("season") ||
+    searchParams.get("type") === "episode";
+
+  if (!isEpisodeRequest && animeSaltResults.length === 0) {
     animeSaltResults = await scrapeDirectMovieStreams(cleanId);
   }
 
