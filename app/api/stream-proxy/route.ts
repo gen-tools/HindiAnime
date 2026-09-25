@@ -15,8 +15,8 @@ const TOKO_API_URL = (
 ).replace(/\/+$/, "");
 
 /** Maximum overall duration to wait for Toko source resolution and validation.
- *  Prevents Toko from blocking the route for more than ~12s. */
-const TOKO_TIMEOUT_MS = 12_000;
+ *  Allows direct fetch (7s) + worker fallback (8s) + validation without premature cutoff. */
+const TOKO_TIMEOUT_MS = 25_000;
 
 
 const DEFAULT_HEADERS = {
@@ -484,8 +484,18 @@ async function isTokoHlsReachable(
   url: string,
   headers?: Record<string, string>
 ): Promise<boolean> {
-  if (!url || !url.startsWith("http")) return false;
-  if (!url.includes(".m3u8")) return false;
+  if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) return false;
+
+  // Reject obvious placeholders / dead link indicators
+  const lower = url.toLowerCase();
+  if (
+    lower.includes("about:blank") ||
+    lower.includes("not-found") ||
+    lower.includes("error.m3u8") ||
+    lower.includes("placeholder")
+  ) {
+    return false;
+  }
 
   const probeHeaders: Record<string, string> = {
     "User-Agent":
@@ -495,7 +505,7 @@ async function isTokoHlsReachable(
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
+    const timer = setTimeout(() => controller.abort(), 2000);
     const res = await fetch(url, {
       method: "HEAD",
       headers: probeHeaders,
@@ -504,12 +514,8 @@ async function isTokoHlsReachable(
     });
     clearTimeout(timer);
 
-    // Hard reject: definitively dead
+    // Hard reject only if definitively dead
     if (res.status === 404 || res.status === 410 || res.status === 451) return false;
-
-    // Hard reject: HTML challenge/error page returned as HTTP 200
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (res.status === 200 && ct.includes("text/html") && !ct.includes("mpegurl")) return false;
 
     // 2xx, 206, 403, 429, 5xx — cannot prove dead; keep
     return true;
@@ -547,10 +553,10 @@ async function fetchTokoSources(
 
     let data: TokoStreamResponse | null = null;
 
-    // 1. Try direct fetch (8s timeout)
+    // 1. Try direct fetch (7s timeout)
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), 7000);
       const res = await fetch(directUrl, {
         signal: controller.signal,
         cache: "no-store",
@@ -577,11 +583,11 @@ async function fetchTokoSources(
       console.warn(`[stream-proxy-debug][Toko] Direct fetch error: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or failed (5s timeout)
+    // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or failed (8s timeout)
     if (!data) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 5000);
+        const timer = setTimeout(() => controller.abort(), 8000);
         const res = await fetch(proxyUrl, {
           signal: controller.signal,
           cache: "no-store",
@@ -593,10 +599,12 @@ async function fetchTokoSources(
         const preview = text.slice(0, 100).replace(/\s+/g, " ");
         console.log(`[stream-proxy-debug][Toko] Worker fetch: status=${res.status}, ok=${res.ok}, content-type="${contentType}", length=${text.length}, preview="${preview}"`);
         if (res.ok) {
-          try {
-            data = JSON.parse(text) as TokoStreamResponse;
-          } catch (jsonErr) {
-            console.warn(`[stream-proxy-debug][Toko] Worker JSON parse error: ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)}`);
+          if (!text.includes("Vercel Security Checkpoint") && !text.includes("<!DOCTYPE html>")) {
+            try {
+              data = JSON.parse(text) as TokoStreamResponse;
+            } catch (jsonErr) {
+              console.warn(`[stream-proxy-debug][Toko] Worker JSON parse error: ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)}`);
+            }
           }
         }
       } catch (err) {
@@ -633,18 +641,25 @@ async function fetchTokoSources(
       hlsCandidates.slice(0, 8).map(async ({ item, headers }) => {
         const streamUrl = item.url || item.embed;
         if (!streamUrl) return null;
-        const ok = await isTokoHlsReachable(streamUrl, headers);
-        return ok ? item : null;
+        try {
+          const ok = await isTokoHlsReachable(streamUrl, headers);
+          return ok ? item : null;
+        } catch {
+          return item; // Keep source on probe network error
+        }
       })
     );
     for (const item of hlsProbeResults) {
       if (item) validDirectHls.push(item);
     }
 
-    return validDirectHls;
+    // Never drop valid Toko candidates if probing encounters network errors or strict firewalls
+    return validDirectHls.length > 0
+      ? validDirectHls
+      : hlsCandidates.slice(0, 8).map((c) => c.item);
   };
 
-  // Enforce total Toko timeout of ~12s so it never blocks the route
+  // Enforce total Toko timeout of ~25s so it never prematurely cuts off worker fallback
   const timeoutPromise = new Promise<StreamItem[]>((resolve) =>
     setTimeout(() => resolve([]), TOKO_TIMEOUT_MS)
   );
@@ -708,11 +723,16 @@ export async function GET(request: Request) {
   };
 
   // Run Toko + existing scrapers in parallel.
-  // Toko has its own bounded timeout (TOKO_TIMEOUT_MS) so it cannot stall
-  // the route; existing scrapers proceed independently.
+  // Both are completely independent: one failing will never prevent the other from returning results.
   const [tokoResults, initialAnimeSaltResults] = await Promise.all([
-    fetchTokoSources(cleanId, ep),
-    scrapeAnimeSaltEpisodeStreams(cleanId, season, ep, saltDiag),
+    fetchTokoSources(cleanId, ep).catch((err) => {
+      console.warn("[stream-proxy] Toko source discovery error:", err);
+      return [];
+    }),
+    scrapeAnimeSaltEpisodeStreams(cleanId, season, ep, saltDiag).catch((err) => {
+      console.warn("[stream-proxy] AnimeSalt scrape error:", err);
+      return [];
+    }),
   ]);
   let animeSaltResults = initialAnimeSaltResults;
 

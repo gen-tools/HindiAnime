@@ -59,7 +59,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https://image.tmdb.org https://img.animesalt.cx https://animesalt.cx https://*.animesalt.cx https://*.tmdb.org https://multishows.top https://*.multishows.top https://i0.wp.com https://i1.wp.com https://i2.wp.com https://i3.wp.com https://*.wp.com",
               "font-src 'self' data:",
-              "connect-src 'self' https://api-delta-taupe-46.vercel.app https://animesalt.cx https://*.workers.dev https://wispy-cherry-6934.shahazaibseo038.workers.dev",
+              "connect-src 'self' https: http: blob: data: https://api-delta-taupe-46.vercel.app https://animesalt.cx https://*.workers.dev https://wispy-cherry-6934.shahazaibseo038.workers.dev",
               // Permissive frame-src and media-src so embedded video players and streams function smoothly
               "frame-src 'self' https: http:",
               "media-src 'self' blob: data: https: http:",
