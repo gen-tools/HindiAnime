@@ -100,11 +100,14 @@ function extractAnimeSaltIframes(html: string, diag?: AnimeSaltDiag): StreamItem
 
     // 1. Primary: Extract AnimeSalt multi-language Plyr iframe (Multi-audio player)
     const multiLangRegex =
-      /<iframe[^>]+(?:src|data-src)=["']([^"']*multi-lang-plyr[^"']+)["'][^>]*>/i;
+      /<iframe[^>]+(?:src|data-src)\s*=\s*["']([^"']*multi-lang-plyr[^"']+)["'][^>]*>/i;
     const multiMatch = multiLangRegex.exec(html);
 
     if (multiMatch) {
-      let src = multiMatch[1].replace(/&#038;/g, "&");
+      let src = multiMatch[1]
+        .replace(/&amp;/gi, "&")
+        .replace(/&#038;/gi, "&")
+        .trim();
       if (src.startsWith("//")) src = "https:" + src;
       else if (src.startsWith("/")) src = "https://animesalt.cx" + src;
 
