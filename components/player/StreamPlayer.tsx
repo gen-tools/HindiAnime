@@ -54,9 +54,10 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
     seen.add(streamUrl);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
+    const serverNum = servers.length + 1;
     servers.push({
       id: `${finalType}-${i}-${streamUrl}`,
-      label: item.languageLabel || item.server || `Server ${servers.length + 1}`,
+      label: `Server ${serverNum}`,
       embed: streamUrl,
       url: isDirect ? streamUrl : undefined,
       type: finalType,
@@ -553,14 +554,14 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-storage-access-by-user-activation allow-popups allow-popups-to-escape-sandbox"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-storage-access-by-user-activation"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="no-referrer-when-downgrade"
+      referrerPolicy="no-referrer"
     />
   );
 }
