@@ -715,91 +715,47 @@ export async function GET(request: Request) {
   // 1. cleanId, season, ep
   console.log(`[stream-proxy-diag] 1. cleanId: "${cleanId}", season: "${season}", ep: "${ep}"`);
 
-  const saltDiag: AnimeSaltDiag = {
-    receivedValidHtml: false,
-    htmlLength: 0,
-    hasMultiLangPlyr: false,
-    rejectionReason: null,
-  };
 
-  // Run Toko + existing scrapers in parallel.
-  // Both are completely independent: one failing will never prevent the other from returning results.
-  const [tokoResults, initialAnimeSaltResults] = await Promise.all([
+  // Run MultiShows (Server 1) and Toko (Server 2+) in parallel and completely independently.
+  // MultiShows failure NEVER affects Toko results.
+  const [multiShowsResults, tokoResults] = await Promise.all([
+    scrapeMultiShowsStreams(cleanId, season, ep).catch((err) => {
+      console.warn("[stream-proxy] MultiShows scrape error:", err);
+      return [];
+    }),
     fetchTokoSources(cleanId, ep).catch((err) => {
       console.warn("[stream-proxy] Toko source discovery error:", err);
       return [];
     }),
-    scrapeAnimeSaltEpisodeStreams(cleanId, season, ep, saltDiag).catch((err) => {
-      console.warn("[stream-proxy] AnimeSalt scrape error:", err);
-      return [];
-    }),
   ]);
-  let animeSaltResults = initialAnimeSaltResults;
 
-  // 2. AnimeSalt result count after scrapeAnimeSaltEpisodeStreams()
-  console.log(`[stream-proxy-diag] 2. AnimeSalt result count after scrapeAnimeSaltEpisodeStreams(): ${initialAnimeSaltResults.length}`);
-
-  // 3. Toko result count after fetchTokoSources()
-  console.log(`[stream-proxy-diag] 3. Toko result count after fetchTokoSources(): ${tokoResults.length}`);
-
-  // 4, 5, 6. If AnimeSalt result count is 0
-  if (initialAnimeSaltResults.length === 0) {
-    console.log(`[stream-proxy-diag] 4. fetchAnimeSaltHtml() received valid HTML: ${saltDiag.receivedValidHtml}, length: ${saltDiag.htmlLength}`);
-    if (saltDiag.receivedValidHtml) {
-      console.log(`[stream-proxy-diag] 5. html.includes("multi-lang-plyr"): ${saltDiag.hasMultiLangPlyr}`);
-      if (saltDiag.rejectionReason) {
-        console.log(`[stream-proxy-diag] 6. extractAnimeSaltIframes() rejection reason: ${saltDiag.rejectionReason}`);
-      }
-    }
-  }
-
-  // Do NOT call the AnimeSalt movie URL for episode requests
-  const isEpisodeRequest =
-    searchParams.has("ep") ||
-    searchParams.has("season") ||
-    searchParams.get("type") === "episode";
-
-  if (!isEpisodeRequest && animeSaltResults.length === 0) {
-    animeSaltResults = await scrapeDirectMovieStreams(cleanId);
-  }
+  console.log(`[stream-proxy-diag] MultiShows result count: ${multiShowsResults.length}`);
+  console.log(`[stream-proxy-diag] Toko result count: ${tokoResults.length}`);
 
   // ── Build merged server list ─────────────────────────────────────────────────
-  // Priority (strict):
-  //   1. AnimeSalt embed → existing sandboxed, ad-blocked iframe Server 1
-  //   2. Validated Toko HLS sources → native HLS.js Server 2+
-  //
-  // Strict server numbering:
-  //   - If AnimeSalt exists → Server 1.
-  //   - HLS sources ALWAYS start at Server 2 (Server 2, Server 3, Server 4...).
-  //   - If AnimeSalt is unavailable → do NOT rename HLS to Server 1;
-  //     keep Server 1 reserved for AnimeSalt and show available HLS as Server 2+.
-  //   - If no HLS exists, do not create fake buttons.
+  // Priority:
+  //   Server 1  = MultiShows embed (if available)
+  //   Server 2+ = Toko HLS sources (always fetched independently)
+  //   Server N+  = Toko embed sources (fill remaining slots)
   const mergedResults: StreamItem[] = [];
   const seen = new Set<string>();
 
-  // Phase 1: the established AnimeSalt embed is always Server 1.
-  if (animeSaltResults.length > 0) {
-    const saltItem = animeSaltResults[0];
-    const key = saltItem.url || saltItem.embed;
+  // Phase 1: MultiShows is always Server 1.
+  if (multiShowsResults.length > 0) {
+    const msItem = multiShowsResults[0];
+    const key = msItem.url || msItem.embed;
     if (key && !seen.has(key)) {
       seen.add(key);
       mergedResults.push({
-        ...saltItem,
-        embed: key,
-        url: undefined,
-        type: "embed",
+        ...msItem,
         server: "Server 1",
       });
     }
   }
 
-
-  // Phase 2: Toko sources ALWAYS start at Server 2+.
-  // Priority: HLS direct streams first, then embed sources (e.g. MovieBox, Gogoanime).
-  // This ensures anime that only have embed sources (no HLS) still appear.
+  // Phase 2: Toko sources start at Server 2+.
+  // 2a. HLS sources first (direct, ad-free streams)
   let tokoServerIndex = 2;
-
-  // 2a. HLS sources first
   for (const r of tokoResults) {
     if (mergedResults.length >= 4) break;
     if (r.type !== "hls") continue;
@@ -816,10 +772,10 @@ export async function GET(request: Request) {
     tokoServerIndex++;
   }
 
-  // 2b. Embed sources (fill remaining slots up to 4 total)
+  // 2b. Toko embed sources fill remaining slots up to 4 total
   for (const r of tokoResults) {
     if (mergedResults.length >= 4) break;
-    if (r.type === "hls") continue; // already handled above
+    if (r.type === "hls") continue;
     const key = r.url || r.embed;
     if (!key || seen.has(key)) continue;
     if (!isValidEmbedUrl(key)) continue;

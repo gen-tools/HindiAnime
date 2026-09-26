@@ -209,6 +209,25 @@ export async function generateMetadata({
     item = { ...item, backdrop: directData.poster };
   }
 
+  // Mock data fallback when AnimeSalt (directData) is unavailable on production
+  if (!isUsableImageUrl(item.poster) && isUsableImageUrl(mockItem?.poster)) {
+    item = { ...item, poster: mockItem!.poster };
+  }
+  if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(mockItem?.backdrop)) {
+    item = { ...item, backdrop: mockItem!.backdrop };
+  } else if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(item.poster)) {
+    item = { ...item, backdrop: item.poster };
+  }
+  if (
+    mockItem?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available." ||
+      item.synopsis.length < 20)
+  ) {
+    item = { ...item, synopsis: mockItem.synopsis };
+  }
+
   // ── Build SEO metadata from resolved API data ─────────────────────────────
 
   // 1. Clean promotional text from item.title (leaves item.title & visible H1 unchanged)
@@ -493,6 +512,26 @@ export default async function AnimeDetailPage({
     item = { ...item, backdrop: directData.backdrop };
   } else if (directData?.poster && isUsableImageUrl(directData.poster)) {
     item = { ...item, backdrop: directData.poster };
+  }
+
+  // When AnimeSalt (directData) is unavailable on production (403), fall back to
+  // mock data for poster, backdrop, and synopsis so the page never shows blank fields.
+  if (!isUsableImageUrl(item.poster) && isUsableImageUrl(mockItem?.poster)) {
+    item = { ...item, poster: mockItem!.poster };
+  }
+  if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(mockItem?.backdrop)) {
+    item = { ...item, backdrop: mockItem!.backdrop };
+  } else if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(item.poster)) {
+    item = { ...item, backdrop: item.poster };
+  }
+  if (
+    mockItem?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available." ||
+      item.synopsis.length < 20)
+  ) {
+    item = { ...item, synopsis: mockItem.synopsis };
   }
 
   // Ensure slug and id are strictly preserved
