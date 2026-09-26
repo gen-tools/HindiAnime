@@ -69,6 +69,14 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   return servers;
 }
 
+// CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
+const CF_WORKER_BASE = (
+  process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+)
+  .replace(/\/\?url=$/, "")
+  .replace(/\?url=$/, "")
+  .replace(/\/$/, "");
+const CF_STREAM_URL = `${CF_WORKER_BASE}/stream`;
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -159,27 +167,35 @@ export function StreamPlayer({
       setServers([]);
       setActiveServer(null);
     }
+
+    const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
+
+    // Try CF Worker first (not blocked by Vercel WAF), fall back to local API route
+    const endpoints = [
+      `${CF_STREAM_URL}${qs}`,
+      `/api/stream-proxy${qs}`,
+    ];
+
     try {
-      const res = await fetch(
-        `/api/stream-proxy?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`
-      );
-      if (!res.ok) {
-        if (!isRetry) {
-          retryTimerRef.current = setTimeout(() => {
-            fetchStreams(true);
-          }, 1500);
-          return;
-        }
-        setState("error");
-        return;
+      let data: { results?: unknown[] } | null = null;
+
+      for (const endpoint of endpoints) {
+        try {
+          const res = await fetch(endpoint);
+          if (res.ok) {
+            const json = await res.json();
+            if (Array.isArray(json?.results) && json.results.length > 0) {
+              data = json;
+              break;
+            }
+          }
+        } catch { /* try next endpoint */ }
       }
-      const data = await res.json();
-      const parsed = parseServers(data?.results ?? []);
+
+      const parsed = parseServers((data?.results ?? []) as import("@/types/api").StreamItem[]);
       if (parsed.length === 0) {
         if (!isRetry) {
-          retryTimerRef.current = setTimeout(() => {
-            fetchStreams(true);
-          }, 1500);
+          retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
           return;
         }
         setState("unavailable");
@@ -190,14 +206,13 @@ export function StreamPlayer({
       }
     } catch {
       if (!isRetry) {
-        retryTimerRef.current = setTimeout(() => {
-          fetchStreams(true);
-        }, 1500);
+        retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
         return;
       }
       setState("error");
     }
   }, [animeSlug, season, episode]);
+
 
   useEffect(() => {
     const t = window.setTimeout(() => fetchStreams(false), 0);
