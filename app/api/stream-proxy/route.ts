@@ -794,8 +794,12 @@ export async function GET(request: Request) {
   }
 
 
-  // Phase 2: validated Toko HLS sources ALWAYS start at Server 2+.
-  let hlsServerIndex = 2;
+  // Phase 2: Toko sources ALWAYS start at Server 2+.
+  // Priority: HLS direct streams first, then embed sources (e.g. MovieBox, Gogoanime).
+  // This ensures anime that only have embed sources (no HLS) still appear.
+  let tokoServerIndex = 2;
+
+  // 2a. HLS sources first
   for (const r of tokoResults) {
     if (mergedResults.length >= 4) break;
     if (r.type !== "hls") continue;
@@ -805,11 +809,27 @@ export async function GET(request: Request) {
     mergedResults.push({
       ...r,
       type: "hls",
-      server: `Server ${hlsServerIndex}`,
+      server: `Server ${tokoServerIndex}`,
       adFree: true,
       headers: r.headers,
     });
-    hlsServerIndex++;
+    tokoServerIndex++;
+  }
+
+  // 2b. Embed sources (fill remaining slots up to 4 total)
+  for (const r of tokoResults) {
+    if (mergedResults.length >= 4) break;
+    if (r.type === "hls") continue; // already handled above
+    const key = r.url || r.embed;
+    if (!key || seen.has(key)) continue;
+    if (!isValidEmbedUrl(key)) continue;
+    seen.add(key);
+    mergedResults.push({
+      ...r,
+      type: "embed",
+      server: `Server ${tokoServerIndex}`,
+    });
+    tokoServerIndex++;
   }
 
   if (mergedResults.length > 0) {
