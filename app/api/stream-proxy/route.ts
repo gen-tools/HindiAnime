@@ -15,8 +15,9 @@ const TOKO_API_URL = (
 ).replace(/\/+$/, "");
 
 /** Maximum overall duration to wait for Toko source resolution and validation.
- *  Allows direct fetch (7s) + worker fallback (8s) + validation without premature cutoff. */
-const TOKO_TIMEOUT_MS = 25_000;
+ *  Keep short so that when Toko is unreachable the response returns quickly
+ *  with MultiShows results rather than hanging for 25+ seconds. */
+const TOKO_TIMEOUT_MS = 8_000;
 
 
 const DEFAULT_HEADERS = {
@@ -553,10 +554,10 @@ async function fetchTokoSources(
 
     let data: TokoStreamResponse | null = null;
 
-    // 1. Try direct fetch (7s timeout)
+    // 1. Try direct fetch (3.5s timeout — fast fail if Toko is unreachable)
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 7000);
+      const timer = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(directUrl, {
         signal: controller.signal,
         cache: "no-store",
@@ -583,11 +584,11 @@ async function fetchTokoSources(
       console.warn(`[stream-proxy-debug][Toko] Direct fetch error: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or failed (8s timeout)
+    // 2. Fallback to Cloudflare Worker proxy if direct fetch was challenged or failed (4s timeout)
     if (!data) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8000);
+        const timer = setTimeout(() => controller.abort(), 4000);
         const res = await fetch(proxyUrl, {
           signal: controller.signal,
           cache: "no-store",

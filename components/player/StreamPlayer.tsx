@@ -539,7 +539,7 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-storage-access-by-user-activation"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-storage-access-by-user-activation allow-popups allow-popups-to-escape-sandbox"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes
