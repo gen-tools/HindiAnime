@@ -78,6 +78,7 @@ export interface AnimeInfoData {
   title: string;
   anime_id: string;
   poster: string;
+  backdrop?: string;
   /** Primary plot text from /api/info (cheerio `.description p`). */
   overview?: ApiTextValue;
   description?: ApiTextValue;
@@ -93,8 +94,8 @@ export interface AnimeInfoData {
    * Always use parseLanguages() to normalize it.
    */
   language?: string;
-  quality: string;
-  runningTime: string;
+  quality?: string;
+  runningTime?: string;
   genres: string[];
   year: string;
   seasons: string;
@@ -106,6 +107,7 @@ export interface MovieInfoData {
   title: string;
   anime_id: string;
   poster?: string;
+  backdrop?: string;
   /** Primary plot text from /api/movie (cheerio `.description p` / `.wp-content p`). */
   overview?: ApiTextValue;
   description?: ApiTextValue;

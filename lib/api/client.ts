@@ -1815,23 +1815,138 @@ export async function searchAnime(
  * NOTE: This endpoint often returns empty title, poster, language, genres.
  * Always enrich with searchAnime() for poster + title.
  */
+/**
+ * Fetches rich anime details via AniList GraphQL (synopsis, cover, banner, genres, score)
+ * Fast, reliable, public API with no rate-limit blocking.
+ */
+export async function fetchAniListMeta(
+  slugOrTitle: string
+): Promise<AnimeInfoData | null> {
+  const clean = formatDisplayTitle(slugOrTitle).replace(/-/g, " ").trim();
+  if (!clean) return null;
+
+  const query = `
+    query ($s: String) {
+      Media(search: $s, type: ANIME) {
+        id
+        title { romaji english native }
+        description(asHtml: false)
+        coverImage { extraLarge large }
+        bannerImage
+        genres
+        averageScore
+        seasonYear
+        episodes
+        status
+        format
+      }
+    }
+  `;
+
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 4500);
+    const res = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ query, variables: { s: clean } }),
+      signal: controller.signal,
+      next: { revalidate: 3600 },
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const m = json.data?.Media;
+    if (!m) return null;
+
+    const poster = m.coverImage?.extraLarge || m.coverImage?.large || "";
+    const backdrop = m.bannerImage || poster;
+    const rawDesc = m.description || "";
+    const overview = rawDesc.replace(/<[^>]*>/g, "").trim();
+
+    return {
+      title: m.title?.english || m.title?.romaji || clean,
+      anime_id: slugOrTitle,
+      poster,
+      backdrop,
+      overview,
+      genres: m.genres || [],
+      year: String(m.seasonYear || ""),
+      rating: m.averageScore ? String((m.averageScore / 10).toFixed(1)) : "8.5",
+      seasons: "1",
+      episodes: String(m.episodes || "1"),
+      language: "hindi, english, japanese",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches anime details by slug.
+ * Uses AniList as primary rich metadata source, with API and local mock fallback.
+ */
 export async function getAnimeInfo(
   animeId: string
 ): Promise<AnimeInfoResponse | null> {
   if (!animeId) return null;
   const cleanId = cleanAnimeSlug(animeId) || animeId;
+
+  // 1. Fetch rich metadata via AniList
+  try {
+    const aniMeta = await fetchAniListMeta(cleanId);
+    if (aniMeta && aniMeta.overview && aniMeta.poster) {
+      return { success: true, data: aniMeta };
+    }
+  } catch {}
+
+  // 2. Fetch from legacy API if available
   try {
     const url = `${API_BASE_URL}/api/info?id=${encodeURIComponent(cleanId)}`;
     const res = await fetch(url, {
       next: { revalidate: 300 },
     });
-    if (!res.ok) return null;
-    const data: AnimeInfoResponse = await res.json();
-    return data;
+    if (res.ok) {
+      const data: AnimeInfoResponse = await res.json();
+      const resolved = resolveAnimeInfoData(data);
+      if (resolved && (!resolved.title || !resolved.overview)) {
+        const mock = getAnimeBySlug(cleanId);
+        if (mock) {
+          resolved.title = resolved.title || mock.title;
+          resolved.overview = resolved.overview || mock.synopsis;
+          resolved.poster = isUsableImageUrl(resolved.poster) ? resolved.poster : mock.poster;
+          resolved.genres = resolved.genres?.length ? resolved.genres : mock.genres;
+        }
+        return { success: true, data: resolved };
+      }
+      return data;
+    }
   } catch (err) {
     console.error("getAnimeInfo API error:", err);
-    return null;
   }
+
+  // 3. Fallback to local mock database
+  const mock = getAnimeBySlug(cleanId);
+  if (mock) {
+    return {
+      success: true,
+      data: {
+        title: mock.title,
+        anime_id: cleanId,
+        poster: mock.poster,
+        backdrop: mock.backdrop,
+        overview: mock.synopsis,
+        genres: mock.genres,
+        year: String(mock.year),
+        rating: String(mock.rating),
+        seasons: String(mock.seasons),
+        episodes: String(mock.episodeCount),
+        language: mock.languages.join(", "),
+      },
+    };
+  }
+
+  return null;
 }
 
 export async function getMovieInfo(
@@ -1839,16 +1954,39 @@ export async function getMovieInfo(
 ): Promise<MovieInfoResponse | null> {
   if (!movieId) return null;
   const cleanId = cleanAnimeSlug(movieId) || movieId;
+
+  // 1. Fetch rich metadata via AniList
+  try {
+    const aniMeta = await fetchAniListMeta(cleanId);
+    if (aniMeta && aniMeta.overview) {
+      return {
+        success: true,
+        results: {
+          title: aniMeta.title,
+          anime_id: cleanId,
+          poster: aniMeta.poster,
+          backdrop: aniMeta.backdrop,
+          overview: aniMeta.overview,
+          genres: aniMeta.genres,
+          year: aniMeta.year,
+          rating: aniMeta.rating,
+          languages: ["hindi", "english", "japanese"],
+        },
+      };
+    }
+  } catch {}
+
   try {
     const res = await fetch(`${API_BASE_URL}/api/movie?id=${encodeURIComponent(cleanId)}`, {
       next: { revalidate: 300 },
     });
-    if (!res.ok) return null;
-    return (await res.json()) as MovieInfoResponse;
+    if (res.ok) {
+      return (await res.json()) as MovieInfoResponse;
+    }
   } catch (err) {
     console.error("getMovieInfo API error:", err);
-    return null;
   }
+  return null;
 }
 
 /**
@@ -2018,6 +2156,11 @@ function isAnimeDetailHtml(html: string | null): html is string {
 }
 
 async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> {
+  // AnimeSalt is completely removed — do not query or proxy requests to animesalt.cx
+  if (url.includes("animesalt")) {
+    return null;
+  }
+
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 3500);

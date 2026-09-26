@@ -37,7 +37,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   const servers: ValidServer[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < results.length && servers.length < 4; i++) {
+  for (let i = 0; i < results.length && servers.length < 8; i++) {
     const item = results[i];
     const isDirect = (item.type === "hls" || item.type === "mp4") && Boolean(item.url || item.embed);
     const streamUrl = item.url || item.embed;
@@ -52,12 +52,11 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       streamUrl.includes(".workers.dev");
     if (!isOwnProxy && !isValidEmbedUrl(streamUrl)) continue;
 
-
     seen.add(streamUrl);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
     servers.push({
       id: `${finalType}-${i}-${streamUrl}`,
-      label: item.server || (isDirect ? `Server ${servers.length + 2}` : `Server ${servers.length + 1}`),
+      label: item.languageLabel || item.server || `Server ${servers.length + 1}`,
       embed: streamUrl,
       url: isDirect ? streamUrl : undefined,
       type: finalType,
