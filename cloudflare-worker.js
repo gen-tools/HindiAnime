@@ -165,10 +165,10 @@ async function handleStream(url, request) {
     return 0;
   });
 
-  // ── Two-pass source collection ──────────────────────────────────────────────
-  // Pass 1: direct (HLS / MP4) sources only — these are always ad-free.
-  // Pass 2: embed sources — only added when no direct sources were found,
-  //         so that the user always sees ad-free servers when possible.
+  // ── Source collection ─────────────────────────────────────────────────────────
+  // Single pass through sorted sources — all types included.
+  // Sort order (set above): Hindi HLS first → Hindi embeds → English HLS/MP4 → Japanese…
+  // adFree flag is true only for direct HLS/MP4 streams.
 
   function buildResult(s, idx, workerOrigin) {
     const isDirect = s.type === "hls" || s.type === "mp4" || s.isM3U8;
@@ -222,32 +222,17 @@ async function handleStream(url, request) {
   const seen   = new Set();
   const workerOrigin = url.origin;
 
-  // Pass 1 — direct streams only (HLS / MP4)
   for (const s of sorted) {
     if (merged.length >= 8) break;
     if (isBlockedStreamSource(s)) continue;
-    const isEmbedType = s.type === "embed" || s.isEmbed;
-    if (isEmbedType) continue;                   // skip embeds in first pass
     const streamUrl = s.url;
-    if (!streamUrl || !isValidUrl(streamUrl)) continue;
+    if (!streamUrl) continue;
+    const isEmbedType = s.type === "embed" || s.isEmbed;
+    if (!isEmbedType && !isValidUrl(streamUrl)) continue;
+    if (isEmbedType && !isValidEmbedUrl(streamUrl)) continue;
     if (seen.has(streamUrl)) continue;
     seen.add(streamUrl);
     merged.push(buildResult(s, merged.length + 1, workerOrigin));
-  }
-
-  // Pass 2 — embed fallback (only when no direct streams found at all)
-  if (merged.length === 0) {
-    for (const s of sorted) {
-      if (merged.length >= 4) break;             // cap embeds at 4
-      if (isBlockedStreamSource(s)) continue;
-      const isEmbedType = s.type === "embed" || s.isEmbed;
-      if (!isEmbedType) continue;
-      const streamUrl = s.url;
-      if (!streamUrl || !isValidEmbedUrl(streamUrl)) continue;
-      if (seen.has(streamUrl)) continue;
-      seen.add(streamUrl);
-      merged.push(buildResult(s, merged.length + 1, workerOrigin));
-    }
   }
 
   if (merged.length > 0) {
@@ -471,7 +456,7 @@ function slugToSeasonTitles(slug, season) {
   variants.push(base + " " + ord + " Season"); // e.g. "Jujutsu Kaisen 2nd Season"
   variants.push(base + " S" + sNum);           // e.g. "Jujutsu Kaisen S2"
   variants.push(base + " " + sNum);            // e.g. "Jujutsu Kaisen 2"
-  variants.push(base);                         // bare title as last-resort
+  // DO NOT add base here: it causes Toko to return Season 1 Episode 1 for Season 2+
   return [...new Set(variants)];
 }
 
@@ -529,6 +514,8 @@ const BLOCKED_STREAM_DOMAINS = [
   "waaw.tv",
   "gounlimited",
   "vudeo",
+  "hakunaymatata",
+  "moviebox",
 ];
 
 function isBlockedStreamSource(s) {
@@ -594,9 +581,8 @@ function jsonResponse(body, status, request) {
 
 function corsHeaders(request) {
   const origin = request.headers.get("Origin") || "";
-  // Allow any localhost origin for local development
-  const isLocalhost = origin.startsWith("http://localhost:") || origin.startsWith("https://localhost:");
-  const allowedOrigin = (ALLOWED_ORIGINS.includes(origin) || isLocalhost) ? origin : ALLOWED_ORIGINS[0];
+  // Always allow the requesting origin to prevent CORS failures across all deployment URLs and localhost
+  const allowedOrigin = origin || "*";
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",

@@ -62,14 +62,13 @@ function slugToTitleVariants(slug: string, season: string): string[] {
     return [...new Set(variants)];
   }
 
-  // Season 2+: generate ordinal and numeric title variants
+  // Season 2+: generate ordinal and numeric title variants (never include bare base title, which pulls S1 episodes)
   const ord = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : sNum + "th";
   const variants: string[] = [];
   variants.push(base + " Season " + sNum);         // "Jujutsu Kaisen Season 2"
   variants.push(base + " " + ord + " Season");      // "Jujutsu Kaisen 2nd Season"
   variants.push(base + " S" + sNum);                // "Jujutsu Kaisen S2"
   variants.push(base + " " + sNum);                 // "Jujutsu Kaisen 2"
-  variants.push(base);                              // bare title as last resort
   return [...new Set(variants)];
 }
 
@@ -211,9 +210,10 @@ async function fetchTokoSources(
     return 0;
   });
 
-  // ── Two-pass source collection ──────────────────────────────────────────────
-  // Pass 1: direct (HLS / MP4) streams only — always ad-free.
-  // Pass 2: embed sources — only when no direct streams were found at all.
+  // ── Source collection ─────────────────────────────────────────────────────────
+  // Single pass through sorted sources — all types included.
+  // Sort order: Hindi HLS first → Hindi embeds → English HLS/MP4 → Japanese…
+  // adFree flag is true only for direct HLS/MP4 streams.
 
   function buildMergedItem(s: TokoSource, idx: number): StreamItem {
     const isDirect = s.type === "hls" || s.type === "mp4" || s.isM3U8;
@@ -250,14 +250,16 @@ async function fetchTokoSources(
       }
     }
 
+    const itemLabel = `Server ${idx} · ${flag} ${langName}${typeLabel}${qualityLabel}${providerHint}`;
     return {
       server: `Server ${idx}`,
+      label: itemLabel,
       embed: streamUrl,
       url: isDirect ? (hlsProxyUrl || streamUrl) : undefined,
       hlsProxyUrl,
       type: isDirect ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
       audioLanguage: s.audioLanguage || (flag === "🇮🇳" ? "hi" : flag === "🇬🇧" ? "en" : "ja"),
-      languageLabel: s.languageLabel || `${flag} ${langName}${typeLabel}${qualityLabel}${providerHint}`,
+      languageLabel: s.languageLabel || `${flag} ${langName}`,
       adFree: isDirect,
       headers: s.headers,
     };
@@ -266,32 +268,17 @@ async function fetchTokoSources(
   const merged: StreamItem[] = [];
   const seen = new Set<string>();
 
-  // Pass 1 — direct streams only (HLS / MP4)
   for (const s of sorted) {
     if (merged.length >= 8) break;
     if (isBlockedSource(s)) continue;
-    const isEmbedType = s.type === "embed" || s.isEmbed;
-    if (isEmbedType) continue;                    // skip embeds in first pass
     const streamUrl = s.url;
-    if (!streamUrl || !isValidStreamUrl(streamUrl)) continue;
+    if (!streamUrl) continue;
+    const isEmbedType = s.type === "embed" || s.isEmbed;
+    if (!isEmbedType && !isValidStreamUrl(streamUrl)) continue;
+    if (isEmbedType && !isValidStreamUrl(streamUrl)) continue;
     if (seen.has(streamUrl)) continue;
     seen.add(streamUrl);
     merged.push(buildMergedItem(s, merged.length + 1));
-  }
-
-  // Pass 2 — embed fallback (only when no direct streams exist at all)
-  if (merged.length === 0) {
-    for (const s of sorted) {
-      if (merged.length >= 4) break;              // cap embeds at 4
-      if (isBlockedSource(s)) continue;
-      const isEmbedType = s.type === "embed" || s.isEmbed;
-      if (!isEmbedType) continue;
-      const streamUrl = s.url;
-      if (!streamUrl || !isValidStreamUrl(streamUrl)) continue;
-      if (seen.has(streamUrl)) continue;
-      seen.add(streamUrl);
-      merged.push(buildMergedItem(s, merged.length + 1));
-    }
   }
 
   return { results: merged, byLanguage: data?.byLanguage };

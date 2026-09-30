@@ -174,6 +174,8 @@ export interface EpisodeResponse {
 export interface StreamItem {
   /** Server identifier e.g. "options-0" */
   server: string;
+  /** Optional display label e.g. "Server 1 · 🇮🇳 Hindi Dub · HLS" */
+  label?: string;
   /**
    * Embed URL — may be a real URL or an error string.
    * Always validate with isValidEmbedUrl() before use.

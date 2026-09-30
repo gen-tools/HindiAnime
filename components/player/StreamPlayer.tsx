@@ -56,9 +56,9 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
     const serverNum = servers.length + 1;
     // Use the backend's language label if available, e.g. "🇮🇳 Hindi Dub · HLS"
-    const label = item.languageLabel
+    const label = item.label || (item.languageLabel
       ? `Server ${serverNum} — ${item.languageLabel}`
-      : `Server ${serverNum}`;
+      : `Server ${serverNum}`);
     servers.push({
       id: `${finalType}-${i}-${streamUrl}`,
       label,
@@ -536,13 +536,14 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-storage-access-by-user-activation"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="strict-origin-when-cross-origin"
+      referrerPolicy="no-referrer"
     />
   );
 }

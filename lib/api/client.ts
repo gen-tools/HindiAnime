@@ -2784,6 +2784,8 @@ export const BLOCKED_STREAM_DOMAINS = [
   "waaw.tv",
   "gounlimited",
   "vudeo",
+  "hakunaymatata",
+  "moviebox",
 ];
 
 export function isValidEmbedUrl(embed: string | null | undefined): boolean {
