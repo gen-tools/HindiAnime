@@ -374,7 +374,7 @@ async function handleHlsProxy(url, request) {
 // ── Toko Fetcher ──────────────────────────────────────────────────────────────
 
 async function fetchToko(cleanId, season, ep) {
-  const titleVariants = slugToTitles(cleanId);
+  const titleVariants = slugToSeasonTitles(cleanId, season);
   const params = new URLSearchParams();
   for (const t of titleVariants) params.append("titles[]", t);
   // Pass both season and episode so Season 2 Episode 1 ≠ Season 1 Episode 1
@@ -412,12 +412,46 @@ function slugify(s) {
     .replace(/^-+|-+$/g, "");
 }
 
-function slugToTitles(slug) {
-  const base = slug
+/**
+ * Generate season-aware title variants for Toko.
+ * Toko does NOT route by the ?season= param — it routes by title.
+ * For Season 2+ we embed the season number in the title string.
+ */
+function slugToSeasonTitles(slug, season) {
+  // Strip any season suffix already in the slug (e.g. attack-on-titan-season-2)
+  const cleanSlug = slug
+    .replace(/-season-\d+$/i, "")
+    .replace(/-s\d+$/i, "")
+    .replace(/-\d+(st|nd|rd|th)-season$/i, "");
+
+  const base = cleanSlug
     .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-  const lower = base.toLowerCase();
-  return lower !== base ? [base, lower] : [base];
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+
+  const sNum = parseInt(season, 10) || 1;
+
+  if (sNum <= 1) {
+    const lower = base.toLowerCase();
+    const variants = [base];
+    if (lower !== base) variants.push(lower);
+    variants.push(base + " Season 1");
+    return [...new Set(variants)];
+  }
+
+  const ord = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : sNum + "th";
+  const variants = [];
+  variants.push(base + " Season " + sNum);    // e.g. "Jujutsu Kaisen Season 2"
+  variants.push(base + " " + ord + " Season"); // e.g. "Jujutsu Kaisen 2nd Season"
+  variants.push(base + " S" + sNum);           // e.g. "Jujutsu Kaisen S2"
+  variants.push(base + " " + sNum);            // e.g. "Jujutsu Kaisen 2"
+  variants.push(base);                         // bare title as last-resort
+  return [...new Set(variants)];
+}
+
+// Legacy alias kept for potential future use
+function slugToTitles(slug) {
+  return slugToSeasonTitles(slug, "1");
 }
 
 const BLOCKED_STREAM_DOMAINS = [

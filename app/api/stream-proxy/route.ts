@@ -35,13 +35,42 @@ const CF_WORKER_BASE = rawCfProxy
   .replace(/\?url=$/, "")
   .replace(/\/$/, "");
 
-function slugToTitleVariants(slug: string): string[] {
-  const base = formatDisplayTitle(slug);
+/**
+ * Generate title search variants for Toko.
+ * Toko does NOT use the ?season= param for content routing — it uses the title.
+ * For Season 2+ we must include season-specific titles so Toko returns the right
+ * content (e.g. "Jujutsu Kaisen Season 2" yields JJK S2 episodes, not S1).
+ */
+function slugToTitleVariants(slug: string, season: string): string[] {
+  // Strip any season suffix already in the slug (e.g. attack-on-titan-season-2)
+  const cleanSlug = slug
+    .replace(/-season-\d+$/i, "")
+    .replace(/-s\d+$/i, "")
+    .replace(/-\d+(st|nd|rd|th)-season$/i, "");
+
+  const base = formatDisplayTitle(cleanSlug) || formatDisplayTitle(slug);
   if (!base) return [];
-  const lower = base.toLowerCase();
-  const variants = [base];
-  if (lower !== base) variants.push(lower);
-  return variants;
+
+  const sNum = parseInt(season, 10) || 1;
+
+  if (sNum <= 1) {
+    // Season 1: base title is sufficient; add Season 1 variant as fallback
+    const variants = [base];
+    const lower = base.toLowerCase();
+    if (lower !== base) variants.push(lower);
+    variants.push(base + " Season 1");
+    return [...new Set(variants)];
+  }
+
+  // Season 2+: generate ordinal and numeric title variants
+  const ord = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : sNum + "th";
+  const variants: string[] = [];
+  variants.push(base + " Season " + sNum);         // "Jujutsu Kaisen Season 2"
+  variants.push(base + " " + ord + " Season");      // "Jujutsu Kaisen 2nd Season"
+  variants.push(base + " S" + sNum);                // "Jujutsu Kaisen S2"
+  variants.push(base + " " + sNum);                 // "Jujutsu Kaisen 2"
+  variants.push(base);                              // bare title as last resort
+  return [...new Set(variants)];
 }
 
 function isBlockedSource(s: TokoSource): boolean {
@@ -84,12 +113,13 @@ async function fetchTokoSources(
   season: string,
   episodeNumber: string
 ): Promise<{ results: StreamItem[]; byLanguage?: Record<string, unknown> }> {
-  const titleVariants = slugToTitleVariants(slug);
+  // Season-aware title variants: Toko uses the title (not ?season=) for content routing
+  const titleVariants = slugToTitleVariants(slug, season);
   if (titleVariants.length === 0) return { results: [] };
 
   const params = new URLSearchParams();
   for (const t of titleVariants) params.append("titles[]", t);
-  // Pass season so Toko can distinguish Season 2 Episode 1 from Season 1 Episode 1
+  // Keep season + episode for any Toko backends that DO parse them
   params.set("season", season);
   params.set("episode", episodeNumber);
   params.set("stream", "0");
