@@ -509,16 +509,14 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
 
 // ─── EmbedFrame ──────────────────────────────────────────────────────────────
 //
-// AnimeSalt serves the stream as a cross-origin multi-language Plyr player page
-// (`multi-lang-plyr.php?data=...`) inside a sandboxed iframe. The sandbox allows
-// the player's scripts, same-origin storage, forms, presentation, pointer-lock,
-// and storage access to function for multi-audio playback while strictly
-// blocking top-level navigation and popup ads. We intentionally do NOT gate player
-// health on the iframe `onload` event: cross-origin embeds initialize their video
-// via deferred subresource/script loads whose completion the parent frame cannot
-// observe, and a short onload-timeout falsely reports a reachable server as
-// "Could not reach the stream server". A manual Reload is offered via the
-// trouble hint instead.
+// Embed providers (toonstream, AnimeSalt, etc.) are loaded without a `sandbox`
+// attribute so they cannot detect us as an ad-blocker/sandbox environment.
+// Popup ads are blocked at the JS level via the `window.open` override below.
+// We intentionally do NOT gate player health on the iframe `onload` event:
+// cross-origin embeds initialize their video via deferred subresource/script
+// loads whose completion the parent frame cannot observe, and a short
+// onload-timeout falsely reports a reachable server as "Could not reach the
+// stream server". A manual Reload is offered via the trouble hint instead.
 
 function EmbedFrame({
   embed,
@@ -554,14 +552,13 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-storage-access-by-user-activation"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="no-referrer"
+      referrerPolicy="strict-origin-when-cross-origin"
     />
   );
 }
