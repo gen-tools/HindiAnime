@@ -55,9 +55,13 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     seen.add(streamUrl);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
     const serverNum = servers.length + 1;
+    // Use the backend's language label if available, e.g. "🇮🇳 Hindi Dub · HLS"
+    const label = item.languageLabel
+      ? `Server ${serverNum} — ${item.languageLabel}`
+      : `Server ${serverNum}`;
     servers.push({
       id: `${finalType}-${i}-${streamUrl}`,
-      label: `Server ${serverNum}`,
+      label,
       embed: streamUrl,
       url: isDirect ? streamUrl : undefined,
       type: finalType,
@@ -353,62 +357,42 @@ export function StreamPlayer({
         )}
       </div>
 
-      {/* Control bar: Server row on top, Audio Languages row underneath */}
+      {/* Control bar: Server select + Reload + Theater & Fullscreen */}
       {state === "ready" && !isFullscreen && (
         <div className="flex flex-col gap-2.5 rounded-xl border border-border-line bg-surface p-3 sm:px-4 sm:py-3">
-          {/* Top row: Server button + Reload + Theater & Fullscreen */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            {/* Server selector */}
+            {/* Server dropdown */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
                 <Server className="h-3.5 w-3.5 text-green-bright" />
                 <span>Server:</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Streaming server">
-              {servers.map((srv) => {
-                  const isActive = srv.id === activeServer?.id;
-                  return (
-                    <button
-                      key={srv.id}
-                      type="button"
-                      onClick={() => handleServerSelect(srv)}
-                      aria-pressed={isActive}
-                      className={cn(
-                        "focus-ring relative rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all",
-                        isActive
-                          ? "border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_8px_rgba(34,197,94,0.3)]"
-                          : "border-border-line bg-surface-elevated/40 text-text-secondary hover:border-green-primary/50 hover:text-white"
-                      )}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        {srv.label}
-                        {srv.adFree && (
-                          <span
-                            title="Direct stream — no ads"
-                            className={cn(
-                              "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
-                              isActive
-                                ? "bg-green-bright/25 text-green-bright"
-                                : "bg-amber-500/20 text-amber-400"
-                            )}
-                          >
-                            ⚡ Ad-free
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={handleReload}
-                  title="Reload video player without refreshing the page"
-                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95"
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", isReloading && "animate-spin text-green-bright")} />
-                  <span>Reload</span>
-                </button>
-              </div>
+              <select
+                id="server-select"
+                aria-label="Select streaming server"
+                value={activeServer?.id ?? ""}
+                onChange={(e) => {
+                  const srv = servers.find((s) => s.id === e.target.value);
+                  if (srv) handleServerSelect(srv);
+                }}
+                className="focus-ring rounded-lg border border-border-line bg-surface-elevated/60 px-2.5 py-1.5 text-xs font-semibold text-text-primary transition-colors hover:border-green-primary/50 hover:text-white cursor-pointer"
+                style={{ minWidth: "9rem" }}
+              >
+                {servers.map((srv) => (
+                  <option key={srv.id} value={srv.id}>
+                    {srv.label}{srv.adFree ? " ⚡" : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleReload}
+                title="Reload video player without refreshing the page"
+                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isReloading && "animate-spin text-green-bright")} />
+                <span>Reload</span>
+              </button>
             </div>
 
             {/* Theater & Fullscreen controls */}

@@ -81,6 +81,7 @@ function isValidStreamUrl(s: string): boolean {
  */
 async function fetchTokoSources(
   slug: string,
+  season: string,
   episodeNumber: string
 ): Promise<{ results: StreamItem[]; byLanguage?: Record<string, unknown> }> {
   const titleVariants = slugToTitleVariants(slug);
@@ -88,6 +89,8 @@ async function fetchTokoSources(
 
   const params = new URLSearchParams();
   for (const t of titleVariants) params.append("titles[]", t);
+  // Pass season so Toko can distinguish Season 2 Episode 1 from Season 1 Episode 1
+  params.set("season", season);
   params.set("episode", episodeNumber);
   params.set("stream", "0");
 
@@ -158,14 +161,13 @@ async function fetchTokoSources(
   }
 
   // Type priority within same language:
-  // 1 = Embed player (Toko backend has 2 embed sources: toonstream & toonstream-cloudy)
-  // 2 = Direct HLS (ad-free)
-  // 3 = Direct MP4 (ad-free)
+  // 1 = Direct HLS (ad-free, best quality)
+  // 2 = Direct MP4 (ad-free)
+  // 3 = Embed player (fallback)
   function getTypePriority(s: TokoSource): number {
-    const isEmbed = s.type === "embed" || (!s.isM3U8 && s.type !== "hls" && s.type !== "mp4");
-    if (isEmbed) return 1;
-    if (s.type === "hls" || s.isM3U8) return 2;
-    if (s.type === "mp4") return 3;
+    if (s.type === "hls" || s.isM3U8) return 1;
+    if (s.type === "mp4") return 2;
+    if (s.type === "embed" || s.isEmbed) return 3;
     return 4;
   }
 
@@ -186,7 +188,12 @@ async function fetchTokoSources(
     if (merged.length >= 8) break;
     if (isBlockedSource(s)) continue;
     const streamUrl = s.url;
-    if (!streamUrl || !isValidStreamUrl(streamUrl) || seen.has(streamUrl)) continue;
+    if (!streamUrl) continue;
+    // Embed types only need a valid http(s) URL — no path-depth requirement
+    const isEmbedType = s.type === "embed" || s.isEmbed;
+    if (!isEmbedType && !isValidStreamUrl(streamUrl)) continue;
+    if (isEmbedType && !isValidStreamUrl(streamUrl)) continue;
+    if (seen.has(streamUrl)) continue;
     seen.add(streamUrl);
 
     const idx = merged.length + 1;
@@ -249,6 +256,7 @@ async function fetchTokoSources(
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
+  const season = searchParams.get("season") || "1";
   const ep = searchParams.get("ep") || "1";
 
   if (!id) {
@@ -272,7 +280,7 @@ export async function GET(request: Request) {
   // Fetch exclusively from Toko backend:
   // Server 1 & Server 2 = Toko's Hindi Dub embed sources (toonstream & toonstream-cloudy)
   // Server 3+ = Direct HLS/MP4 streams (⚡ Ad-free) and additional Toko sources
-  const { results: tokoResults, byLanguage } = await fetchTokoSources(cleanId, ep);
+  const { results: tokoResults, byLanguage } = await fetchTokoSources(cleanId, season, ep);
 
   if (tokoResults.length > 0) {
     return NextResponse.json(

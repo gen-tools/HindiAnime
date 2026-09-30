@@ -2736,6 +2736,7 @@ export async function getAvailableSeasons(
  *   - anything not starting with http:// or https://
  */
 export const BLOCKED_STREAM_DOMAINS = [
+  // ── Link shorteners / ad-walls ──────────────────────────────────────────────
   "mvlink",
   "linkskit",
   "linkvertise",
@@ -2764,6 +2765,25 @@ export const BLOCKED_STREAM_DOMAINS = [
   "gplinks",
   "cuty.io",
   "exe.io",
+  // ── Ad-wall video hosts (show "AdBlock/Sandbox" error in iframe) ────────────
+  "streamtape",
+  "doodstream",
+  "dood.watch",
+  "dood.la",
+  "dood.pm",
+  "dood.to",
+  "ds2play",
+  "voe.sx",
+  "voe.network",
+  "mixdrop",
+  "sendvid",
+  "uqload",
+  "upstream.to",
+  "evoload",
+  "clipwatching",
+  "waaw.tv",
+  "gounlimited",
+  "vudeo",
 ];
 
 export function isValidEmbedUrl(embed: string | null | undefined): boolean {

@@ -119,8 +119,8 @@ async function handleStream(url, request) {
 
   const cleanId = slugify(id);
 
-  // Fetch all streaming sources from Toko aggregator
-  const tokoData = await fetchToko(cleanId, ep);
+  // Fetch all streaming sources from Toko aggregator (pass season so Season 2 fetches Season 2)
+  const tokoData = await fetchToko(cleanId, season, ep);
   const rawSources = tokoData?.sources || [];
 
   if (rawSources.length === 0) {
@@ -144,14 +144,13 @@ async function handleStream(url, request) {
   }
 
   // Type priority within same language:
-  // 1 = Embed player (Toko backend has 2 embed sources: toonstream & toonstream-cloudy)
-  // 2 = Direct HLS (ad-free)
-  // 3 = Direct MP4 (ad-free)
+  // 1 = Direct HLS (ad-free, best quality)
+  // 2 = Direct MP4 (ad-free)
+  // 3 = Embed player (fallback)
   function getTypePriority(s) {
-    const isEmbed = s.type === "embed" || (!s.isM3U8 && s.type !== "hls" && s.type !== "mp4");
-    if (isEmbed) return 1;
-    if (s.type === "hls" || s.isM3U8) return 2;
-    if (s.type === "mp4") return 3;
+    if (s.type === "hls" || s.isM3U8) return 1;
+    if (s.type === "mp4") return 2;
+    if (s.type === "embed" || s.isEmbed) return 3;
     return 4;
   }
 
@@ -173,7 +172,12 @@ async function handleStream(url, request) {
     if (merged.length >= 8) break; // Maximum 8 distinct server options
     if (isBlockedStreamSource(s)) continue;
     const streamUrl = s.url;
-    if (!streamUrl || !isValidUrl(streamUrl) || seen.has(streamUrl)) continue;
+    // For embed types, only require a non-empty http(s) URL — skip the path-depth check
+    if (!streamUrl) continue;
+    const isEmbedType = s.type === "embed" || s.isEmbed;
+    if (!isEmbedType && !isValidUrl(streamUrl)) continue;
+    if (isEmbedType && !isValidEmbedUrl(streamUrl)) continue;
+    if (seen.has(streamUrl)) continue;
     seen.add(streamUrl);
 
     const idx = merged.length + 1;
@@ -369,10 +373,12 @@ async function handleHlsProxy(url, request) {
 
 // ── Toko Fetcher ──────────────────────────────────────────────────────────────
 
-async function fetchToko(cleanId, ep) {
+async function fetchToko(cleanId, season, ep) {
   const titleVariants = slugToTitles(cleanId);
   const params = new URLSearchParams();
   for (const t of titleVariants) params.append("titles[]", t);
+  // Pass both season and episode so Season 2 Episode 1 ≠ Season 1 Episode 1
+  params.set("season", season);
   params.set("episode", ep);
   params.set("stream", "0");
 
@@ -490,6 +496,23 @@ function isValidUrl(s) {
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
     const p = u.pathname.replace(/\/+$/, "");
     if (!p) return false;
+    const host = u.hostname.toLowerCase();
+    if (BLOCKED_STREAM_DOMAINS.some((d) => host.includes(d))) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Looser validator for embed URLs — only requires http(s) and a non-blocked domain */
+function isValidEmbedUrl(s) {
+  if (!s || typeof s !== "string") return false;
+  const trimmed = s.trim();
+  if (!trimmed || trimmed.toLowerCase() === "not found" || trimmed.toLowerCase() === "error loading") return false;
+  if (/\.(mkv|zip|rar|7z|tar|gz|torrent|iso)(\?|$)/i.test(trimmed)) return false;
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
     const host = u.hostname.toLowerCase();
     if (BLOCKED_STREAM_DOMAINS.some((d) => host.includes(d))) return false;
     return true;
