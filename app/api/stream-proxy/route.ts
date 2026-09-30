@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
+import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
 
 // Stream links are dynamic and short-lived
@@ -29,6 +29,12 @@ const CF_PROXY_URL = rawCfProxy.includes("?url=")
   ? rawCfProxy
   : `${rawCfProxy.replace(/\/+$/, "")}/?url=`;
 
+/** Base URL for the CF worker (without the /?url= suffix) */
+const CF_WORKER_BASE = rawCfProxy
+  .replace(/\/\?url=$/, "")
+  .replace(/\?url=$/, "")
+  .replace(/\/$/, "");
+
 function slugToTitleVariants(slug: string): string[] {
   const base = formatDisplayTitle(slug);
   if (!base) return [];
@@ -36,6 +42,23 @@ function slugToTitleVariants(slug: string): string[] {
   const variants = [base];
   if (lower !== base) variants.push(lower);
   return variants;
+}
+
+function isBlockedSource(s: TokoSource): boolean {
+  const provider = (s.providerName || s.source || s.server || "").toLowerCase();
+  if (provider.includes("hindmovie") || provider.includes("mvlink")) return true;
+
+  const urlStr = s.url || "";
+  if (/\.(mkv|zip|rar|7z|tar|gz|torrent|iso)(\?|$)/i.test(urlStr)) return true;
+
+  try {
+    const u = new URL(urlStr);
+    const host = u.hostname.toLowerCase();
+    if (BLOCKED_STREAM_DOMAINS.some((d) => host.includes(d))) return true;
+  } catch {
+    return true;
+  }
+  return false;
 }
 
 function isValidStreamUrl(s: string): boolean {
@@ -76,7 +99,7 @@ async function fetchTokoSources(
   // 1. Try direct fetch
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
     const res = await fetch(directUrl, {
       signal: controller.signal,
       cache: "no-store",
@@ -97,7 +120,7 @@ async function fetchTokoSources(
   if (!data) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
       const res = await fetch(proxyUrl, {
         signal: controller.signal,
         cache: "no-store",
@@ -135,13 +158,15 @@ async function fetchTokoSources(
   }
 
   // Type priority within same language:
-  // 1 = Direct HLS (ad-free)
-  // 2 = Direct MP4 (ad-free)
-  // 3 = Embed player
+  // 1 = Embed player (Toko backend has 2 embed sources: toonstream & toonstream-cloudy)
+  // 2 = Direct HLS (ad-free)
+  // 3 = Direct MP4 (ad-free)
   function getTypePriority(s: TokoSource): number {
-    if (s.type === "hls" || s.isM3U8) return 1;
-    if (s.type === "mp4") return 2;
-    return 3;
+    const isEmbed = s.type === "embed" || (!s.isM3U8 && s.type !== "hls" && s.type !== "mp4");
+    if (isEmbed) return 1;
+    if (s.type === "hls" || s.isM3U8) return 2;
+    if (s.type === "mp4") return 3;
+    return 4;
   }
 
   const sorted = [...rawSources].sort((a, b) => {
@@ -159,6 +184,7 @@ async function fetchTokoSources(
 
   for (const s of sorted) {
     if (merged.length >= 8) break;
+    if (isBlockedSource(s)) continue;
     const streamUrl = s.url;
     if (!streamUrl || !isValidStreamUrl(streamUrl) || seen.has(streamUrl)) continue;
     seen.add(streamUrl);
@@ -187,10 +213,28 @@ async function fetchTokoSources(
     const typeLabel = isDirect ? (s.type === "hls" || s.isM3U8 ? " · HLS" : " · MP4") : "";
     const providerHint = s.server || s.providerName ? ` (${s.server || s.providerName})` : "";
 
+    // Build a proxied HLS URL when the stream requires custom Referer/Origin headers.
+    // Browsers cannot send custom headers from <video> elements, so we route HLS
+    // streams through the Cloudflare Worker /hls-proxy which injects the right headers.
+    let hlsProxyUrl: string | undefined;
+    if (isDirect && (s.type === "hls" || s.isM3U8) && s.headers) {
+      const hdrs = s.headers as Record<string, string>;
+      const referer = hdrs.Referer || hdrs.referer || "";
+      const origin = hdrs.Origin || hdrs.origin || "";
+      if (referer || origin) {
+        const params = new URLSearchParams({ url: streamUrl });
+        if (referer) params.set("referer", referer);
+        if (origin) params.set("origin", origin);
+        hlsProxyUrl = `${CF_WORKER_BASE}/hls-proxy?${params.toString()}`;
+      }
+    }
+
     merged.push({
       server: `Server ${idx}`,
       embed: streamUrl,
-      url: isDirect ? streamUrl : undefined,
+      // Use the proxied URL so the browser can play with correct CDN headers
+      url: isDirect ? (hlsProxyUrl || streamUrl) : undefined,
+      hlsProxyUrl,
       type: isDirect ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
       audioLanguage: s.audioLanguage || (flag === "🇮🇳" ? "hi" : flag === "🇬🇧" ? "en" : "ja"),
       languageLabel: s.languageLabel || `${flag} ${langName}${typeLabel}${qualityLabel}${providerHint}`,
@@ -205,7 +249,6 @@ async function fetchTokoSources(
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
-  const season = searchParams.get("season") || "1";
   const ep = searchParams.get("ep") || "1";
 
   if (!id) {
@@ -226,12 +269,14 @@ export async function GET(request: Request) {
 
   const cleanId = cleanAnimeSlug(decodedId) || decodedId;
 
-  // Fetch exclusively from Toko with Hindi Server 1 priority
-  const { results, byLanguage } = await fetchTokoSources(cleanId, ep);
+  // Fetch exclusively from Toko backend:
+  // Server 1 & Server 2 = Toko's Hindi Dub embed sources (toonstream & toonstream-cloudy)
+  // Server 3+ = Direct HLS/MP4 streams (⚡ Ad-free) and additional Toko sources
+  const { results: tokoResults, byLanguage } = await fetchTokoSources(cleanId, ep);
 
-  if (results.length > 0) {
+  if (tokoResults.length > 0) {
     return NextResponse.json(
-      { success: true, message: "Stream Found!!", results, byLanguage },
+      { success: true, message: "Stream Found!!", results: tokoResults, byLanguage },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   }

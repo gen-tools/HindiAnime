@@ -181,6 +181,12 @@ export interface StreamItem {
   embed: string;
   /** Direct HLS/MP4 URL returned by the Toko streaming aggregator */
   url?: string;
+  /**
+   * Proxied HLS URL routed through the CF Worker /hls-proxy endpoint.
+   * Used when the source CDN requires custom Referer/Origin headers that
+   * the browser cannot set natively on <video> elements.
+   */
+  hlsProxyUrl?: string;
   /** Source type: hls | mp4 | embed (from Toko) */
   type?: "hls" | "mp4" | "embed";
   /** Human-readable language label e.g. "🇮🇳 Hindi Dub" */

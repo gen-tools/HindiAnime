@@ -64,7 +64,7 @@ const nextConfig: NextConfig = {
               "connect-src 'self' https: http: blob: data: https://graphql.anilist.co https://api-delta-taupe-46.vercel.app https://animesalt.cx https://*.workers.dev https://wispy-cherry-6934.shahazaibseo038.workers.dev",
               // Permissive frame-src and media-src so embedded video players and streams function smoothly
               "frame-src 'self' https: http:",
-              "media-src 'self' blob: data: https: http:",
+              "media-src 'self' blob: data: https: http: https://*.workers.dev https://wispy-cherry-6934.shahazaibseo038.workers.dev",
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",

@@ -408,23 +408,43 @@ export default async function WatchPage({
     }
   }
 
-  // If still empty, synthesize at least the current requested episode
+  // If still empty, synthesize the full episode list for the season
   if (episodes.length === 0) {
-    episodes = [
-      {
-        id: episodeId,
-        animeSlug: anime.slug,
-        animeTitle: anime.title,
-        animePoster: anime.poster,
-        season: seasonNumber,
-        number: episodeNumber,
-        title: isMovie ? "Full Movie" : `Episode ${episodeNumber}`,
-        thumbnail: anime.poster,
-        durationMinutes: 24,
-        languages: anime.languages,
-        releasedAt: new Date().toISOString().split("T")[0],
-      },
-    ];
+    if (isMovie) {
+      episodes = [
+        {
+          id: episodeId,
+          animeSlug: anime.slug,
+          animeTitle: anime.title,
+          animePoster: anime.poster,
+          season: 1,
+          number: 1,
+          title: "Full Movie",
+          thumbnail: anime.poster,
+          durationMinutes: anime.durationMinutes || 110,
+          languages: anime.languages,
+          releasedAt: new Date().toISOString().split("T")[0],
+        },
+      ];
+    } else {
+      const totalCount = Math.max(anime.episodeCount || 12, episodeNumber);
+      episodes = Array.from({ length: totalCount }, (_, i) => {
+        const num = i + 1;
+        return {
+          id: `ep-${seasonNumber}-${num}`,
+          animeSlug: anime.slug,
+          animeTitle: anime.title,
+          animePoster: anime.poster,
+          season: seasonNumber,
+          number: num,
+          title: `Episode ${num}`,
+          thumbnail: anime.poster,
+          durationMinutes: 24,
+          languages: anime.languages,
+          releasedAt: new Date().toISOString().split("T")[0],
+        };
+      });
+    }
   }
 
   // ── 3. Find current active episode ─────────────────────────────────────────
