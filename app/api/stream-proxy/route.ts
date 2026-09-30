@@ -211,23 +211,12 @@ async function fetchTokoSources(
     return 0;
   });
 
-  const merged: StreamItem[] = [];
-  const seen = new Set<string>();
+  // ── Two-pass source collection ──────────────────────────────────────────────
+  // Pass 1: direct (HLS / MP4) streams only — always ad-free.
+  // Pass 2: embed sources — only when no direct streams were found at all.
 
-  for (const s of sorted) {
-    if (merged.length >= 8) break;
-    if (isBlockedSource(s)) continue;
-    const streamUrl = s.url;
-    if (!streamUrl) continue;
-    // Embed types only need a valid http(s) URL — no path-depth requirement
-    const isEmbedType = s.type === "embed" || s.isEmbed;
-    if (!isEmbedType && !isValidStreamUrl(streamUrl)) continue;
-    if (isEmbedType && !isValidStreamUrl(streamUrl)) continue;
-    if (seen.has(streamUrl)) continue;
-    seen.add(streamUrl);
-
-    const idx = merged.length + 1;
-    const isDirect = (s.type === "hls" || s.type === "mp4" || s.isM3U8);
+  function buildMergedItem(s: TokoSource, idx: number): StreamItem {
+    const isDirect = s.type === "hls" || s.type === "mp4" || s.isM3U8;
     const flag =
       s.audioLanguage === "hi" || /hindi/i.test(s.language || s.languageLabel || "")
         ? "🇮🇳"
@@ -236,40 +225,34 @@ async function fetchTokoSources(
         : s.audioLanguage === "ja" || /japanese/i.test(s.language || s.languageLabel || "")
         ? "🇯🇵"
         : "🌐";
-
     const langName =
-      s.audioLanguage === "hi" || /hindi/i.test(s.language || "")
-        ? "Hindi Dub"
-        : s.audioLanguage === "en" || /english/i.test(s.language || "")
-        ? "English Dub"
-        : s.audioLanguage === "ja" || /japanese/i.test(s.language || "")
-        ? "Japanese"
-        : (s.language || "Multi");
-
+      s.audioLanguage === "hi" || /hindi/i.test(s.language || "") ? "Hindi Dub"
+      : s.audioLanguage === "en" || /english/i.test(s.language || "") ? "English Dub"
+      : s.audioLanguage === "ja" || /japanese/i.test(s.language || "") ? "Japanese"
+      : (s.language || "Multi");
     const qualityLabel = s.quality && s.quality !== "unknown" ? ` · ${s.quality}` : "";
-    const typeLabel = isDirect ? (s.type === "hls" || s.isM3U8 ? " · HLS" : " · MP4") : "";
+    const typeLabel = isDirect ? (s.type === "mp4" ? " · MP4" : " · HLS") : "";
     const providerHint = s.server || s.providerName ? ` (${s.server || s.providerName})` : "";
+    const streamUrl = s.url!;
 
-    // Build a proxied HLS URL when the stream requires custom Referer/Origin headers.
-    // Browsers cannot send custom headers from <video> elements, so we route HLS
-    // streams through the Cloudflare Worker /hls-proxy which injects the right headers.
+    // Proxy both HLS and MP4 streams that require custom Referer/Origin headers.
+    // Browsers cannot send those headers from <video> elements directly.
     let hlsProxyUrl: string | undefined;
-    if (isDirect && (s.type === "hls" || s.isM3U8) && s.headers) {
+    if (isDirect && s.headers) {
       const hdrs = s.headers as Record<string, string>;
       const referer = hdrs.Referer || hdrs.referer || "";
-      const origin = hdrs.Origin || hdrs.origin || "";
+      const origin  = hdrs.Origin  || hdrs.origin  || "";
       if (referer || origin) {
         const params = new URLSearchParams({ url: streamUrl });
         if (referer) params.set("referer", referer);
-        if (origin) params.set("origin", origin);
+        if (origin)  params.set("origin",  origin);
         hlsProxyUrl = `${CF_WORKER_BASE}/hls-proxy?${params.toString()}`;
       }
     }
 
-    merged.push({
+    return {
       server: `Server ${idx}`,
       embed: streamUrl,
-      // Use the proxied URL so the browser can play with correct CDN headers
       url: isDirect ? (hlsProxyUrl || streamUrl) : undefined,
       hlsProxyUrl,
       type: isDirect ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
@@ -277,7 +260,38 @@ async function fetchTokoSources(
       languageLabel: s.languageLabel || `${flag} ${langName}${typeLabel}${qualityLabel}${providerHint}`,
       adFree: isDirect,
       headers: s.headers,
-    });
+    };
+  }
+
+  const merged: StreamItem[] = [];
+  const seen = new Set<string>();
+
+  // Pass 1 — direct streams only (HLS / MP4)
+  for (const s of sorted) {
+    if (merged.length >= 8) break;
+    if (isBlockedSource(s)) continue;
+    const isEmbedType = s.type === "embed" || s.isEmbed;
+    if (isEmbedType) continue;                    // skip embeds in first pass
+    const streamUrl = s.url;
+    if (!streamUrl || !isValidStreamUrl(streamUrl)) continue;
+    if (seen.has(streamUrl)) continue;
+    seen.add(streamUrl);
+    merged.push(buildMergedItem(s, merged.length + 1));
+  }
+
+  // Pass 2 — embed fallback (only when no direct streams exist at all)
+  if (merged.length === 0) {
+    for (const s of sorted) {
+      if (merged.length >= 4) break;              // cap embeds at 4
+      if (isBlockedSource(s)) continue;
+      const isEmbedType = s.type === "embed" || s.isEmbed;
+      if (!isEmbedType) continue;
+      const streamUrl = s.url;
+      if (!streamUrl || !isValidStreamUrl(streamUrl)) continue;
+      if (seen.has(streamUrl)) continue;
+      seen.add(streamUrl);
+      merged.push(buildMergedItem(s, merged.length + 1));
+    }
   }
 
   return { results: merged, byLanguage: data?.byLanguage };

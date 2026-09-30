@@ -165,23 +165,13 @@ async function handleStream(url, request) {
     return 0;
   });
 
-  const merged = [];
-  const seen = new Set();
+  // ── Two-pass source collection ──────────────────────────────────────────────
+  // Pass 1: direct (HLS / MP4) sources only — these are always ad-free.
+  // Pass 2: embed sources — only added when no direct sources were found,
+  //         so that the user always sees ad-free servers when possible.
 
-  for (const s of sorted) {
-    if (merged.length >= 8) break; // Maximum 8 distinct server options
-    if (isBlockedStreamSource(s)) continue;
-    const streamUrl = s.url;
-    // For embed types, only require a non-empty http(s) URL — skip the path-depth check
-    if (!streamUrl) continue;
-    const isEmbedType = s.type === "embed" || s.isEmbed;
-    if (!isEmbedType && !isValidUrl(streamUrl)) continue;
-    if (isEmbedType && !isValidEmbedUrl(streamUrl)) continue;
-    if (seen.has(streamUrl)) continue;
-    seen.add(streamUrl);
-
-    const idx = merged.length + 1;
-    const isDirect = (s.type === "hls" || s.type === "mp4" || s.isM3U8);
+  function buildResult(s, idx, workerOrigin) {
+    const isDirect = s.type === "hls" || s.type === "mp4" || s.isM3U8;
     const flag =
       s.audioLanguage === "hi" || /hindi/i.test(s.language || s.languageLabel || "")
         ? "🇮🇳"
@@ -190,36 +180,31 @@ async function handleStream(url, request) {
         : s.audioLanguage === "ja" || /japanese/i.test(s.language || s.languageLabel || "")
         ? "🇯🇵"
         : "🌐";
-
     const langName =
-      s.audioLanguage === "hi" || /hindi/i.test(s.language || "")
-        ? "Hindi Dub"
-        : s.audioLanguage === "en" || /english/i.test(s.language || "")
-        ? "English Dub"
-        : s.audioLanguage === "ja" || /japanese/i.test(s.language || "")
-        ? "Japanese"
-        : (s.language || "Multi");
-
+      s.audioLanguage === "hi" || /hindi/i.test(s.language || "") ? "Hindi Dub"
+      : s.audioLanguage === "en" || /english/i.test(s.language || "") ? "English Dub"
+      : s.audioLanguage === "ja" || /japanese/i.test(s.language || "") ? "Japanese"
+      : (s.language || "Multi");
     const qualityLabel = s.quality && s.quality !== "unknown" ? ` · ${s.quality}` : "";
-    const typeLabel = isDirect ? (s.type === "hls" || s.isM3U8 ? " · HLS" : " · MP4") : "";
+    const typeLabel = isDirect ? (s.type === "mp4" ? " · MP4" : " · HLS") : "";
     const providerHint = s.server || s.providerName ? ` (${s.server || s.providerName})` : "";
+    const streamUrl = s.url;
 
-    // For HLS streams with required Referer/Origin headers, build a proxied URL
-    // through our /hls-proxy route so the browser can play without CORS issues.
+    // Proxy both HLS and MP4 streams that require custom Referer/Origin headers.
+    // Browsers cannot inject those headers from <video> elements directly.
     let hlsProxyUrl;
-    if (isDirect && (s.type === "hls" || s.isM3U8) && s.headers) {
+    if (isDirect && s.headers) {
       const referer = s.headers.Referer || s.headers.referer || "";
-      const origin = s.headers.Origin || s.headers.origin || "";
+      const origin  = s.headers.Origin  || s.headers.origin  || "";
       if (referer || origin) {
-        const workerBase = url.origin; // e.g. https://wispy-cherry-6934.shahazaibseo038.workers.dev
-        const params = new URLSearchParams({ url: streamUrl });
-        if (referer) params.set("referer", referer);
-        if (origin) params.set("origin", origin);
-        hlsProxyUrl = `${workerBase}/hls-proxy?${params.toString()}`;
+        const p = new URLSearchParams({ url: streamUrl });
+        if (referer) p.set("referer", referer);
+        if (origin)  p.set("origin",  origin);
+        hlsProxyUrl = `${workerOrigin}/hls-proxy?${p.toString()}`;
       }
     }
 
-    merged.push({
+    return {
       server: `Server ${idx}`,
       label: `Server ${idx} · ${flag} ${langName}${typeLabel}${qualityLabel}${providerHint}`,
       embed: streamUrl,
@@ -230,7 +215,39 @@ async function handleStream(url, request) {
       languageLabel: s.languageLabel || `${flag} ${langName}`,
       adFree: isDirect,
       headers: s.headers,
-    });
+    };
+  }
+
+  const merged = [];
+  const seen   = new Set();
+  const workerOrigin = url.origin;
+
+  // Pass 1 — direct streams only (HLS / MP4)
+  for (const s of sorted) {
+    if (merged.length >= 8) break;
+    if (isBlockedStreamSource(s)) continue;
+    const isEmbedType = s.type === "embed" || s.isEmbed;
+    if (isEmbedType) continue;                   // skip embeds in first pass
+    const streamUrl = s.url;
+    if (!streamUrl || !isValidUrl(streamUrl)) continue;
+    if (seen.has(streamUrl)) continue;
+    seen.add(streamUrl);
+    merged.push(buildResult(s, merged.length + 1, workerOrigin));
+  }
+
+  // Pass 2 — embed fallback (only when no direct streams found at all)
+  if (merged.length === 0) {
+    for (const s of sorted) {
+      if (merged.length >= 4) break;             // cap embeds at 4
+      if (isBlockedStreamSource(s)) continue;
+      const isEmbedType = s.type === "embed" || s.isEmbed;
+      if (!isEmbedType) continue;
+      const streamUrl = s.url;
+      if (!streamUrl || !isValidEmbedUrl(streamUrl)) continue;
+      if (seen.has(streamUrl)) continue;
+      seen.add(streamUrl);
+      merged.push(buildResult(s, merged.length + 1, workerOrigin));
+    }
   }
 
   if (merged.length > 0) {
@@ -277,6 +294,7 @@ async function handleHlsProxy(url, request) {
 
   // Only allow proxying actual media streams (m3u8, ts segments, mp4)
   const pathname = parsedTarget.pathname.toLowerCase();
+  const hostname = parsedTarget.hostname.toLowerCase();
   const isAllowedMedia =
     pathname.endsWith(".m3u8") ||
     pathname.endsWith(".ts") ||
@@ -284,11 +302,19 @@ async function handleHlsProxy(url, request) {
     pathname.endsWith(".aac") ||
     pathname.endsWith(".vtt") ||
     pathname.includes("/hls") ||
+    pathname.includes("/hls2") ||
     pathname.includes("/stream") ||
-    parsedTarget.hostname.includes("vmpx.online") ||
-    parsedTarget.hostname.includes("vidmoly") ||
-    parsedTarget.hostname.includes("streamcdn") ||
-    parsedTarget.hostname.includes("cdn");
+    pathname.includes("/bt/") ||
+    pathname.includes("/resource") ||
+    hostname.includes("vmpx.online") ||
+    hostname.includes("vmeas.cloud") ||
+    hostname.includes("vidmoly") ||
+    hostname.includes("hakunaymatata") ||
+    hostname.includes("sibnet") ||
+    hostname.includes("acek-cdn") ||
+    hostname.includes("vidzy") ||
+    hostname.includes("streamcdn") ||
+    hostname.includes("cdn");
 
   if (!isAllowedMedia) {
     return new Response(JSON.stringify({ error: "URL type not allowed" }), {
