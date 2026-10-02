@@ -20,20 +20,35 @@ const DEFAULT_HEADERS = {
   Accept: "application/json",
 };
 
-const rawCfProxy =
+const rawCfProxy = (
   process.env.CF_PROXY_URL ||
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
+  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url="
+).trim(); // trim trailing newlines/spaces common in .env files
 
 const CF_PROXY_URL = rawCfProxy.includes("?url=")
   ? rawCfProxy
   : `${rawCfProxy.replace(/\/+$/, "")}/?url=`;
 
-/** Base URL for the CF worker (without the /?url= suffix) */
-const CF_WORKER_BASE = rawCfProxy
-  .replace(/\/\?url=$/, "")
-  .replace(/\?url=$/, "")
-  .replace(/\/$/, "");
+/**
+ * Base URL for the CF worker (e.g. "https://...workers.dev").
+ * Robustly extracted using URL().origin so trailing /?url=, newlines,
+ * or slash variants in the env var never produce a malformed proxy URL.
+ */
+function getCfWorkerBase(): string {
+  try {
+    // The env var may be the full proxy URL like:
+    //   https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=
+    // or just the base:
+    //   https://wispy-cherry-6934.shahazaibseo038.workers.dev
+    const parsed = new URL(rawCfProxy.split("?")[0].replace(/\/+$/, ""));
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    // Absolute fallback
+    return "https://wispy-cherry-6934.shahazaibseo038.workers.dev";
+  }
+}
+const CF_WORKER_BASE = getCfWorkerBase();
 
 /**
  * Generate title search variants for Toko.
@@ -54,22 +69,11 @@ function slugToTitleVariants(slug: string, season: string): string[] {
   const sNum = parseInt(season, 10) || 1;
 
   if (sNum <= 1) {
-    // Season 1: base title is sufficient; add Season 1 variant as fallback
-    const variants = [base];
-    const lower = base.toLowerCase();
-    if (lower !== base) variants.push(lower);
-    variants.push(base + " Season 1");
-    return [...new Set(variants)];
+    return [base];
   }
 
-  // Season 2+: generate ordinal and numeric title variants (never include bare base title, which pulls S1 episodes)
-  const ord = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : sNum + "th";
-  const variants: string[] = [];
-  variants.push(base + " Season " + sNum);         // "Jujutsu Kaisen Season 2"
-  variants.push(base + " " + ord + " Season");      // "Jujutsu Kaisen 2nd Season"
-  variants.push(base + " S" + sNum);                // "Jujutsu Kaisen S2"
-  variants.push(base + " " + sNum);                 // "Jujutsu Kaisen 2"
-  return [...new Set(variants)];
+  // Season 2+: use standard season title format
+  return [base + " Season " + sNum, base + " S" + sNum];
 }
 
 function isBlockedSource(s: TokoSource): boolean {
@@ -170,116 +174,171 @@ async function fetchTokoSources(
     }
   }
 
+
+
   const rawSources: TokoSource[] = data?.sources || [];
   if (rawSources.length === 0) return { results: [] };
 
-  // Language priority weighting:
-  // 1 = Hindi (Highest Priority -> Server 1)
-  // 2 = English
-  // 3 = Japanese
-  // 4 = Other languages
-  function getLangPriority(s: TokoSource): number {
-    const audio = (s.audioLanguage || "").toLowerCase();
-    const lang = (s.language || "").toLowerCase();
-    const label = (s.languageLabel || "").toLowerCase();
-
-    if (audio === "hi" || lang.includes("hindi") || label.includes("hindi")) return 1;
-    if (audio === "en" || lang.includes("english") || label.includes("english")) return 2;
-    if (audio === "ja" || lang.includes("japanese") || label.includes("japanese")) return 3;
-    return 4;
+  function isHindi(s: TokoSource): boolean {
+    const a = (s.audioLanguage || "").toLowerCase();
+    const l = (s.language || "").toLowerCase();
+    const lb = (s.languageLabel || "").toLowerCase();
+    return a === "hi" || l.includes("hindi") || lb.includes("hindi");
   }
 
-  // Type priority within same language:
-  // 1 = Direct HLS (ad-free, best quality)
-  // 2 = Direct MP4 (ad-free)
-  // 3 = Embed player (fallback)
-  function getTypePriority(s: TokoSource): number {
-    if (s.type === "hls" || s.isM3U8) return 1;
-    if (s.type === "mp4") return 2;
-    if (s.type === "embed" || s.isEmbed) return 3;
-    return 4;
+  function isJapanese(s: TokoSource): boolean {
+    const a = (s.audioLanguage || "").toLowerCase();
+    const l = (s.language || "").toLowerCase();
+    const lb = (s.languageLabel || "").toLowerCase();
+    return a === "ja" || l.includes("japanese") || lb.includes("japanese");
   }
 
-  const sorted = [...rawSources].sort((a, b) => {
-    const lpA = getLangPriority(a);
-    const lpB = getLangPriority(b);
-    if (lpA !== lpB) return lpA - lpB;
-    const tpA = getTypePriority(a);
-    const tpB = getTypePriority(b);
-    if (tpA !== tpB) return tpA - tpB;
-    return 0;
-  });
+  function isMultiSub(s: TokoSource): boolean {
+    const l = (s.language || "").toLowerCase();
+    return l.includes("sub") || l.includes("french") || l.includes("multi");
+  }
 
-  // ── Source collection ─────────────────────────────────────────────────────────
-  // Single pass through sorted sources — all types included.
-  // Sort order: Hindi HLS first → Hindi embeds → English HLS/MP4 → Japanese…
-  // adFree flag is true only for direct HLS/MP4 streams.
+  function isDirect(s: TokoSource): boolean {
+    return s.type === "hls" || s.type === "mp4" || Boolean(s.isM3U8);
+  }
 
-  function buildMergedItem(s: TokoSource, idx: number): StreamItem {
-    const isDirect = s.type === "hls" || s.type === "mp4" || s.isM3U8;
-    const flag =
-      s.audioLanguage === "hi" || /hindi/i.test(s.language || s.languageLabel || "")
-        ? "🇮🇳"
-        : s.audioLanguage === "en" || /english/i.test(s.language || s.languageLabel || "")
-        ? "🇬🇧"
-        : s.audioLanguage === "ja" || /japanese/i.test(s.language || s.languageLabel || "")
-        ? "🇯🇵"
-        : "🌐";
-    const langName =
-      s.audioLanguage === "hi" || /hindi/i.test(s.language || "") ? "Hindi Dub"
-      : s.audioLanguage === "en" || /english/i.test(s.language || "") ? "English Dub"
-      : s.audioLanguage === "ja" || /japanese/i.test(s.language || "") ? "Japanese"
-      : (s.language || "Multi");
-    const qualityLabel = s.quality && s.quality !== "unknown" ? ` · ${s.quality}` : "";
-    const typeLabel = isDirect ? (s.type === "mp4" ? " · MP4" : " · HLS") : "";
-    const providerHint = s.server || s.providerName ? ` (${s.server || s.providerName})` : "";
+  function matchKeyword(s: TokoSource, ...keywords: string[]): boolean {
+    const str = `${s.providerName || ""} ${s.source || ""} ${s.server || ""} ${s.url || ""}`.toLowerCase();
+    return keywords.some((k) => str.includes(k.toLowerCase()));
+  }
+
+  function buildMergedItem(s: TokoSource, serverNum: number, customLabel?: string): StreamItem {
+    const isDirectStream = s.type === "hls" || s.type === "mp4" || Boolean(s.isM3U8);
+    const flag = isHindi(s) ? "🇮🇳" : isJapanese(s) ? "🇯🇵" : /english/i.test(s.language || "") ? "🇬🇧" : "🌐";
+    const langName = isHindi(s) ? "Hindi Dub" : isJapanese(s) ? "Japanese" : (s.language || "Multi");
     const streamUrl = s.url!;
 
-    // Proxy both HLS and MP4 streams that require custom Referer/Origin headers.
-    // Browsers cannot send those headers from <video> elements directly.
     let hlsProxyUrl: string | undefined;
-    if (isDirect && s.headers) {
-      const hdrs = s.headers as Record<string, string>;
+    if (isDirectStream) {
+      const hdrs = (s.headers as Record<string, string>) || {};
       const referer = hdrs.Referer || hdrs.referer || "";
       const origin  = hdrs.Origin  || hdrs.origin  || "";
-      if (referer || origin) {
-        const params = new URLSearchParams({ url: streamUrl });
-        if (referer) params.set("referer", referer);
-        if (origin)  params.set("origin",  origin);
-        hlsProxyUrl = `${CF_WORKER_BASE}/hls-proxy?${params.toString()}`;
-      }
+      const params = new URLSearchParams({ url: streamUrl });
+      if (referer) params.set("referer", referer);
+      if (origin)  params.set("origin",  origin);
+      hlsProxyUrl = `${CF_WORKER_BASE}/hls-proxy?${params.toString()}`;
     }
 
-    const itemLabel = `Server ${idx} · ${flag} ${langName}${typeLabel}${qualityLabel}${providerHint}`;
+    const itemLabel = customLabel || `Server ${serverNum} · ${flag} ${langName}`;
     return {
-      server: `Server ${idx}`,
+      server: `Server ${serverNum}`,
       label: itemLabel,
       embed: streamUrl,
-      url: isDirect ? (hlsProxyUrl || streamUrl) : undefined,
+      url: isDirectStream ? (hlsProxyUrl || streamUrl) : undefined,
       hlsProxyUrl,
-      type: isDirect ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
+      type: isDirectStream ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
       audioLanguage: s.audioLanguage || (flag === "🇮🇳" ? "hi" : flag === "🇬🇧" ? "en" : "ja"),
       languageLabel: s.languageLabel || `${flag} ${langName}`,
-      adFree: isDirect,
+      adFree: isDirectStream,
       headers: s.headers,
     };
   }
 
-  const merged: StreamItem[] = [];
-  const seen = new Set<string>();
+  // Predefined target server slots per user specification:
+  // Server 1: Hindi Dub HLS 720p (toonstream-vidmoly)
+  // Server 2: Hindi Dub 720p (toonstream)
+  // Server 3: Hindi Dub 720p (toonstream-cloudy)
+  // Server 4: Hindi Dub 720p (toonstream-vidmoly)
+  // Server 5: Hindi Dub 720p (toonstream-abyssplayer)
+  // Server 6: Japanese HLS 720p (smoothpre.com)
+  // Server 7: Japanese HLS 720p (vidzy)
+  // Server 8: Japanese HLS 720p (vidmoly)
+  const TARGET_SLOTS = [
+    {
+      serverNum: 1,
+      label: "Server 1: Hindi Dub HLS 720p (toonstream-vidmoly)",
+      matcher: (s: TokoSource) => isHindi(s) && isDirect(s) && matchKeyword(s, "vidmoly", "toonstream"),
+    },
+    {
+      serverNum: 2,
+      label: "Server 2: Hindi Dub 720p (toonstream)",
+      matcher: (s: TokoSource) => isHindi(s) && (s.type === "embed" || s.isEmbed) && matchKeyword(s, "toonstream", "rubystm"),
+    },
+    {
+      serverNum: 3,
+      label: "Server 3: Hindi Dub 720p (toonstream-cloudy)",
+      matcher: (s: TokoSource) => isHindi(s) && (s.type === "embed" || s.isEmbed) && matchKeyword(s, "cloudy"),
+    },
+    {
+      serverNum: 4,
+      label: "Server 4: Hindi Dub 720p (toonstream-vidmoly)",
+      matcher: (s: TokoSource) => isHindi(s) && (s.type === "embed" || s.isEmbed) && matchKeyword(s, "vidmoly"),
+    },
+    {
+      serverNum: 5,
+      label: "Server 5: Hindi Dub 720p (toonstream-abyssplayer)",
+      matcher: (s: TokoSource) => isHindi(s) && matchKeyword(s, "abyssplayer"),
+    },
+    {
+      serverNum: 6,
+      label: "Server 6: Japanese HLS 720p (smoothpre.com)",
+      matcher: (s: TokoSource) => (isJapanese(s) || isMultiSub(s)) && matchKeyword(s, "smoothpre", "ansembed", "animesama"),
+    },
+    {
+      serverNum: 7,
+      label: "Server 7: Japanese HLS 720p (vidzy)",
+      matcher: (s: TokoSource) => (isJapanese(s) || isMultiSub(s)) && matchKeyword(s, "vidzy"),
+    },
+    {
+      serverNum: 8,
+      label: "Server 8: Japanese HLS 720p (vidmoly)",
+      matcher: (s: TokoSource) => (isJapanese(s) || isMultiSub(s)) && matchKeyword(s, "vidmoly", "nekosama"),
+    },
+  ];
 
-  for (const s of sorted) {
-    if (merged.length >= 8) break;
-    if (isBlockedSource(s)) continue;
-    const streamUrl = s.url;
-    if (!streamUrl) continue;
-    const isEmbedType = s.type === "embed" || s.isEmbed;
-    if (!isEmbedType && !isValidStreamUrl(streamUrl)) continue;
-    if (isEmbedType && !isValidStreamUrl(streamUrl)) continue;
-    if (seen.has(streamUrl)) continue;
-    seen.add(streamUrl);
-    merged.push(buildMergedItem(s, merged.length + 1));
+  const merged: StreamItem[] = [];
+  const usedUrls = new Set<string>();
+
+  // Pass 1: Fill defined target slots
+  for (const slot of TARGET_SLOTS) {
+    const candidate = rawSources.find(
+      (s) => !isBlockedSource(s) && s.url && !usedUrls.has(s.url) && slot.matcher(s)
+    );
+    if (candidate && candidate.url) {
+      usedUrls.add(candidate.url);
+      merged.push(buildMergedItem(candidate, slot.serverNum, slot.label));
+    }
   }
+
+  // Pass 2: If we have room (< 8) and other valid sources exist (e.g. English, additional providers),
+  // append them to provide maximum playback choices
+  if (merged.length < 8) {
+    const usedServerNums = new Set(
+      merged.map((m) => {
+        const match = m.server.match(/\d+/);
+        return match ? parseInt(match[0], 10) : 0;
+      })
+    );
+    let nextAvailableNum = 1;
+
+    for (const s of rawSources) {
+      if (merged.length >= 8) break;
+      if (isBlockedSource(s)) continue;
+      if (!s.url || usedUrls.has(s.url)) continue;
+      if (!isValidStreamUrl(s.url)) continue;
+
+      while (usedServerNums.has(nextAvailableNum)) {
+        nextAvailableNum++;
+      }
+
+      usedUrls.add(s.url);
+      usedServerNums.add(nextAvailableNum);
+      merged.push(buildMergedItem(s, nextAvailableNum));
+      nextAvailableNum++;
+    }
+  }
+
+  // Ensure servers are sorted by server number (Server 1, Server 2, ...)
+  merged.sort((a, b) => {
+    const numA = parseInt(a.server.replace(/\D/g, ""), 10) || 0;
+    const numB = parseInt(b.server.replace(/\D/g, ""), 10) || 0;
+    return numA - numB;
+  });
 
   return { results: merged, byLanguage: data?.byLanguage };
 }

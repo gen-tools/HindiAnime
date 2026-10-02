@@ -40,10 +40,16 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   for (let i = 0; i < results.length && servers.length < 8; i++) {
     const item = results[i];
     const isDirect = (item.type === "hls" || item.type === "mp4") && Boolean(item.url || item.embed);
-    const streamUrl = item.url || item.embed;
+    // For direct streams: prefer item.url (the proxy URL), else fall back to item.embed (raw HLS/MP4)
+    // For embeds: use item.embed directly
+    const proxyUrl = isDirect ? (item.url || item.embed) : undefined;
+    const rawEmbed = item.embed || item.url || "";
+    const streamUrl = isDirect ? (proxyUrl || rawEmbed) : rawEmbed;
 
     if (!streamUrl || typeof streamUrl !== "string") continue;
-    if (seen.has(streamUrl)) continue;
+    // Deduplicate on raw embed URL so the same raw source doesn't appear twice
+    const dedupeKey = rawEmbed || streamUrl;
+    if (seen.has(dedupeKey)) continue;
 
     // Our own /api/ proxy URLs and Cloudflare Worker proxy URLs are safe by
     // construction — skip the external URL validator (which rejects root-path URLs).
@@ -52,7 +58,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       streamUrl.includes(".workers.dev");
     if (!isOwnProxy && !isValidEmbedUrl(streamUrl)) continue;
 
-    seen.add(streamUrl);
+    seen.add(dedupeKey);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
     const serverNum = servers.length + 1;
     // Use the backend's language label if available, e.g. "🇮🇳 Hindi Dub · HLS"
@@ -60,9 +66,10 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       ? `Server ${serverNum} — ${item.languageLabel}`
       : `Server ${serverNum}`);
     servers.push({
-      id: `${finalType}-${i}-${streamUrl}`,
+      id: `${finalType}-${i}-${dedupeKey}`,
       label,
-      embed: streamUrl,
+      // embed: always hold the raw source URL (used by EmbedFrame and HLS fallback)
+      embed: rawEmbed || streamUrl,
       url: isDirect ? streamUrl : undefined,
       type: finalType,
       isDirect,
@@ -226,16 +233,31 @@ export function StreamPlayer({
     };
   }, [fetchStreams]);
 
+  const serversRef = useRef<ValidServer[]>([]);
+  serversRef.current = servers;
+  const activeServerRef = useRef<ValidServer | null>(null);
+  activeServerRef.current = activeServer;
+
   const handleDirectPlaybackError = useCallback(() => {
-    // On direct stream failure, try to fall back to the next server (or the embed)
-    setServers((prev) => {
-      const idx = prev.findIndex((s) => s.id === activeServer?.id);
-      const next = prev[idx + 1] || prev.find((s) => !s.isDirect) || null;
-      if (next) setActiveServer(next);
-      else setState("error");
-      return prev;
-    });
-  }, [activeServer]);
+    const allServers = serversRef.current;
+    const current = activeServerRef.current;
+    if (!current || allServers.length === 0) return;
+
+    const currentIdx = allServers.findIndex((s) => s.id === current.id);
+    let nextServer: ValidServer | null = null;
+    if (currentIdx >= 0 && currentIdx < allServers.length - 1) {
+      nextServer = allServers[currentIdx + 1];
+    } else {
+      nextServer = allServers.find((s) => !s.isDirect && s.id !== current.id) || null;
+    }
+
+    if (nextServer && nextServer.id !== current.id) {
+      console.info(`[StreamPlayer] Auto-switching from ${current.label} to ${nextServer.label}`);
+      setActiveServer(nextServer);
+    } else {
+      setState("error");
+    }
+  }, []);
 
   const handleServerSelect = useCallback((server: ValidServer) => {
     setActiveServer(server);
@@ -268,6 +290,7 @@ export function StreamPlayer({
               <HlsPlayer
                 key={activeServer.id}
                 url={activeServer.url}
+                rawUrl={activeServer.url !== activeServer.embed ? activeServer.embed : undefined}
                 title={episodeTitle}
                 reloadKey={reloadKey}
                 onError={handleDirectPlaybackError}
@@ -536,14 +559,13 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-storage-access-by-user-activation"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="no-referrer"
+      referrerPolicy="strict-origin-when-cross-origin"
     />
   );
 }
@@ -552,11 +574,14 @@ function EmbedFrame({
 
 function HlsPlayer({
   url,
+  rawUrl,
   title,
   reloadKey,
   onError,
 }: {
   url: string;
+  /** Optional raw (non-proxied) HLS URL to try if the proxy URL fails */
+  rawUrl?: string;
   title: string;
   reloadKey: number;
   onError: () => void;
@@ -573,57 +598,96 @@ function HlsPlayer({
 
     let hls: Hls | null = null;
     let networkRetries = 0;
+    let triedRaw = false;
+    let fragErrorCount = 0;
 
     const timeout = setTimeout(() => {
       console.warn("[HlsPlayer] HLS stream loading timed out");
       onErrorRef.current();
-    }, 15_000);
+    }, 6_000);
 
     const handleCanPlay = () => {
       clearTimeout(timeout);
     };
 
     video.addEventListener("canplay", handleCanPlay);
+    video.addEventListener("playing", handleCanPlay);
 
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      // Native HLS support (Safari, iOS Safari)
-      video.src = url;
-      video.play().catch(() => {});
-    } else if (Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-      });
+    // Capture non-null reference for use inside nested functions
+    // (TypeScript narrows only in the outer scope, not in closures)
+    const v = video;
 
-      hls.loadSource(url);
-      hls.attachMedia(video);
+    function loadUrl(src: string) {
+      if (v.canPlayType("application/vnd.apple.mpegurl")) {
+        // Native HLS support (Safari, iOS Safari)
+        v.src = src;
+        v.play().catch(() => {});
+      } else if (Hls.isSupported()) {
+        if (hls) { hls.destroy(); hls = null; }
+        hls = new Hls({ enableWorker: true });
+        hls.loadSource(src);
+        hls.attachMedia(v);
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
-      });
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          v.play().catch(() => {});
+        });
 
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          console.warn("[HlsPlayer] Fatal HLS error:", data.type, data.details);
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 1) {
-            networkRetries++;
-            hls?.startLoad();
-          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            hls?.recoverMediaError();
-          } else {
-            clearTimeout(timeout);
-            hls?.destroy();
-            onErrorRef.current();
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          // Detect repeated fragment load errors (e.g. 403 on .ts segments)
+          if (
+            data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR ||
+            data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT
+          ) {
+            fragErrorCount++;
+            if (fragErrorCount >= 2) {
+              console.warn("[HlsPlayer] Repeated fragment load error:", data.details);
+              if (!triedRaw && rawUrl && rawUrl !== src) {
+                triedRaw = true;
+                fragErrorCount = 0;
+                console.info("[HlsPlayer] Falling back to raw URL:", rawUrl.substring(0, 60));
+                loadUrl(rawUrl);
+                return;
+              }
+              clearTimeout(timeout);
+              hls?.destroy();
+              onErrorRef.current();
+              return;
+            }
           }
-        }
-      });
-    } else {
-      clearTimeout(timeout);
-      onErrorRef.current();
+
+          if (data.fatal) {
+            console.warn("[HlsPlayer] Fatal HLS error:", data.type, data.details, "src:", src.substring(0, 60));
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !triedRaw && rawUrl && rawUrl !== src) {
+              // Proxy failed — try the raw stream URL directly
+              triedRaw = true;
+              networkRetries = 0;
+              fragErrorCount = 0;
+              console.info("[HlsPlayer] Falling back to raw URL:", rawUrl.substring(0, 60));
+              loadUrl(rawUrl);
+            } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 1) {
+              networkRetries++;
+              hls?.startLoad();
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hls?.recoverMediaError();
+            } else {
+              clearTimeout(timeout);
+              hls?.destroy();
+              onErrorRef.current();
+            }
+          }
+        });
+      } else {
+        clearTimeout(timeout);
+        onErrorRef.current();
+      }
     }
+
+    loadUrl(url);
 
     return () => {
       clearTimeout(timeout);
-      video.removeEventListener("canplay", handleCanPlay);
+      v.removeEventListener("canplay", handleCanPlay);
+      v.removeEventListener("playing", handleCanPlay);
       if (hls) {
         hls.destroy();
         hls = null;
