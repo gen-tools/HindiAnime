@@ -72,8 +72,9 @@ function slugToTitleVariants(slug: string, season: string): string[] {
     return [base];
   }
 
-  // Season 2+: use standard season title format
-  return [base + " Season " + sNum, base + " S" + sNum];
+  // Season 2+: MUST include base title so Hindi providers (ToonStream, DesiDub, etc.)
+  // find the series, plus the season title for providers that index seasons separately.
+  return [base, base + " Season " + sNum];
 }
 
 function isBlockedSource(s: TokoSource): boolean {

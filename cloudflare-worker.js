@@ -484,14 +484,9 @@ function slugToSeasonTitles(slug, season) {
     return [...new Set(variants)];
   }
 
-  const ord = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : sNum + "th";
-  const variants = [];
-  variants.push(base + " Season " + sNum);    // e.g. "Jujutsu Kaisen Season 2"
-  variants.push(base + " " + ord + " Season"); // e.g. "Jujutsu Kaisen 2nd Season"
-  variants.push(base + " S" + sNum);           // e.g. "Jujutsu Kaisen S2"
-  variants.push(base + " " + sNum);            // e.g. "Jujutsu Kaisen 2"
-  // DO NOT add base here: it causes Toko to return Season 1 Episode 1 for Season 2+
-  return [...new Set(variants)];
+  // Season 2+: MUST include base title so Hindi providers (ToonStream, DesiDub, etc.)
+  // find the series, plus the season title for providers that index seasons separately.
+  return [base, base + " Season " + sNum];
 }
 
 // Legacy alias kept for potential future use
