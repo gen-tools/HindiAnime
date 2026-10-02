@@ -186,55 +186,57 @@ async function handleStream(url, request) {
     };
   }
 
-  // Predefined target server slots per user specification:
-  // Server 1: Hindi Dub HLS 720p (toonstream-vidmoly)
-  // Server 2: Hindi Dub 720p (toonstream)
-  // Server 3: Hindi Dub 720p (toonstream-cloudy)
-  // Server 4: Hindi Dub 720p (toonstream-vidmoly)
-  // Server 5: Hindi Dub 720p (toonstream-abyssplayer)
-  // Server 6: Japanese HLS 720p (smoothpre.com)
-  // Server 7: Japanese HLS 720p (vidzy)
-  // Server 8: Japanese HLS 720p (vidmoly)
+  // Predefined target server slots:
+  // Server 1: Hindi Dub — any direct HLS/MP4 stream (highest priority, ad-free)
+  // Server 2: Hindi Dub — any embed (dedup via usedUrls for different providers)
+  // Server 3: Hindi Dub — secondary embed
+  // Server 4: Hindi Dub — tertiary embed
+  // Server 5: Hindi Dub — quaternary (any Hindi)
+  // Server 6: Japanese — direct HLS/MP4
+  // Server 7: Japanese — direct HLS/MP4 (alt)
+  // Server 8: Japanese — any (embed/direct)
   const TARGET_SLOTS = [
     {
       serverNum: 1,
-      label: "Server 1: Hindi Dub HLS 720p (toonstream-vidmoly)",
-      matcher: (s) => isHindi(s) && isDirect(s) && matchKeyword(s, "vidmoly", "toonstream"),
+      label: "Server 1 · 🇮🇳 Hindi Dub HLS",
+      // Any Hindi direct HLS or MP4 — no keyword restriction so all providers are covered
+      matcher: (s) => isHindi(s) && isDirect(s),
     },
     {
       serverNum: 2,
-      label: "Server 2: Hindi Dub 720p (toonstream)",
-      matcher: (s) => isHindi(s) && (s.type === "embed" || s.isEmbed) && matchKeyword(s, "toonstream", "rubystm"),
+      label: "Server 2 · 🇮🇳 Hindi Dub",
+      // Any Hindi embed provider
+      matcher: (s) => isHindi(s) && !isDirect(s),
     },
     {
       serverNum: 3,
-      label: "Server 3: Hindi Dub 720p (toonstream-cloudy)",
-      matcher: (s) => isHindi(s) && (s.type === "embed" || s.isEmbed) && matchKeyword(s, "cloudy"),
+      label: "Server 3 · 🇮🇳 Hindi Dub (Alt)",
+      matcher: (s) => isHindi(s) && !isDirect(s),
     },
     {
       serverNum: 4,
-      label: "Server 4: Hindi Dub 720p (toonstream-vidmoly)",
-      matcher: (s) => isHindi(s) && (s.type === "embed" || s.isEmbed) && matchKeyword(s, "vidmoly"),
+      label: "Server 4 · 🇮🇳 Hindi Dub (Alt 2)",
+      matcher: (s) => isHindi(s) && !isDirect(s),
     },
     {
       serverNum: 5,
-      label: "Server 5: Hindi Dub 720p (toonstream-abyssplayer)",
-      matcher: (s) => isHindi(s) && matchKeyword(s, "abyssplayer"),
+      label: "Server 5 · 🇮🇳 Hindi Dub (Alt 3)",
+      matcher: (s) => isHindi(s),
     },
     {
       serverNum: 6,
-      label: "Server 6: Japanese HLS 720p (smoothpre.com)",
-      matcher: (s) => (isJapanese(s) || isMultiSub(s)) && matchKeyword(s, "smoothpre", "ansembed", "animesama"),
+      label: "Server 6 · 🇯🇵 Japanese HLS",
+      matcher: (s) => (isJapanese(s) || isMultiSub(s)) && isDirect(s),
     },
     {
       serverNum: 7,
-      label: "Server 7: Japanese HLS 720p (vidzy)",
-      matcher: (s) => (isJapanese(s) || isMultiSub(s)) && matchKeyword(s, "vidzy"),
+      label: "Server 7 · 🇯🇵 Japanese HLS (Alt)",
+      matcher: (s) => (isJapanese(s) || isMultiSub(s)) && isDirect(s),
     },
     {
       serverNum: 8,
-      label: "Server 8: Japanese HLS 720p (vidmoly)",
-      matcher: (s) => (isJapanese(s) || isMultiSub(s)) && matchKeyword(s, "vidmoly", "nekosama"),
+      label: "Server 8 · 🇯🇵 Japanese",
+      matcher: (s) => isJapanese(s) || isMultiSub(s),
     },
   ];
 
@@ -484,9 +486,11 @@ function slugToSeasonTitles(slug, season) {
     return [...new Set(variants)];
   }
 
-  // Season 2+: MUST include base title so Hindi providers (ToonStream, DesiDub, etc.)
-  // find the series, plus the season title for providers that index seasons separately.
-  return [base, base + " Season " + sNum];
+  // Season 2+: Include base title AND season-qualified title.
+  // Some providers (ToonStream, DesiDub) use the base title + season/ep params.
+  // Others (Toko) index seasons separately by title (e.g. "Attack on Titan Season 2").
+  // Providing both ensures maximum coverage across all providers.
+  return [base, base + " Season " + sNum, base + " S" + sNum];
 }
 
 // Legacy alias kept for potential future use

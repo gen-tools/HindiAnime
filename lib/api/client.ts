@@ -1870,6 +1870,36 @@ export async function fetchAniListMeta(
     const m = json.data?.Media;
     if (!m) return null;
 
+    // ── Relevance Guard: verify the returned anime actually matches our search ──
+    // AniList uses fuzzy search — it may return a completely different anime when
+    // the exact title isn't indexed (e.g., searching "Oni Girl" returns "Demon Slayer").
+    // We check that at least one keyword from the input appears in the returned titles.
+    const returnedEnglish = (m.title?.english || "").toLowerCase();
+    const returnedRomaji  = (m.title?.romaji  || "").toLowerCase();
+    const returnedNative  = (m.title?.native  || "").toLowerCase();
+    // Split search into meaningful keywords (≥3 chars, skip numbers/filler)
+    const searchWords = clean
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 3);
+    // At least one keyword must appear in any returned title
+    const isRelevant =
+      searchWords.length === 0 ||
+      searchWords.some(
+        (w) =>
+          returnedEnglish.includes(w) ||
+          returnedRomaji.includes(w) ||
+          returnedNative.includes(w)
+      );
+    if (!isRelevant) {
+      console.warn(
+        `[AniList] Fuzzy mismatch: searched "${clean}" but got "${m.title?.english || m.title?.romaji}". Discarding.`
+      );
+      return null;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const poster = m.coverImage?.extraLarge || m.coverImage?.large || "";
     const backdrop = m.bannerImage || poster;
     const rawDesc = m.description || "";
