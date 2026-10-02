@@ -109,24 +109,21 @@ export function StreamPlayer({
   const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-  const [isReloading, setIsReloading] = useState(false);
-  const [showTroubleHint, setShowTroubleHint] = useState(false);
+  const [reloadKey] = useState(0);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    if (state !== "ready") { setShowTroubleHint(false); return; }
-    const t = setTimeout(() => setShowTroubleHint(true), 5000);
-    return () => clearTimeout(t);
-  }, [state, reloadKey]);
-
-  const handleReload = useCallback(() => {
-    setIsReloading(true);
-    setShowTroubleHint(false);
-    setReloadKey((k) => k + 1);
-    setTimeout(() => setIsReloading(false), 600);
-  }, []);
+  const handleNextServer = useCallback(() => {
+    if (servers.length <= 1) return;
+    const currentIndex = servers.findIndex((s) => s.id === activeServer?.id);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % servers.length;
+    const next = servers[nextIndex];
+    if (next) {
+      console.info(`[StreamPlayer] Switching to next server: ${next.label}`);
+      setActiveServer(next);
+      setState("ready");
+    }
+  }, [servers, activeServer]);
 
   const triggerShowExit = useCallback(() => {
     setShowExitButton(true);
@@ -282,8 +279,19 @@ export function StreamPlayer({
         )}
       >
         {state === "loading" && <LoadingState episodeTitle={episodeTitle} />}
-        {state === "error" && <ErrorState onRetry={() => fetchStreams(false)} />}
-        {state === "unavailable" && <UnavailableState />}
+        {state === "error" && (
+          <ErrorState
+            onRetry={() => fetchStreams(false)}
+            onNextServer={handleNextServer}
+            hasMoreServers={servers.length > 1}
+          />
+        )}
+        {state === "unavailable" && (
+          <UnavailableState
+            onNextServer={handleNextServer}
+            hasMoreServers={servers.length > 1}
+          />
+        )}
         {state === "ready" && activeServer && (
           <>
             {activeServer.type === "hls" && activeServer.url ? (
@@ -311,16 +319,16 @@ export function StreamPlayer({
                 reloadKey={reloadKey}
               />
             )}
-            {showTroubleHint && !isFullscreen && (
+            {servers.length > 1 && !isFullscreen && (
               <div className="absolute top-3 right-3 z-30">
                 <button
                   type="button"
-                  onClick={handleReload}
-                  title="Reload player if screen is stuck or showing error"
-                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-black/85 px-2.5 py-1.5 text-xs font-medium text-white shadow-xl backdrop-blur-md transition-all hover:border-green-bright hover:bg-black hover:text-green-light active:scale-95"
+                  onClick={handleNextServer}
+                  title="Switch to next server if video is blank or not working"
+                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-black/85 px-3 py-1.5 text-xs font-semibold text-white shadow-xl backdrop-blur-md transition-all hover:border-green-bright hover:bg-black hover:text-green-light active:scale-95 cursor-pointer"
                 >
-                  <RefreshCw className={cn("h-3.5 w-3.5 text-green-bright", isReloading && "animate-spin")} />
-                  <span>Reload Player</span>
+                  <Server className="h-3.5 w-3.5 text-green-bright" />
+                  <span>Change Server</span>
                 </button>
               </div>
             )}
@@ -380,8 +388,8 @@ export function StreamPlayer({
         )}
       </div>
 
-      {/* Control bar: Server select + Reload + Theater & Fullscreen */}
-      {state === "ready" && !isFullscreen && (
+      {/* Control bar: Server select + Change Server + Theater & Fullscreen */}
+      {servers.length > 0 && state !== "loading" && !isFullscreen && (
         <div className="flex flex-col gap-2.5 rounded-xl border border-border-line bg-surface p-3 sm:px-4 sm:py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Server dropdown */}
@@ -407,15 +415,17 @@ export function StreamPlayer({
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={handleReload}
-                title="Reload video player without refreshing the page"
-                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isReloading && "animate-spin text-green-bright")} />
-                <span>Reload</span>
-              </button>
+              {servers.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleNextServer}
+                  title="Switch to next server if video is blank or not working"
+                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95 cursor-pointer"
+                >
+                  <Server className="h-3.5 w-3.5 text-green-bright" />
+                  <span>Change Server</span>
+                </button>
+              )}
             </div>
 
             {/* Theater & Fullscreen controls */}
@@ -474,42 +484,75 @@ function LoadingState({ episodeTitle }: { episodeTitle: string }) {
   );
 }
 
-function UnavailableState() {
+function UnavailableState({
+  onNextServer,
+  hasMoreServers,
+}: {
+  onNextServer?: () => void;
+  hasMoreServers?: boolean;
+}) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/90 px-6 text-center">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/90 px-6 text-center z-20">
       <WifiOff className="h-12 w-12 text-text-muted" />
       <div>
         <p className="text-base font-semibold text-white">
           Video source unavailable
         </p>
         <p className="mt-1 text-sm text-text-secondary">
-          Please try another server or episode.
+          Could not load this server. Please try switching to another server.
         </p>
       </div>
+      {hasMoreServers && onNextServer && (
+        <button
+          onClick={onNextServer}
+          className="focus-ring mt-1 flex items-center gap-2 rounded-lg bg-green-primary px-4 py-2 text-sm font-semibold text-white shadow-lg transition-all hover:bg-green-hover active:scale-95 cursor-pointer"
+        >
+          <Server className="h-4 w-4" />
+          Change Server
+        </button>
+      )}
     </div>
   );
 }
 
-function ErrorState({ onRetry }: { onRetry: () => void }) {
+function ErrorState({
+  onRetry,
+  onNextServer,
+  hasMoreServers,
+}: {
+  onRetry: () => void;
+  onNextServer?: () => void;
+  hasMoreServers?: boolean;
+}) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/90 px-6 text-center">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/90 px-6 text-center z-20">
       <ServerCrash className="h-12 w-12 text-text-muted" />
       <div>
         <p className="text-base font-semibold text-white">
           Playback unavailable
         </p>
         <p className="mt-1 text-sm text-text-secondary">
-          Could not reach the stream server. Check your connection and try
-          again.
+          Could not reach the stream server or screen went blank. Try switching server.
         </p>
       </div>
-      <button
-        onClick={onRetry}
-        className="focus-ring mt-1 flex items-center gap-2 rounded-lg border border-border-line bg-surface px-4 py-2 text-sm font-medium text-white transition-colors hover:border-green-primary/50 hover:text-green-light"
-      >
-        <RefreshCw className="h-4 w-4" />
-        Retry
-      </button>
+      <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+        {hasMoreServers && onNextServer && (
+          <button
+            onClick={onNextServer}
+            className="focus-ring flex items-center gap-2 rounded-lg bg-green-primary px-4 py-2 text-sm font-semibold text-white shadow-lg transition-all hover:bg-green-hover active:scale-95 cursor-pointer"
+          >
+            <Server className="h-4 w-4" />
+            Change Server
+          </button>
+        )}
+        <button
+          onClick={onRetry}
+          className="focus-ring flex items-center gap-2 rounded-lg border border-border-line bg-surface px-4 py-2 text-sm font-medium text-white transition-colors hover:border-green-primary/50 hover:text-green-light cursor-pointer"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
     </div>
   );
 }
