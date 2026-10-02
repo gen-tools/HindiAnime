@@ -2159,10 +2159,16 @@ function parseEpisodesFromHtml(html: string): EpisodeItem[] {
   return episodes;
 }
 
-const WORKER_PROXY_URL =
-  process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-  process.env.CF_PROXY_URL ||
-  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
+export function buildWorkerProxyUrl(targetUrl: string): string {
+  const base = (
+    process.env.NEXT_PUBLIC_CF_PROXY_URL ||
+    process.env.CF_PROXY_URL ||
+    "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+  ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
+  return `${base}/?url=${encodeURIComponent(targetUrl)}`;
+}
+
+const WORKER_PROXY_URL = buildWorkerProxyUrl("");
 
 function is404Html(text: string): boolean {
   if (!text || text.length < 500) return true;
@@ -2207,11 +2213,14 @@ async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> 
   // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
   if (url.includes("animesalt.cx")) {
     try {
-      const proxyUrl = `${WORKER_PROXY_URL}${encodeURIComponent(url)}`;
+      const proxyUrl = buildWorkerProxyUrl(url);
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 6000);
       const pRes = await fetch(proxyUrl, {
         headers: DEFAULT_SCRAPER_HEADERS,
-        next: { revalidate: 300 },
+        signal: controller.signal,
       });
+      clearTimeout(t);
       if (pRes.ok) {
         const text = await pRes.text();
         if (!is404Html(text)) return text;
@@ -2226,7 +2235,6 @@ async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> 
     const t = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(url, {
       headers: DEFAULT_SCRAPER_HEADERS,
-      next: { revalidate: 60 },
       signal: controller.signal,
     });
     clearTimeout(t);
@@ -2239,11 +2247,14 @@ async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> 
   }
 
   try {
-    const proxyUrl = `${WORKER_PROXY_URL}${encodeURIComponent(url)}`;
+    const proxyUrl = buildWorkerProxyUrl(url);
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 6000);
     const pRes = await fetch(proxyUrl, {
       headers: DEFAULT_SCRAPER_HEADERS,
-      next: { revalidate: 60 },
+      signal: controller.signal,
     });
+    clearTimeout(t);
     if (pRes.ok) {
       const text = await pRes.text();
       if (!is404Html(text)) return text;
@@ -2901,65 +2912,130 @@ export interface HomepageData {
 }
 
 /**
- * Maps the API's purpose-built homepage feed. It already contains the latest,
- * most-watched, movie, and on-air lists, so one request avoids duplicated
- * catalog calls and preserves the API's own ordering and ranks.
+ * Resilient fallback homepage data derived from the local catalog and mock database.
+ * Ensures the homepage hero, trending, popular, and episode sections NEVER collapse
+ * or disappear if the external API or scraper is temporarily unavailable or blocked.
  */
-export async function getHomepageData(): Promise<HomepageData> {
-  const feed = await getHomepageFeed();
-  const sections = feed?.data.results;
+export function getFallbackHomepageData(): HomepageData {
+  const rankedAnime = [...anime].sort(
+    (a, b) => (a.trendingRank ?? 99) - (b.trendingRank ?? 99)
+  );
 
-  if (!sections) {
+  const heroItems = rankedAnime.slice(0, 6);
+  const trendingItems = rankedAnime.slice(0, 16);
+  const popularItems = rankedAnime
+    .filter((a) => a.type === "TV")
+    .sort((a, b) => (a.popularityRank ?? 99) - (b.popularityRank ?? 99));
+  const movieItems = rankedAnime.filter((a) => a.type === "Movie");
+  const seriesItems = rankedAnime.filter((a) => a.type === "TV");
+  const upcomingItems = rankedAnime.filter(
+    (a) => a.status === "Upcoming" || a.status === "Ongoing"
+  );
+
+  const latestEpisodes: Episode[] = rankedAnime.slice(0, 16).map((a, i) => {
+    const epNum = (i % 12) + 1;
     return {
-      heroItems: [],
-      latestEpisodes: [],
-      trendingItems: [],
-      popularItems: [],
-      movieItems: [],
-      seriesItems: [],
-      upcomingItems: [],
+      id: `ep-1-${epNum}`,
+      animeSlug: a.slug,
+      animeTitle: a.title,
+      animePoster: a.poster,
+      season: 1,
+      number: epNum,
+      title: `Episode ${epNum}`,
+      thumbnail: a.backdrop || a.poster,
+      durationMinutes: a.durationMinutes || 24,
+      languages: a.languages,
+      releasedAt: a.updatedAt || "",
+      isNew: true,
     };
-  }
-
-  const latestEpisodes = deduplicateEpisodes(
-    sections.fresh_drops.map(mapFreshDropToEpisode)
-  );
-  const latestMovies = uniqueBySlug(
-    sections.latest_animeMovies.map((item) => mapHomepageItem(item, "Movie"))
-  );
-  const popularSeries = uniqueBySlug(
-    sections.mostWatched_Series.map((item: HomepageRankedItem) =>
-      mapHomepageItem(item, "TV", Number(item.rank) || undefined)
-    )
-  );
-  const trendingItems = uniqueBySlug(
-    [
-      ...sections.mostWatched_Series.map((item) =>
-        mapHomepageItem(item, "TV", Number(item.rank) || undefined)
-      ),
-      ...sections.mostWatched_Films.map((item) =>
-        mapHomepageItem(item, "Movie", Number(item.rank) || undefined)
-      ),
-    ].sort((a, b) => (a.trendingRank ?? Infinity) - (b.trendingRank ?? Infinity))
-  );
-  const onAirSeries = uniqueBySlug(
-    sections.on_air_series.map((item) => mapHomepageItem(item, "TV"))
-  );
-  const recentlyUpdated = new Set(latestEpisodes.map((episode) => episode.animeSlug));
-  const upcomingItems = onAirSeries.filter((item) => !recentlyUpdated.has(item.slug));
-
-  // The homepage feed intentionally contains lightweight card data only.
-  // Hydrate just the six rotating spotlight items so `/api/info`'s `overview`
-  // is available to the hero without issuing detail requests for every row.
-  const heroItems = await enrichAnimeSynopses(trendingItems.slice(0, 6));
+  });
 
   return {
     heroItems,
     latestEpisodes,
     trendingItems,
-    popularItems: popularSeries,
-    movieItems: latestMovies,
-    seriesItems: onAirSeries,
+    popularItems,
+    movieItems,
+    seriesItems,
     upcomingItems,
+  };
+}
+
+/**
+ * Maps the API's purpose-built homepage feed. It already contains the latest,
+ * most-watched, movie, and on-air lists, so one request avoids duplicated
+ * catalog calls and preserves the API's own ordering and ranks.
+ *
+ * If upstream is down, empty, or blocked, seamlessly falls back to the rich catalog.
+ */
+export async function getHomepageData(): Promise<HomepageData> {
+  const fallback = getFallbackHomepageData();
+
+  let feed: HomepageApiResponse | null = null;
+  try {
+    feed = await getHomepageFeed();
+  } catch (err) {
+    console.error("getHomepageData: getHomepageFeed failed, using fallback:", err);
+  }
+
+  const sections = feed?.data?.results;
+
+  if (!sections || !hasHomepageItems(feed)) {
+    return fallback;
+  }
+
+  const latestEpisodes = deduplicateEpisodes(
+    (sections.fresh_drops || []).map(mapFreshDropToEpisode)
+  );
+  const latestMovies = uniqueBySlug(
+    (sections.latest_animeMovies || []).map((item) => mapHomepageItem(item, "Movie"))
+  );
+  const popularSeries = uniqueBySlug(
+    (sections.mostWatched_Series || []).map((item: HomepageRankedItem) =>
+      mapHomepageItem(item, "TV", Number(item.rank) || undefined)
+    )
+  );
+  const trendingItems = uniqueBySlug(
+    [
+      ...(sections.mostWatched_Series || []).map((item) =>
+        mapHomepageItem(item, "TV", Number(item.rank) || undefined)
+      ),
+      ...(sections.mostWatched_Films || []).map((item) =>
+        mapHomepageItem(item, "Movie", Number(item.rank) || undefined)
+      ),
+    ].sort((a, b) => (a.trendingRank ?? Infinity) - (b.trendingRank ?? Infinity))
+  );
+  const onAirSeries = uniqueBySlug(
+    (sections.on_air_series || []).map((item) => mapHomepageItem(item, "TV"))
+  );
+  const recentlyUpdated = new Set(latestEpisodes.map((episode) => episode.animeSlug));
+  const upcomingItems = onAirSeries.filter((item) => !recentlyUpdated.has(item.slug));
+
+  const resolvedTrending = trendingItems.length > 0 ? trendingItems : fallback.trendingItems;
+  const resolvedPopular = popularSeries.length > 0 ? popularSeries : fallback.popularItems;
+  const resolvedMovies = latestMovies.length > 0 ? latestMovies : fallback.movieItems;
+  const resolvedSeries = onAirSeries.length > 0 ? onAirSeries : fallback.seriesItems;
+  const resolvedUpcoming = upcomingItems.length > 0 ? upcomingItems : fallback.upcomingItems;
+  const resolvedEpisodes = latestEpisodes.length > 0 ? latestEpisodes : fallback.latestEpisodes;
+
+  // Hydrate rotating spotlight hero items
+  let heroItems: Anime[] = [];
+  try {
+    heroItems = await enrichAnimeSynopses(resolvedTrending.slice(0, 6));
+  } catch {
+    heroItems = resolvedTrending.slice(0, 6);
+  }
+  if (!heroItems || heroItems.length === 0) {
+    heroItems = fallback.heroItems;
+  }
+
+  return {
+    heroItems,
+    latestEpisodes: resolvedEpisodes,
+    trendingItems: resolvedTrending,
+    popularItems: resolvedPopular,
+    movieItems: resolvedMovies,
+    seriesItems: resolvedSeries,
+    upcomingItems: resolvedUpcoming,
   };
 }
