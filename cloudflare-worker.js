@@ -188,7 +188,10 @@ async function handleStream(url, request) {
     const isDirectStream = isDirect(s);
     const flag = isHindi(s) ? "🇮🇳" : isJapanese(s) ? "🇯🇵" : isTamil(s) ? "🌐" : isTelugu(s) ? "🌐" : isEnglish(s) ? "🇬🇧" : "🌐";
     const langName = isHindi(s) ? "Hindi Dub" : isJapanese(s) ? "Japanese" : isTamil(s) ? "Tamil" : isTelugu(s) ? "Telugu" : isEnglish(s) ? "English" : (s.language || "Multi");
-    const streamUrl = s.url;
+    const streamUrl = (s.url || "")
+      .replace(/\\+u0026/gi, "&")
+      .replace(/&amp;/gi, "&")
+      .trim();
     let hlsProxyUrl;
     if (isDirectStream && streamUrl) {
       const referer = s.headers?.Referer || s.headers?.referer || "";
@@ -678,14 +681,21 @@ const BLOCKED_STREAM_DOMAINS = [
   "vudeo",
   "hakunaymatata",
   "moviebox",
+  // ── Broken / Timeout / ASN-locked stream hosts ─────────────────────────────
+  "rubystm",
+  "acek-cdn",
+  "dramiyos-cdn",
+  "prx-am",
+  "animesama",
 ];
 
 function isBlockedStreamSource(s) {
   const provider = (s.providerName || s.source || s.server || "").toLowerCase();
-  if (provider.includes("hindmovie") || provider.includes("mvlink")) return true;
+  if (provider.includes("hindmovie") || provider.includes("mvlink") || provider.includes("animesama")) return true;
 
-  const urlStr = s.url || "";
+  const urlStr = (s.url || "").toLowerCase();
   if (/\.(mkv|zip|rar|7z|tar|gz|torrent|iso)(\?|$)/i.test(urlStr)) return true;
+  if (BLOCKED_STREAM_DOMAINS.some((d) => urlStr.includes(d) || provider.includes(d))) return true;
 
   try {
     const u = new URL(urlStr);

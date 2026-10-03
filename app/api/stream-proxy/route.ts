@@ -84,10 +84,11 @@ function slugToTitleVariants(slug: string, season: string): string[] {
 
 function isBlockedSource(s: TokoSource): boolean {
   const provider = (s.providerName || s.source || s.server || "").toLowerCase();
-  if (provider.includes("hindmovie") || provider.includes("mvlink")) return true;
+  if (provider.includes("hindmovie") || provider.includes("mvlink") || provider.includes("animesama")) return true;
 
-  const urlStr = s.url || "";
+  const urlStr = (s.url || "").toLowerCase();
   if (/\.(mkv|zip|rar|7z|tar|gz|torrent|iso)(\?|$)/i.test(urlStr)) return true;
+  if (BLOCKED_STREAM_DOMAINS.some((d) => urlStr.includes(d) || provider.includes(d))) return true;
 
   try {
     const u = new URL(urlStr);
@@ -229,7 +230,10 @@ function buildTokoItem(s: TokoSource): StreamItem {
   const isDirectStream = isDirect(s);
   const flag = isHindi(s) ? "🇮🇳" : isJapanese(s) ? "🇯🇵" : isEnglish(s) ? "🇬🇧" : "🌐";
   const langName = isHindi(s) ? "Hindi Dub" : isJapanese(s) ? "Japanese" : (s.language || "Multi");
-  const streamUrl = s.url!;
+  const streamUrl = (s.url || "")
+    .replace(/\\+u0026/gi, "&")
+    .replace(/&amp;/gi, "&")
+    .trim();
 
   let hlsProxyUrl: string | undefined;
   if (isDirectStream) {

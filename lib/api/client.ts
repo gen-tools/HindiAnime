@@ -2828,6 +2828,12 @@ export const BLOCKED_STREAM_DOMAINS = [
   "vudeo",
   "hakunaymatata",
   "moviebox",
+  // ── Broken / Timeout / ASN-locked stream hosts ─────────────────────────────
+  "rubystm",
+  "acek-cdn",
+  "dramiyos-cdn",
+  "prx-am",
+  "animesama",
 ];
 
 export function isValidEmbedUrl(embed: string | null | undefined): boolean {
