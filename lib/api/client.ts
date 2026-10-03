@@ -2849,8 +2849,10 @@ export function isValidEmbedUrl(embed: string | null | undefined): boolean {
     const url = new URL(trimmed);
     if (url.protocol !== "http:" && url.protocol !== "https:") return false;
     // Reject root homepages (e.g. https://animesalt.cx/ or https://domain.com)
+    // BUT allow hash-fragment embed URLs like https://cloudy.upns.one/#igncl
     const cleanPath = url.pathname.replace(/\/+$/, "");
-    if (!cleanPath || cleanPath === "") return false;
+    const hashId = url.hash.replace(/^#/, "").trim();
+    if ((!cleanPath || cleanPath === "") && !hashId) return false;
 
     const host = url.hostname.toLowerCase();
     // Block link shorteners, ad lockers, and file download aggregator sites
