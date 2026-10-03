@@ -12,7 +12,7 @@ const TOKO_API_URL = (
   process.env.TOKO_API_URL || "https://api-delta-taupe-46.vercel.app"
 ).replace(/\/+$/, "");
 
-const TOKO_TIMEOUT_MS = 12_000;
+const TOKO_TIMEOUT_MS = 25_000;
 
 const DEFAULT_HEADERS = {
   "User-Agent":
@@ -282,7 +282,7 @@ function assembleServers(rawSources: TokoSource[], animeSaltItems: StreamItem[])
   const saltHindiAbyss = animeSaltItems.find((s) => !isBlockedSource({ url: s.embed } as TokoSource) && s.audioLanguage === "hi");
   const s2Salt = saltMyStream || saltHindiAbyss;
   if (s2Salt) {
-    add(s2Salt, "Server 2 · 🇮🇳 Hindi Dub (MyStream)");
+    add(s2Salt, "Server 2 · 🇮🇳 MyStream");
   }
 
   // 3. Server 3 = Toko Hindi Dub Embed #1
@@ -394,76 +394,83 @@ async function fetchAnimeSaltSources(
 
   for (const targetUrl of candidates) {
     const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}`;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch(proxyUrl, {
-        signal: controller.signal,
-        cache: "no-store",
-        headers: DEFAULT_HEADERS,
-      });
-      clearTimeout(timer);
-      if (!res.ok) continue;
-      const html = await res.text();
-      if (!html || html.length < 1000 || html.includes("404 Not Found")) continue;
+    const fetchUrls = [targetUrl, proxyUrl];
 
-      const items: StreamItem[] = [];
-      const usedUrls = new Set<string>();
+    for (const urlToFetch of fetchUrls) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(urlToFetch, {
+          signal: controller.signal,
+          cache: "no-store",
+          headers: {
+            ...DEFAULT_HEADERS,
+            Accept: "text/html",
+          },
+        });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+        const html = await res.text();
+        if (!html || html.length < 1000 || html.includes("404 Not Found")) continue;
 
-      // 1. Look for Plyr base64 JSON (Abyssplayer by language)
-      const plyrMatch = html.match(/player\.php\?data=([A-Za-z0-9%_-]+)/);
-      if (plyrMatch) {
-        try {
-          const rawB64 = decodeURIComponent(plyrMatch[1]);
-          const decoded = Buffer.from(rawB64, "base64").toString("utf8");
-          const parsed = JSON.parse(decoded) as Array<{ language?: string; link?: string }>;
-          if (Array.isArray(parsed)) {
-            for (const p of parsed) {
-              if (p.link && !usedUrls.has(p.link) && !BLOCKED_STREAM_DOMAINS.some((d) => p.link!.includes(d))) {
-                usedUrls.add(p.link);
-                const lang = p.language || "Multi";
-                const isHi = /hindi/i.test(lang);
-                const isJa = /japanese/i.test(lang);
-                items.push({
-                  server: `AnimeSalt ${lang}`,
-                  label: `AnimeSalt · ${isHi ? "🇮🇳 Hindi" : isJa ? "🇯🇵 Japanese" : "🌐 " + lang} (Abyss)`,
-                  embed: p.link,
-                  type: "embed",
-                  audioLanguage: isHi ? "hi" : isJa ? "ja" : "en",
-                  languageLabel: lang,
-                  adFree: false,
-                });
+        const items: StreamItem[] = [];
+        const usedUrls = new Set<string>();
+
+        // 1. Look for Plyr base64 JSON (Abyssplayer by language)
+        const plyrMatch = html.match(/player\.php\?data=([A-Za-z0-9%_-]+)/);
+        if (plyrMatch) {
+          try {
+            const rawB64 = decodeURIComponent(plyrMatch[1]);
+            const decoded = Buffer.from(rawB64, "base64").toString("utf8");
+            const parsed = JSON.parse(decoded) as Array<{ language?: string; link?: string }>;
+            if (Array.isArray(parsed)) {
+              for (const p of parsed) {
+                if (p.link && !usedUrls.has(p.link) && !BLOCKED_STREAM_DOMAINS.some((d) => p.link!.includes(d))) {
+                  usedUrls.add(p.link);
+                  const lang = p.language || "Multi";
+                  const isHi = /hindi/i.test(lang);
+                  const isJa = /japanese/i.test(lang);
+                  items.push({
+                    server: `AnimeSalt ${lang}`,
+                    label: `AnimeSalt · ${isHi ? "🇮🇳 Hindi" : isJa ? "🇯🇵 Japanese" : "🌐 " + lang} (Abyss)`,
+                    embed: p.link,
+                    type: "embed",
+                    audioLanguage: isHi ? "hi" : isJa ? "ja" : "en",
+                    languageLabel: lang,
+                    adFree: false,
+                  });
+                }
               }
             }
-          }
-        } catch { /* ignore */ }
-      }
-
-      // 2. Look for iframe embeds (e.g. ravok.buzz / mystream)
-      const iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
-      let m: RegExpExecArray | null;
-      while ((m = iframeRegex.exec(html)) !== null) {
-        const src = m[1];
-        if (src && !usedUrls.has(src) && !src.includes("player.php") && !BLOCKED_STREAM_DOMAINS.some((d) => src.includes(d))) {
-          usedUrls.add(src);
-          const isRavok = src.includes("ravok.buzz");
-          items.push({
-            server: isRavok ? "AnimeSalt MyStream" : "AnimeSalt Embed",
-            label: isRavok ? "AnimeSalt · 🇮🇳 MyStream" : "AnimeSalt · Embed",
-            embed: src,
-            type: "embed",
-            audioLanguage: "hi",
-            languageLabel: "🇮🇳 Hindi",
-            adFree: false,
-          });
+          } catch { /* ignore */ }
         }
-      }
 
-      if (items.length > 0) {
-        return items;
+        // 2. Look for iframe embeds (e.g. ravok.buzz / mystream)
+        const iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
+        let m: RegExpExecArray | null;
+        while ((m = iframeRegex.exec(html)) !== null) {
+          const src = m[1];
+          if (src && !usedUrls.has(src) && !src.includes("player.php") && !BLOCKED_STREAM_DOMAINS.some((d) => src.includes(d))) {
+            usedUrls.add(src);
+            const isRavok = src.includes("ravok.buzz");
+            items.push({
+              server: isRavok ? "AnimeSalt MyStream" : "AnimeSalt Embed",
+              label: isRavok ? "AnimeSalt · 🇮🇳 MyStream" : "AnimeSalt · Embed",
+              embed: src,
+              type: "embed",
+              audioLanguage: "hi",
+              languageLabel: "🇮🇳 Hindi",
+              adFree: false,
+            });
+          }
+        }
+
+        if (items.length > 0) {
+          return items;
+        }
+      } catch {
+        // try next fetchUrl or candidate
       }
-    } catch {
-      // ignore & try next candidate
     }
   }
   return [];

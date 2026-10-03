@@ -38,7 +38,15 @@ export default {
 
     // ── Route: /stream — resolve streaming sources via Toko ───────────────────
     if (url.pathname === "/stream") {
-      return handleStream(url, request);
+      try {
+        return await handleStream(url, request);
+      } catch (err) {
+        return jsonResponse(
+          { success: false, message: "Stream handler exception", error: String(err) },
+          500,
+          request
+        );
+      }
     }
 
     // ── Route: /hls-proxy — proxy HLS/M3U8 streams with required headers ───────
@@ -458,7 +466,7 @@ async function fetchToko(cleanId, season, ep) {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
+    const timer = setTimeout(() => controller.abort(), 25000);
     const res = await fetch(tokoUrl, {
       signal: controller.signal,
       headers: { Accept: "application/json", "User-Agent": BROWSER_UA },

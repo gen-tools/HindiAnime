@@ -178,11 +178,16 @@ export function StreamPlayer({
 
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
 
-    // Try CF Worker first (not blocked by Vercel WAF), fall back to local API route
-    const endpoints = [
-      `${CF_STREAM_URL}${qs}`,
-      `/api/stream-proxy${qs}`,
-    ];
+    // On localhost, /api/stream-proxy is direct and immediate.
+    // On production, try CF Worker first (bypasses Vercel WAF), then fallback to /api/stream-proxy.
+    const isLocalhost =
+      typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1");
+
+    const endpoints = isLocalhost
+      ? [`/api/stream-proxy${qs}`, `${CF_STREAM_URL}${qs}`]
+      : [`${CF_STREAM_URL}${qs}`, `/api/stream-proxy${qs}`];
 
     try {
       let data: { results?: unknown[] } | null = null;
