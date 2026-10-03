@@ -309,19 +309,7 @@ export function StreamPlayer({
                 reloadKey={reloadKey}
               />
             )}
-            {servers.length > 1 && !isFullscreen && (
-              <div className="absolute top-3 right-3 z-30">
-                <button
-                  type="button"
-                  onClick={handleNextServer}
-                  title="Switch to next server if video is blank or not working"
-                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-black/85 px-3 py-1.5 text-xs font-semibold text-white shadow-xl backdrop-blur-md transition-all hover:border-green-bright hover:bg-black hover:text-green-light active:scale-95 cursor-pointer"
-                >
-                  <Server className="h-3.5 w-3.5 text-green-bright" />
-                  <span>Change Server</span>
-                </button>
-              </div>
-            )}
+
           </>
         )}
         {/* Fullscreen exit controls */}
