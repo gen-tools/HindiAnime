@@ -109,7 +109,7 @@ export function StreamPlayer({
   const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
-  const [reloadKey] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -236,24 +236,9 @@ export function StreamPlayer({
   activeServerRef.current = activeServer;
 
   const handleDirectPlaybackError = useCallback(() => {
-    const allServers = serversRef.current;
-    const current = activeServerRef.current;
-    if (!current || allServers.length === 0) return;
-
-    const currentIdx = allServers.findIndex((s) => s.id === current.id);
-    let nextServer: ValidServer | null = null;
-    if (currentIdx >= 0 && currentIdx < allServers.length - 1) {
-      nextServer = allServers[currentIdx + 1];
-    } else {
-      nextServer = allServers.find((s) => !s.isDirect && s.id !== current.id) || null;
-    }
-
-    if (nextServer && nextServer.id !== current.id) {
-      console.info(`[StreamPlayer] Auto-switching from ${current.label} to ${nextServer.label}`);
-      setActiveServer(nextServer);
-    } else {
-      setState("error");
-    }
+    // When direct playback fails or stream times out, show error state with Change Server button
+    // (Never auto-switch server behind the user's back)
+    setState("error");
   }, []);
 
   const handleServerSelect = useCallback((server: ValidServer) => {
@@ -426,6 +411,15 @@ export function StreamPlayer({
                   <span>Change Server</span>
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setReloadKey((k) => k + 1)}
+                title="Reload current player"
+                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95 cursor-pointer"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-green-bright" />
+                <span>Reload</span>
+              </button>
             </div>
 
             {/* Theater & Fullscreen controls */}
@@ -608,7 +602,7 @@ function EmbedFrame({
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="strict-origin-when-cross-origin"
+      referrerPolicy="no-referrer"
     />
   );
 }

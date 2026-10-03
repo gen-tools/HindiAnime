@@ -3018,10 +3018,15 @@ export async function getHomepageData(): Promise<HomepageData> {
   const resolvedUpcoming = upcomingItems.length > 0 ? upcomingItems : fallback.upcomingItems;
   const resolvedEpisodes = latestEpisodes.length > 0 ? latestEpisodes : fallback.latestEpisodes;
 
-  // Hydrate rotating spotlight hero items
+  // Hydrate rotating spotlight hero items with max 1.5s timeout so page speed stays ultra-fast
   let heroItems: Anime[] = [];
   try {
-    heroItems = await enrichAnimeSynopses(resolvedTrending.slice(0, 6));
+    heroItems = await Promise.race([
+      enrichAnimeSynopses(resolvedTrending.slice(0, 6)),
+      new Promise<Anime[]>((_, reject) =>
+        setTimeout(() => reject(new Error("enrich timeout")), 1500)
+      ),
+    ]);
   } catch {
     heroItems = resolvedTrending.slice(0, 6);
   }

@@ -72,11 +72,14 @@ function slugToTitleVariants(slug: string, season: string): string[] {
     return [base];
   }
 
-  // Season 2+: Include base title AND season-qualified title.
-  // Some providers (ToonStream, DesiDub) use the base title + season/ep params.
-  // Others (Toko) index seasons separately by title (e.g. "Attack on Titan Season 2").
-  // Providing both ensures maximum coverage across all providers.
-  return [base, base + " Season " + sNum, base + " S" + sNum];
+  // Season 2+: Season-specific titles MUST come first so providers match Season 2 instead of Season 1
+  const ordinal = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : `${sNum}th`;
+  return [
+    `${base} Season ${sNum}`,
+    `${base} ${ordinal} Season`,
+    `${base} S${sNum}`,
+    base,
+  ];
 }
 
 function isBlockedSource(s: TokoSource): boolean {
@@ -349,6 +352,49 @@ async function fetchTokoSources(
   return { results: merged, byLanguage: data?.byLanguage };
 }
 
+/**
+ * Fetch streaming embed sources from anime-api-gilt-beta.vercel.app.
+ * Used for Server 2 button when available.
+ */
+async function fetchAnimeApiSources(
+  slug: string,
+  season: string,
+  episode: string
+): Promise<StreamItem[]> {
+  try {
+    const url = `https://anime-api-gilt-beta.vercel.app/api/stream?id=${encodeURIComponent(slug)}&season=${season}&ep=${episode}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && Array.isArray(data?.results) && data.results.length > 0) {
+        const valid = data.results.filter((item: { embed?: string }) => Boolean(item.embed));
+        if (valid.length > 0) {
+          const first = valid[0];
+          return [{
+            server: "Server 2",
+            label: `Server 2 · 🇮🇳 ${first.server || "Multi Server (Embed)"}`,
+            embed: first.embed,
+            type: "embed" as const,
+            adFree: false,
+            audioLanguage: "hi",
+            languageLabel: "🇮🇳 Multi Server",
+          }];
+        }
+      }
+    }
+  } catch {
+    // API stream error or timeout
+  }
+  return [];
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
@@ -373,14 +419,43 @@ export async function GET(request: Request) {
 
   const cleanId = cleanAnimeSlug(decodedId) || decodedId;
 
-  // Fetch exclusively from Toko backend:
-  // Server 1 & Server 2 = Toko's Hindi Dub embed sources (toonstream & toonstream-cloudy)
-  // Server 3+ = Direct HLS/MP4 streams (⚡ Ad-free) and additional Toko sources
-  const { results: tokoResults, byLanguage } = await fetchTokoSources(cleanId, season, ep);
+  // Fetch Toko sources and anime-api-gilt-beta sources in parallel
+  const [{ results: tokoResults, byLanguage }, animeApiItems] = await Promise.all([
+    fetchTokoSources(cleanId, season, ep),
+    fetchAnimeApiSources(cleanId, season, ep),
+  ]);
 
-  if (tokoResults.length > 0) {
+  let finalResults = [...tokoResults];
+
+  // If anime-api-gilt-beta has streaming sources, use that for Server 2
+  if (animeApiItems.length > 0) {
+    const animeApiServer2 = animeApiItems[0];
+    const s1 = finalResults.find((s) => s.server === "Server 1");
+    const otherServers = finalResults.filter((s) => s.server !== "Server 1" && s.server !== "Server 2");
+
+    const renumbered: StreamItem[] = [];
+    if (s1) {
+      renumbered.push(s1);
+    }
+    renumbered.push(animeApiServer2);
+
+    let curNum = 3;
+    for (const s of otherServers) {
+      if (renumbered.length >= 8) break;
+      const originalLabel = s.label || s.server;
+      renumbered.push({
+        ...s,
+        server: `Server ${curNum}`,
+        label: originalLabel.replace(/^Server \d+/, `Server ${curNum}`),
+      });
+      curNum++;
+    }
+    finalResults = renumbered;
+  }
+
+  if (finalResults.length > 0) {
     return NextResponse.json(
-      { success: true, message: "Stream Found!!", results: tokoResults, byLanguage },
+      { success: true, message: "Stream Found!!", results: finalResults, byLanguage },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   }

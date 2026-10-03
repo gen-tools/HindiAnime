@@ -119,11 +119,14 @@ async function handleStream(url, request) {
 
   const cleanId = slugify(id);
 
-  // Fetch all streaming sources from Toko aggregator (pass season so Season 2 fetches Season 2)
-  const tokoData = await fetchToko(cleanId, season, ep);
+  // Fetch all streaming sources from Toko aggregator and anime-api in parallel
+  const [tokoData, animeApiResults] = await Promise.all([
+    fetchToko(cleanId, season, ep),
+    fetchAnimeApiStream(cleanId, season, ep),
+  ]);
   const rawSources = tokoData?.sources || [];
 
-  if (rawSources.length === 0) {
+  if (rawSources.length === 0 && (!animeApiResults || animeApiResults.length === 0)) {
     return jsonResponse({ success: false, message: "No valid streams found", results: [] }, 404, request);
   }
 
@@ -269,6 +272,37 @@ async function handleStream(url, request) {
       const nextServerNum = merged.length + 1;
       merged.push(buildResult(s, nextServerNum, workerOrigin));
     }
+  }
+
+  // If anime-api-gilt-beta has streaming sources, use that for Server 2
+  if (animeApiResults && animeApiResults.length > 0) {
+    const first = animeApiResults[0];
+    const server2Item = {
+      server: "Server 2",
+      label: `Server 2 · 🇮🇳 ${first.server || "Multi Server (Embed)"}`,
+      embed: first.embed,
+      type: "embed",
+      audioLanguage: "hi",
+      languageLabel: "🇮🇳 Multi Server",
+      adFree: false,
+    };
+    const s1 = merged.find((s) => s.server === "Server 1");
+    const otherServers = merged.filter((s) => s.server !== "Server 1" && s.server !== "Server 2");
+    const renumbered = [];
+    if (s1) renumbered.push(s1);
+    renumbered.push(server2Item);
+    let curNum = 3;
+    for (const s of otherServers) {
+      if (renumbered.length >= 8) break;
+      renumbered.push({
+        ...s,
+        server: `Server ${curNum}`,
+        label: s.label.replace(/^Server \d+/, `Server ${curNum}`),
+      });
+      curNum++;
+    }
+    merged.length = 0;
+    merged.push(...renumbered);
   }
 
   if (merged.length > 0) {
@@ -448,6 +482,30 @@ async function fetchToko(cleanId, season, ep) {
   return null;
 }
 
+/**
+ * Fetch streaming embed sources from anime-api-gilt-beta.vercel.app.
+ * Used for Server 2 button when available.
+ */
+async function fetchAnimeApiStream(id, season, ep) {
+  try {
+    const url = `https://anime-api-gilt-beta.vercel.app/api/stream?id=${encodeURIComponent(id)}&season=${season}&ep=${ep}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: "application/json", "User-Agent": BROWSER_UA },
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success && Array.isArray(data?.results) && data.results.length > 0) {
+        return data.results.filter((item) => Boolean(item.embed));
+      }
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function slugify(s) {
@@ -486,11 +544,14 @@ function slugToSeasonTitles(slug, season) {
     return [...new Set(variants)];
   }
 
-  // Season 2+: Include base title AND season-qualified title.
-  // Some providers (ToonStream, DesiDub) use the base title + season/ep params.
-  // Others (Toko) index seasons separately by title (e.g. "Attack on Titan Season 2").
-  // Providing both ensures maximum coverage across all providers.
-  return [base, base + " Season " + sNum, base + " S" + sNum];
+  // Season 2+: Season-specific titles MUST come first so providers match Season 2
+  const ordinal = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : `${sNum}th`;
+  return [
+    `${base} Season ${sNum}`,
+    `${base} ${ordinal} Season`,
+    `${base} S${sNum}`,
+    base,
+  ];
 }
 
 // Legacy alias kept for potential future use
