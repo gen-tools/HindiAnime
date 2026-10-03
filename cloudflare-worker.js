@@ -235,8 +235,9 @@ async function handleStream(url, request) {
     return true;
   }
   function addSalt(s, serverNum, label) {
+    if (!s) return false;
     const key = s.embed || s.url;
-    if (!s || !key || usedUrls.has(key)) return false;
+    if (!key || usedUrls.has(key)) return false;
     usedUrls.add(key);
     list.push(buildSaltResult(s, serverNum, label));
     return true;
