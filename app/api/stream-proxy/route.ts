@@ -353,44 +353,101 @@ async function fetchTokoSources(
 }
 
 /**
- * Fetch streaming embed sources from anime-api-gilt-beta.vercel.app.
- * Used for Server 2 button when available.
+ * Fetch streaming embed sources directly from AnimeSalt (animesalt.cx).
+ * Extracts AbyssPlayer multi-language embeds (Hindi, Japanese, English, etc.)
+ * and direct video iframes (MyStream / ravok.buzz).
  */
-async function fetchAnimeApiSources(
+async function fetchAnimeSaltSources(
   slug: string,
   season: string,
   episode: string
 ): Promise<StreamItem[]> {
-  try {
-    const url = `https://anime-api-gilt-beta.vercel.app/api/stream?id=${encodeURIComponent(slug)}&season=${season}&ep=${episode}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(url, {
-      signal: controller.signal,
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.success && Array.isArray(data?.results) && data.results.length > 0) {
-        const valid = data.results.filter((item: { embed?: string }) => Boolean(item.embed));
-        if (valid.length > 0) {
-          const first = valid[0];
-          return [{
-            server: "Server 2",
-            label: `Server 2 · 🇮🇳 ${first.server || "Multi Server (Embed)"}`,
-            embed: first.embed,
-            type: "embed" as const,
-            adFree: false,
+  const sNum = parseInt(season, 10) || 1;
+  const epNum = parseInt(episode, 10) || 1;
+  const baseSlug = slug
+    .replace(/-season-\d+$/i, "")
+    .replace(/-s\d+$/i, "")
+    .replace(/-\d+(st|nd|rd|th)-season$/i, "");
+
+  const candidates = [
+    `https://animesalt.cx/episode/${baseSlug}-${sNum}x${epNum}/`,
+    `https://animesalt.cx/episode/${slug}-${sNum}x${epNum}/`,
+    `https://animesalt.cx/episode/${baseSlug}-${epNum}/`,
+  ];
+
+  for (const targetUrl of candidates) {
+    const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}`;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(proxyUrl, {
+        signal: controller.signal,
+        cache: "no-store",
+        headers: DEFAULT_HEADERS,
+      });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const html = await res.text();
+      if (!html || html.length < 1000 || html.includes("404 Not Found")) continue;
+
+      const items: StreamItem[] = [];
+      const usedUrls = new Set<string>();
+
+      // 1. Look for Plyr base64 JSON (Abyssplayer by language)
+      const plyrMatch = html.match(/player\.php\?data=([A-Za-z0-9%_-]+)/);
+      if (plyrMatch) {
+        try {
+          const rawB64 = decodeURIComponent(plyrMatch[1]);
+          const decoded = Buffer.from(rawB64, "base64").toString("utf8");
+          const parsed = JSON.parse(decoded) as Array<{ language?: string; link?: string }>;
+          if (Array.isArray(parsed)) {
+            for (const p of parsed) {
+              if (p.link && !usedUrls.has(p.link) && !BLOCKED_STREAM_DOMAINS.some((d) => p.link!.includes(d))) {
+                usedUrls.add(p.link);
+                const lang = p.language || "Multi";
+                const isHi = /hindi/i.test(lang);
+                const isJa = /japanese/i.test(lang);
+                items.push({
+                  server: `AnimeSalt ${lang}`,
+                  label: `AnimeSalt · ${isHi ? "🇮🇳 Hindi" : isJa ? "🇯🇵 Japanese" : "🌐 " + lang} (Abyss)`,
+                  embed: p.link,
+                  type: "embed",
+                  audioLanguage: isHi ? "hi" : isJa ? "ja" : "en",
+                  languageLabel: lang,
+                  adFree: false,
+                });
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      // 2. Look for iframe embeds (e.g. ravok.buzz / mystream)
+      const iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
+      let m: RegExpExecArray | null;
+      while ((m = iframeRegex.exec(html)) !== null) {
+        const src = m[1];
+        if (src && !usedUrls.has(src) && !src.includes("player.php") && !BLOCKED_STREAM_DOMAINS.some((d) => src.includes(d))) {
+          usedUrls.add(src);
+          const isRavok = src.includes("ravok.buzz");
+          items.push({
+            server: isRavok ? "AnimeSalt MyStream" : "AnimeSalt Embed",
+            label: isRavok ? "AnimeSalt · 🇮🇳 MyStream" : "AnimeSalt · Embed",
+            embed: src,
+            type: "embed",
             audioLanguage: "hi",
-            languageLabel: "🇮🇳 Multi Server",
-          }];
+            languageLabel: "🇮🇳 Hindi",
+            adFree: false,
+          });
         }
       }
+
+      if (items.length > 0) {
+        return items;
+      }
+    } catch {
+      // ignore & try next candidate
     }
-  } catch {
-    // API stream error or timeout
   }
   return [];
 }
@@ -419,17 +476,23 @@ export async function GET(request: Request) {
 
   const cleanId = cleanAnimeSlug(decodedId) || decodedId;
 
-  // Fetch Toko sources and anime-api-gilt-beta sources in parallel
-  const [{ results: tokoResults, byLanguage }, animeApiItems] = await Promise.all([
+  // Fetch Toko sources and AnimeSalt sources in parallel
+  const [{ results: tokoResults, byLanguage }, animeSaltItems] = await Promise.all([
     fetchTokoSources(cleanId, season, ep),
-    fetchAnimeApiSources(cleanId, season, ep),
+    fetchAnimeSaltSources(cleanId, season, ep),
   ]);
 
   let finalResults = [...tokoResults];
 
-  // If anime-api-gilt-beta has streaming sources, use that for Server 2
-  if (animeApiItems.length > 0) {
-    const animeApiServer2 = animeApiItems[0];
+  // If AnimeSalt has streaming sources, prioritize Hindi embed for Server 2
+  if (animeSaltItems.length > 0) {
+    const hindiSalt = animeSaltItems.find((s) => s.audioLanguage === "hi") || animeSaltItems[0];
+    const server2Item: StreamItem = {
+      ...hindiSalt,
+      server: "Server 2",
+      label: "Server 2 · 🇮🇳 Hindi Dub (AnimeSalt)",
+    };
+
     const s1 = finalResults.find((s) => s.server === "Server 1");
     const otherServers = finalResults.filter((s) => s.server !== "Server 1" && s.server !== "Server 2");
 
@@ -437,7 +500,7 @@ export async function GET(request: Request) {
     if (s1) {
       renumbered.push(s1);
     }
-    renumbered.push(animeApiServer2);
+    renumbered.push(server2Item);
 
     let curNum = 3;
     for (const s of otherServers) {
@@ -450,6 +513,20 @@ export async function GET(request: Request) {
       });
       curNum++;
     }
+
+    // Also append extra AnimeSalt mirrors (e.g. MyStream or Abyss Japanese) if slots remain
+    const extraSalt = animeSaltItems.filter((s) => s.embed !== hindiSalt.embed);
+    for (const s of extraSalt) {
+      if (renumbered.length >= 8) break;
+      const baseLabel = s.label || s.server;
+      renumbered.push({
+        ...s,
+        server: `Server ${curNum}`,
+        label: `Server ${curNum} · ${baseLabel.replace(/^AnimeSalt · /, "")}`,
+      });
+      curNum++;
+    }
+
     finalResults = renumbered;
   }
 

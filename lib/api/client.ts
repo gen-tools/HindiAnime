@@ -2807,6 +2807,7 @@ export const BLOCKED_STREAM_DOMAINS = [
   "cuty.io",
   "exe.io",
   // ── Ad-wall video hosts (show "AdBlock/Sandbox" error in iframe) ────────────
+  "multishows",
   "streamtape",
   "doodstream",
   "dood.watch",
@@ -2857,13 +2858,6 @@ export function isValidEmbedUrl(embed: string | null | undefined): boolean {
       !cleanPath.includes("multi-lang-plyr")
     ) {
       return false;
-    }
-    // Reject known ad verification gates — but allow numeric embed IDs
-    // e.g. /embed/19548 is a real content player; /embed/verify is an ad gate
-    if (host.includes("multishows.top") && cleanPath.startsWith("/embed")) {
-      const embedSegment = cleanPath.replace(/^\/embed\/?/, "");
-      // If the path after /embed/ is not a pure integer, it's a gate/challenge page
-      if (embedSegment && !/^\d+$/.test(embedSegment)) return false;
     }
     return true;
   } catch {
