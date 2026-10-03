@@ -473,7 +473,14 @@ async function fetchToko(cleanId, season, ep) {
     const timer = setTimeout(() => controller.abort(), 25000);
     const res = await fetch(tokoUrl, {
       signal: controller.signal,
-      headers: { Accept: "application/json", "User-Agent": BROWSER_UA },
+      headers: {
+        Accept: "application/json, text/plain, */*",
+        "User-Agent": BROWSER_UA,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "cross-site",
+      },
     });
     clearTimeout(timer);
     const text = await res.text();
@@ -608,11 +615,7 @@ function slugToSeasonTitles(slug, season) {
   const sNum = parseInt(season, 10) || 1;
 
   if (sNum <= 1) {
-    const lower = base.toLowerCase();
-    const variants = [base];
-    if (lower !== base) variants.push(lower);
-    variants.push(base + " Season 1");
-    return [...new Set(variants)];
+    return [base];
   }
 
   // Season 2+: Season-specific titles MUST come first so providers match Season 2
