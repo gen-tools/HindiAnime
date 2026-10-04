@@ -178,16 +178,9 @@ export function StreamPlayer({
 
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
 
-    // On localhost, /api/stream-proxy is direct and immediate.
-    // On production, try CF Worker first (bypasses Vercel WAF), then fallback to /api/stream-proxy.
-    const isLocalhost =
-      typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1");
-
-    const endpoints = isLocalhost
-      ? [`/api/stream-proxy${qs}`, `${CF_STREAM_URL}${qs}`]
-      : [`${CF_STREAM_URL}${qs}`, `/api/stream-proxy${qs}`];
+    // Query our own /api/stream-proxy first for instant, identical servers on both localhost and production.
+    // Fall back to the Cloudflare Worker stream endpoint if /api/stream-proxy fails.
+    const endpoints = [`/api/stream-proxy${qs}`, `${CF_STREAM_URL}${qs}`];
 
     try {
       let data: { results?: unknown[] } | null = null;

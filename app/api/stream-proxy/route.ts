@@ -383,6 +383,33 @@ function assembleServers(
     if (s9By) add(buildTokoItem(s9By), "Server 9 · 🇯🇵 Japanese (Abyss)");
   }
 
+  // ── Fill remaining slots up to 9 with any remaining valid sources from byLanguage / rawSources ──
+  if (list.length < 9 && byLanguage) {
+    for (const langCode of Object.keys(byLanguage)) {
+      if (list.length >= 9) break;
+      const sources = getByLangSources(langCode);
+      for (const s of sources) {
+        if (list.length >= 9) break;
+        if (isBlockedSource(s)) continue;
+        const key = s.url || "";
+        if (!key || usedUrls.has(key)) continue;
+        const flag = langCode === "fr" ? "🇫🇷" : langCode === "es" ? "🇪🇸" : langCode === "de" ? "🇩🇪" : "🌐";
+        const langName = s.languageLabel || `${flag} ${s.language || langCode.toUpperCase()}`;
+        add(buildTokoItem(s), `Server ${list.length + 1} · ${langName}`);
+      }
+    }
+  }
+
+  if (list.length < 9) {
+    for (const s of rawSources) {
+      if (list.length >= 9) break;
+      if (isBlockedSource(s)) continue;
+      const key = s.url || "";
+      if (!key || usedUrls.has(key)) continue;
+      add(buildTokoItem(s), `Server ${list.length + 1} · ${s.languageLabel || s.language || "Mirror"}`);
+    }
+  }
+
   // Sequential renumber: Server 1, Server 2, ..., Server N (no gap filling)
   return list.map((item, idx) => {
     const num = idx + 1;
@@ -393,6 +420,18 @@ function assembleServers(
       label: cleanLabel ? `Server ${num} · ${cleanLabel}` : `Server ${num}`,
     };
   });
+}
+
+function isCloudflareChallenge(text: string): boolean {
+  return (
+    text.includes("Just a moment...") ||
+    text.includes("cf-chl-widget") ||
+    text.includes("challenge-platform") ||
+    text.includes("cf-browser-verification") ||
+    text.includes("Attention Required! | Cloudflare") ||
+    text.includes("enable-javascript") ||
+    text.includes("security check")
+  );
 }
 
 /**
@@ -420,12 +459,13 @@ async function fetchAnimeSaltSources(
 
   for (const targetUrl of candidates) {
     const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}`;
-    const fetchUrls = [targetUrl, proxyUrl];
+    // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
+    const fetchUrls = [proxyUrl, targetUrl];
 
     for (const urlToFetch of fetchUrls) {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8000);
+        const timer = setTimeout(() => controller.abort(), 6000);
         const res = await fetch(urlToFetch, {
           signal: controller.signal,
           cache: "no-store",
@@ -437,7 +477,7 @@ async function fetchAnimeSaltSources(
         clearTimeout(timer);
         if (!res.ok) continue;
         const html = await res.text();
-        if (!html || html.length < 1000 || html.includes("404 Not Found")) continue;
+        if (!html || html.length < 1000 || html.includes("404 Not Found") || isCloudflareChallenge(html)) continue;
 
         const items: StreamItem[] = [];
         const usedUrls = new Set<string>();

@@ -2826,8 +2826,6 @@ export const BLOCKED_STREAM_DOMAINS = [
   "waaw.tv",
   "gounlimited",
   "vudeo",
-  "hakunaymatata",
-  "moviebox",
   // ── Broken / Timeout / ASN-locked stream hosts ─────────────────────────────
   "rubystm",
   "acek-cdn",
