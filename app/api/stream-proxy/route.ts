@@ -457,6 +457,77 @@ async function fetchAnimeSaltSources(
     `https://animesalt.cx/episode/${baseSlug}-${epNum}/`,
   ];
 
+  // 1. Primary for production environments (Vercel / Netlify):
+  // Query Cloudflare Worker /stream endpoint. Cloudflare Worker runs on Cloudflare's edge
+  // network and bypasses Cloudflare Bot protection on animesalt.cx.
+  try {
+    const cfStreamUrl = `${CF_WORKER_BASE}/stream?id=${encodeURIComponent(slug)}&season=${season}&ep=${episode}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    const cfRes = await fetch(cfStreamUrl, {
+      signal: controller.signal,
+      headers: DEFAULT_HEADERS,
+      cache: "no-store",
+    });
+    clearTimeout(timer);
+    if (cfRes.ok) {
+      const data = (await cfRes.json()) as {
+        results?: Array<{
+          embed?: string;
+          url?: string;
+          label?: string;
+          audioLanguage?: string;
+          languageLabel?: string;
+        }>;
+      };
+      if (Array.isArray(data.results) && data.results.length > 0) {
+        const cfItems: StreamItem[] = [];
+        const used = new Set<string>();
+
+        for (const r of data.results) {
+          const embed = r.embed || r.url || "";
+          if (!embed || used.has(embed)) continue;
+          const label = r.label || "";
+          const isRavok = embed.includes("ravok.buzz");
+          const isAbyss = embed.includes("abyssplayer.com");
+
+          // Keep Abyssplayer multi-language embeds and MyStream (ravok.buzz)
+          if (
+            isRavok ||
+            isAbyss ||
+            label.toLowerCase().includes("mystream") ||
+            label.toLowerCase().includes("abyss")
+          ) {
+            used.add(embed);
+            const isTa = /tamil/i.test(label) || r.audioLanguage === "ta";
+            const isTe = /telugu/i.test(label) || r.audioLanguage === "te";
+            const isEn = /english/i.test(label) || r.audioLanguage === "en";
+            const isJa = /japanese/i.test(label) || r.audioLanguage === "ja";
+            const isHi = /hindi/i.test(label) || isRavok || r.audioLanguage === "hi";
+
+            cfItems.push({
+              server: isRavok ? "AnimeSalt MyStream" : `AnimeSalt ${label}`,
+              label: isRavok
+                ? "AnimeSalt · 🇮🇳 MyStream"
+                : `AnimeSalt · ${isHi ? "🇮🇳 Hindi" : isTa ? "🌐 Tamil" : isTe ? "🌐 Telugu" : isEn ? "🇬🇧 English" : isJa ? "🇯🇵 Japanese" : "🌐 Multi"} (Abyss)`,
+              embed,
+              type: "embed",
+              audioLanguage: isTa ? "ta" : isTe ? "te" : isEn ? "en" : isJa ? "ja" : "hi",
+              languageLabel: isTa ? "Tamil" : isTe ? "Telugu" : isEn ? "English" : isJa ? "Japanese" : "Hindi",
+              adFree: false,
+            });
+          }
+        }
+
+        if (cfItems.length > 0) {
+          return cfItems;
+        }
+      }
+    }
+  } catch {
+    // Fall back to direct scraping of candidates below
+  }
+
   for (const targetUrl of candidates) {
     const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}`;
     // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
