@@ -260,108 +260,130 @@ function buildTokoItem(s: TokoSource): StreamItem {
   };
 }
 
-function assembleServers(rawSources: TokoSource[], animeSaltItems: StreamItem[]): StreamItem[] {
+function assembleServers(
+  rawSources: TokoSource[],
+  animeSaltItems: StreamItem[],
+  byLanguage?: Record<string, unknown>
+): StreamItem[] {
   const list: StreamItem[] = [];
   const usedUrls = new Set<string>();
 
+  /** Extract embed/hls sources from byLanguage for a given language code */
+  function getByLangSources(langCode: string): TokoSource[] {
+    if (!byLanguage) return [];
+    const entry = byLanguage[langCode] as { sources?: TokoSource[] } | undefined;
+    return entry?.sources ?? [];
+  }
+
   function add(item: StreamItem | null | undefined, label: string) {
-    if (!item || !item.embed) return;
-    if (usedUrls.has(item.embed)) return;
-    usedUrls.add(item.embed);
-    list.push({
-      ...item,
-      server: "",
-      label,
-    });
+    if (!item) return;
+    const key = item.embed || item.url || "";
+    if (!key) return;
+    if (usedUrls.has(key)) return;
+    usedUrls.add(key);
+    list.push({ ...item, server: "", label });
   }
 
-  // 1. Server 1 = Toko Hindi Dub direct HLS
-  const s1Toko = rawSources.find((s) => !isBlockedSource(s) && isHindi(s) && isDirect(s));
-  if (s1Toko) {
-    add(buildTokoItem(s1Toko), "Server 1 · 🇮🇳 Hindi Dub HLS");
+  // ── Slot 1: Hindi Dub direct HLS (Toko) ──────────────────────────────────
+  const s1 = rawSources.find((s) => !isBlockedSource(s) && isHindi(s) && isDirect(s));
+  if (s1) add(buildTokoItem(s1), "Server 1 · 🇮🇳 Hindi Dub HLS ⚡");
+
+  // ── Slot 2: MyStream (ravok.buzz) — AnimeSalt first, then Toko byLanguage ──
+  // Try AnimeSalt iframe embed (ravok.buzz / mystream)
+  const saltMyStream = animeSaltItems.find(
+    (s) => !isBlockedSource({ url: s.embed } as TokoSource) &&
+      (s.embed.includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream"))
+  );
+  if (saltMyStream) {
+    add(saltMyStream, "Server 2 · 🇮🇳 MyStream");
+  } else {
+    // Fallback: find ravok.buzz in Toko rawSources (it's listed there as a Hindi embed)
+    const tokoMyStream = rawSources.find(
+      (s) => !isBlockedSource(s) && (s.url || "").includes("ravok.buzz") && !usedUrls.has(s.url || "")
+    );
+    if (tokoMyStream) {
+      const item = buildTokoItem(tokoMyStream);
+      // ravok.buzz is an embed (not direct HLS) — override type
+      add({ ...item, type: "embed", adFree: false, url: undefined }, "Server 2 · 🇮🇳 MyStream");
+    }
   }
 
-  // 2. Server 2 = AnimeSalt MyStream (or AnimeSalt Hindi Abyss)
-  const saltMyStream = animeSaltItems.find((s) => !isBlockedSource({ url: s.embed } as TokoSource) && (s.embed.includes("ravok.buzz") || (s.label || "").includes("MyStream")));
-  const saltHindiAbyss = animeSaltItems.find((s) => !isBlockedSource({ url: s.embed } as TokoSource) && s.audioLanguage === "hi");
-  const s2Salt = saltMyStream || saltHindiAbyss;
-  if (s2Salt) {
-    add(s2Salt, "Server 2 · 🇮🇳 MyStream");
+  // ── Slot 3: Toko Hindi Dub embed #1 (cloudy.upns.one / abyssplayer) ───────
+  const s3 = rawSources.find(
+    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
+  );
+  if (s3) add(buildTokoItem(s3), "Server 3 · 🇮🇳 Hindi Dub (Toko)");
+
+  // ── Slot 4: Toko Hindi Dub embed #2 ─────────────────────────────────────
+  const s4 = rawSources.find(
+    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
+  );
+  if (s4) {
+    add(buildTokoItem(s4), "Server 4 · 🇮🇳 Hindi Dub (Toko Alt)");
+  } else {
+    const saltHindi = animeSaltItems.find((s) => s.audioLanguage === "hi" && !usedUrls.has(s.embed));
+    if (saltHindi) add(saltHindi, "Server 4 · 🇮🇳 Hindi Dub (Abyss)");
   }
 
-  // 3. Server 3 = Toko Hindi Dub Embed #1
-  const s3Toko = rawSources.find((s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || ""));
-  if (s3Toko) {
-    add(buildTokoItem(s3Toko), "Server 3 · 🇮🇳 Hindi Dub (Toko)");
-  }
-
-  // 4. Server 4 = Toko Hindi Dub Embed #2 (or fallback Abyss Hindi)
-  const s4Toko = rawSources.find((s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || ""));
-  if (s4Toko) {
-    add(buildTokoItem(s4Toko), "Server 4 · 🇮🇳 Hindi Dub (Toko Alt)");
-  } else if (saltHindiAbyss && !usedUrls.has(saltHindiAbyss.embed)) {
-    add(saltHindiAbyss, "Server 4 · 🇮🇳 Hindi Dub (Abyss)");
-  }
-
-  // 5. Server 5 = Tamil
+  // ── Slot 5: Tamil — AnimeSalt > Toko byLanguage[ta] > rawSources ─────────
   const s5Salt = animeSaltItems.find((s) => isTamil(s) && !usedUrls.has(s.embed));
-  const s5Toko = rawSources.find((s) => !isBlockedSource(s) && isTamil(s) && !usedUrls.has(s.url || ""));
   if (s5Salt) {
-    add(s5Salt, "Server 5 · 🌐 Tamil");
-  } else if (s5Toko) {
-    add(buildTokoItem(s5Toko), "Server 5 · 🌐 Tamil");
+    add(s5Salt, "Server 5 · 🌐 Tamil (Abyss)");
+  } else {
+    const s5By = getByLangSources("ta").find((s) => !isBlockedSource(s) && !usedUrls.has(s.url || ""));
+    const s5Raw = rawSources.find((s) => !isBlockedSource(s) && isTamil(s) && !usedUrls.has(s.url || ""));
+    const s5 = s5By || s5Raw;
+    if (s5) add(buildTokoItem(s5), "Server 5 · 🌐 Tamil/Abyss");
   }
 
-  // 6. Server 6 = Telugu
+  // ── Slot 6: Telugu — AnimeSalt > Toko byLanguage[te] > rawSources ────────
   const s6Salt = animeSaltItems.find((s) => isTelugu(s) && !usedUrls.has(s.embed));
-  const s6Toko = rawSources.find((s) => !isBlockedSource(s) && isTelugu(s) && !usedUrls.has(s.url || ""));
   if (s6Salt) {
-    add(s6Salt, "Server 6 · 🌐 Telugu");
-  } else if (s6Toko) {
-    add(buildTokoItem(s6Toko), "Server 6 · 🌐 Telugu");
+    add(s6Salt, "Server 6 · 🌐 Telugu (Abyss)");
+  } else {
+    const s6By = getByLangSources("te").find((s) => !isBlockedSource(s) && !usedUrls.has(s.url || ""));
+    const s6Raw = rawSources.find((s) => !isBlockedSource(s) && isTelugu(s) && !usedUrls.has(s.url || ""));
+    const s6 = s6By || s6Raw;
+    if (s6) add(buildTokoItem(s6), "Server 6 · 🌐 Telugu/Abyss");
   }
 
-  // 7. Server 7 = English
+  // ── Slot 7: English — AnimeSalt > Toko byLanguage[en] > rawSources ───────
   const s7Salt = animeSaltItems.find((s) => isEnglish(s) && !usedUrls.has(s.embed));
-  const s7Toko = rawSources.find((s) => !isBlockedSource(s) && isEnglish(s) && !usedUrls.has(s.url || ""));
   if (s7Salt) {
     add(s7Salt, "Server 7 · 🇬🇧 English");
-  } else if (s7Toko) {
-    add(buildTokoItem(s7Toko), "Server 7 · 🇬🇧 English");
+  } else {
+    const s7By = getByLangSources("en").find(
+      (s) => !isBlockedSource(s) && !usedUrls.has(s.url || "") && !isHindi(s)
+    );
+    const s7Raw = rawSources.find(
+      (s) => !isBlockedSource(s) && isEnglish(s) && !isHindi(s) && !usedUrls.has(s.url || "")
+    );
+    const s7 = s7By || s7Raw;
+    if (s7) add(buildTokoItem(s7), "Server 7 · 🇬🇧 English/Abyss");
   }
 
-  // 8. Server 8 = Japanese HLS #1
-  const s8Toko = rawSources.find((s) => !isBlockedSource(s) && isJapanese(s) && isDirect(s) && !usedUrls.has(s.url || ""));
-  if (s8Toko) {
-    add(buildTokoItem(s8Toko), "Server 8 · 🇯🇵 Japanese HLS");
-  }
+  // ── Slot 8: Japanese HLS ⚡ (Toko direct) ─────────────────────────────────
+  const s8 = rawSources.find(
+    (s) => !isBlockedSource(s) && isJapanese(s) && isDirect(s) && !usedUrls.has(s.url || "")
+  );
+  if (s8) add(buildTokoItem(s8), "Server 8 · 🇯🇵 Japanese HLS ⚡");
 
-  // 9. Server 9 = Japanese HLS #2 (Alt)
-  const s9Toko = rawSources.find((s) => !isBlockedSource(s) && isJapanese(s) && isDirect(s) && !usedUrls.has(s.url || ""));
+  // ── Slot 9: Japanese embed (Abyss / AnimeSalt) ────────────────────────────
   const s9Salt = animeSaltItems.find((s) => isJapanese(s) && !usedUrls.has(s.embed));
-  if (s9Toko) {
-    add(buildTokoItem(s9Toko), "Server 9 · 🇯🇵 Japanese HLS (Alt)");
-  } else if (s9Salt) {
+  const s9Toko = rawSources.find(
+    (s) => !isBlockedSource(s) && isJapanese(s) && !isDirect(s) && !usedUrls.has(s.url || "")
+  );
+  if (s9Salt) {
     add(s9Salt, "Server 9 · 🇯🇵 Japanese (Abyss)");
+  } else if (s9Toko) {
+    add(buildTokoItem(s9Toko), "Server 9 · 🇯🇵 Japanese");
+  } else {
+    // Fallback: any Japanese source from byLanguage
+    const s9By = getByLangSources("ja").find((s) => !isBlockedSource(s) && !usedUrls.has(s.url || ""));
+    if (s9By) add(buildTokoItem(s9By), "Server 9 · 🇯🇵 Japanese (Abyss)");
   }
 
-  // Fill remaining slots up to 9 with any remaining valid sources
-  if (list.length < 9) {
-    for (const s of rawSources) {
-      if (list.length >= 9) break;
-      if (isBlockedSource(s) || !s.url || usedUrls.has(s.url) || !isValidStreamUrl(s.url)) continue;
-      add(buildTokoItem(s), `Server · ${s.languageLabel || s.language || "Mirror"}`);
-    }
-  }
-  if (list.length < 9) {
-    for (const s of animeSaltItems) {
-      if (list.length >= 9) break;
-      if (usedUrls.has(s.embed)) continue;
-      add(s, `Server · ${s.label || "Mirror"}`);
-    }
-  }
-
-  // Clean sequential renumbering: Server 1, Server 2, ..., Server N
+  // Sequential renumber: Server 1, Server 2, ..., Server N (no gap filling)
   return list.map((item, idx) => {
     const num = idx + 1;
     const cleanLabel = (item.label || "").replace(/^Server(?:\s+\d+)?\s*·?\s*/, "");
@@ -510,7 +532,7 @@ export async function GET(request: Request) {
     fetchAnimeSaltSources(cleanId, season, ep),
   ]);
 
-  const finalResults = assembleServers(tokoRaw, animeSaltItems);
+  const finalResults = assembleServers(tokoRaw, animeSaltItems, byLanguage);
 
   if (finalResults.length > 0) {
     return NextResponse.json(
