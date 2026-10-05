@@ -1912,8 +1912,15 @@ export async function fetchAniListMeta(
     ).length;
     const computedSeasons = Math.max(1 + sequelCount, 1);
 
+    // Prefer English title UNLESS it is all-caps (e.g. AniList stores "JUJUTSU KAISEN")
+    // In that case, use romaji which is always properly cased (e.g. "Jujutsu Kaisen")
+    const englishTitle = m.title?.english || "";
+    const romajiTitle  = m.title?.romaji  || "";
+    const isAllCaps = englishTitle.length > 0 && englishTitle === englishTitle.toUpperCase();
+    const resolvedTitle = (isAllCaps ? (romajiTitle || englishTitle) : (englishTitle || romajiTitle)) || clean;
+
     return {
-      title: m.title?.english || m.title?.romaji || clean,
+      title: resolvedTitle,
       anime_id: slugOrTitle,
       poster,
       backdrop,

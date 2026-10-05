@@ -519,7 +519,15 @@ async function fetchAnimeSaltSources(
           }
         }
 
-        if (cfItems.length > 0) {
+        // Only accept these results as a complete AnimeSalt fetch if they include
+        // both a MyStream (ravok.buzz) embed AND at least 2 Abyss (abyssplayer)
+        // items. When Vercel gets only a partial response from the CF Worker
+        // (e.g. a single Toko byLanguage Hindi embed that happens to match the
+        // abyssplayer.com filter), we fall through to direct CF proxy scraping
+        // of animesalt.cx which consistently works on production.
+        const hasMyStream = cfItems.some((i) => i.embed.includes("ravok.buzz"));
+        const abyssCount  = cfItems.filter((i) => i.embed.includes("abyssplayer.com")).length;
+        if (hasMyStream || abyssCount >= 2) {
           return cfItems;
         }
       }
