@@ -647,7 +647,14 @@ export async function GET(request: Request) {
 
   if (finalResults.length > 0) {
     return NextResponse.json(
-      { success: true, message: "Stream Found!!", results: finalResults, byLanguage },
+      {
+        success: true,
+        message: "Stream Found!!",
+        version: "v2-cf-animesalt",
+        saltCount: animeSaltItems.length,
+        results: finalResults,
+        byLanguage,
+      },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   }
