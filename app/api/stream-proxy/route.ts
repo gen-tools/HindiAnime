@@ -379,6 +379,16 @@ async function fetchAnimeSaltSources(
     const fetchUrls = [proxyUrl, targetUrl];
 
     for (const urlToFetch of fetchUrls) {
+      const attemptType = urlToFetch === proxyUrl ? "Worker" : "Direct";
+      const target = new URL(targetUrl);
+      const targetHostPath = `${target.hostname}${target.pathname}`;
+      let httpStatus: number | null = null;
+      let contentType: string | null = null;
+      let responseBodyLength: number | null = null;
+      let passedResponseChecks = false;
+      let parserResultCount = 0;
+      let caughtError: string | null = null;
+
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 6000);
@@ -391,9 +401,12 @@ async function fetchAnimeSaltSources(
           },
         });
         clearTimeout(timer);
-        if (!res.ok) continue;
+        httpStatus = res.status;
+        contentType = res.headers.get("content-type");
         const html = await res.text();
-        if (!html || html.length < 1000 || html.includes("404 Not Found") || isCloudflareChallenge(html)) continue;
+        responseBodyLength = html.length;
+        passedResponseChecks = res.ok && html.length >= 1000 && !html.includes("404 Not Found") && !isCloudflareChallenge(html);
+        if (!passedResponseChecks) continue;
 
         const items: StreamItem[] = [];
         const usedUrls = new Set<string>();
@@ -424,7 +437,9 @@ async function fetchAnimeSaltSources(
                 }
               }
             }
-          } catch { /* ignore */ }
+          } catch (err) {
+            caughtError = err instanceof Error ? err.message : String(err);
+          }
         }
 
         // 2. Look for iframe embeds (e.g. ravok.buzz / mystream)
@@ -447,11 +462,24 @@ async function fetchAnimeSaltSources(
           }
         }
 
+        parserResultCount = items.length;
         if (items.length > 0) {
           return items;
         }
-      } catch {
+      } catch (err) {
+        caughtError = err instanceof Error ? err.message : String(err);
         // try next fetchUrl or candidate
+      } finally {
+        console.info("[AnimeSalt attempt]", {
+          attemptType,
+          targetHostPath,
+          httpStatus,
+          contentType,
+          responseBodyLength,
+          passedResponseChecks,
+          parserResultCount,
+          caughtError,
+        });
       }
     }
   }
