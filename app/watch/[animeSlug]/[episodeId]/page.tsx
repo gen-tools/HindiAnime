@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { EpisodeNavigation } from "@/components/episodes/EpisodeNavigation";
@@ -237,9 +238,10 @@ export default async function WatchPage({
   const cleanSlug = cleanAnimeSlug(rawSlug) || rawSlug;
   const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
 
-  const epMatch = episodeId.match(/ep-(\d+)-(\d+)/);
-  const seasonNumber = epMatch ? parseInt(epMatch[1], 10) || 1 : 1;
-  const episodeNumber = epMatch ? parseInt(epMatch[2], 10) || 1 : 1;
+  const epMatch = episodeId.match(/^ep-(\d+)-(\d+)$/);
+  if (!epMatch) notFound();
+  const seasonNumber = parseInt(epMatch[1], 10) || 1;
+  const episodeNumber = parseInt(epMatch[2], 10) || 1;
 
   // ── 1. Resolve anime metadata & episodes concurrently ──────────────────────
   const [apiInfo, movieInfo, searchRes, discoveredSeasons, directData, epApiRes, homepageFeed] = await Promise.all([
@@ -448,33 +450,32 @@ export default async function WatchPage({
   }
 
   // ── 3. Find current active episode ─────────────────────────────────────────
-  let currentIndex = episodes.findIndex((e) => e.id === episodeId);
-  if (currentIndex === -1) {
-    currentIndex = episodes.findIndex((e) => e.number === episodeNumber);
-  }
-  if (currentIndex === -1 && episodes.length > 0) {
-    currentIndex = 0;
-  }
+  const requestedEpisodeId = `ep-${seasonNumber}-${episodeNumber}`;
+  const currentIndex = episodes.findIndex(
+    (e) =>
+      e.id === requestedEpisodeId &&
+      e.animeSlug === cleanSlug &&
+      e.season === seasonNumber &&
+      e.number === episodeNumber
+  );
 
-  let episode = episodes[currentIndex];
-  if (!episode) {
-    episode = episodes[0] || {
-      id: episodeId,
-      animeSlug: anime.slug,
+  const episode: Episode =
+    (currentIndex >= 0 ? episodes[currentIndex] : undefined) || {
+      id: requestedEpisodeId,
+      animeSlug: cleanSlug,
       animeTitle: anime.title,
       animePoster: anime.poster,
       season: seasonNumber,
       number: episodeNumber,
       title: isMovie ? "Full Movie" : `Episode ${episodeNumber}`,
       thumbnail: anime.poster,
-      durationMinutes: 24,
+      durationMinutes: isMovie ? 110 : 24,
       languages: anime.languages,
       releasedAt: new Date().toISOString().split("T")[0],
     };
-  }
 
-  const prevEpisode = episodes[currentIndex - 1];
-  const nextEpisode = episodes[currentIndex + 1];
+  const prevEpisode = currentIndex > 0 ? episodes[currentIndex - 1] : undefined;
+  const nextEpisode = currentIndex >= 0 ? episodes[currentIndex + 1] : undefined;
 
   const episodeTitle = isMovie
     ? `${anime.title} — Full Movie`
@@ -616,6 +617,7 @@ export default async function WatchPage({
       />
 
       <StreamPlayer
+        key={`${anime.slug}:s${episode.season}:e${episode.number}`}
         animeSlug={anime.slug}
         season={episode.season}
         episode={episode.number}

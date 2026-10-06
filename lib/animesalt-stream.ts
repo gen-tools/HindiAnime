@@ -13,7 +13,6 @@ export function buildAnimeSaltEpisodeCandidates(
   return [
     `https://animesalt.cx/episode/${baseSlug}-${sNum}x${epNum}/`,
     `https://animesalt.cx/episode/${slug}-${sNum}x${epNum}/`,
-    `https://animesalt.cx/episode/${baseSlug}-${epNum}/`,
   ];
 }
 

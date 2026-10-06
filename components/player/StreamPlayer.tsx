@@ -94,13 +94,15 @@ const CF_STREAM_URL = `${CF_WORKER_BASE}/stream`;
 async function fetchAnimeSaltHtml(
   slug: string,
   season: number,
-  episode: number
+  episode: number,
+  signal: AbortSignal
 ): Promise<{ targetUrl: string; html: string } | null> {
   const cleanId = cleanAnimeSlug(slug) || slug;
   for (const targetUrl of buildAnimeSaltEpisodeCandidates(cleanId, season, episode)) {
     try {
       const response = await fetch(`${CF_GENERAL_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`, {
         cache: "no-store",
+        signal,
       });
       if (!response.ok) continue;
       const html = await response.text();
@@ -108,6 +110,7 @@ async function fetchAnimeSaltHtml(
         return { targetUrl, html };
       }
     } catch {
+      if (signal.aborted) return null;
       // Try the next existing AnimeSalt episode URL candidate.
     }
   }
@@ -128,6 +131,12 @@ export function StreamPlayer({
   episodeTitle: string;
   languages?: string[];
 }) {
+  const playbackIdentity = `${animeSlug}:s${season}:e${episode}`;
+  const playbackIdentityRef = useRef(playbackIdentity);
+  playbackIdentityRef.current = playbackIdentity;
+  const requestGenerationRef = useRef(0);
+  const requestControllerRef = useRef<AbortController | null>(null);
+
   const [state, setState] = useState<PlayerState>("loading");
   const [servers, setServers] = useState<ValidServer[]>([]);
   const [activeServer, setActiveServer] = useState<ValidServer | null>(null);
@@ -195,6 +204,16 @@ export function StreamPlayer({
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchStreams = useCallback(async (isRetry = false) => {
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+    const requestGeneration = ++requestGenerationRef.current;
+    const requestIdentity = playbackIdentity;
+    const isCurrentRequest = () =>
+      !controller.signal.aborted &&
+      requestGenerationRef.current === requestGeneration &&
+      playbackIdentityRef.current === requestIdentity;
+
     if (!isRetry) {
       setState("loading");
       setServers([]);
@@ -206,11 +225,15 @@ export function StreamPlayer({
     try {
       let data: { results?: unknown[] } | null = null;
 
-      const animeSalt = await fetchAnimeSaltHtml(animeSlug, season, episode);
+      const animeSalt = await fetchAnimeSaltHtml(animeSlug, season, episode, controller.signal);
+      if (!isCurrentRequest()) return;
+
       try {
         const res = await fetch("/api/stream-proxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          signal: controller.signal,
           body: JSON.stringify({
             id: animeSlug,
             season,
@@ -219,15 +242,61 @@ export function StreamPlayer({
             animeSaltHtml: animeSalt?.html ?? null,
           }),
         });
-        if (res.ok) {
-          const json = await res.json();
-          if (Array.isArray(json?.results) && json.results.length > 0) data = json;
+        if (!isCurrentRequest()) return;
+        if (res.ok && res.body) {
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let pending = "";
+          let latestResults: unknown[] = [];
+
+          const applyUpdate = (update: { results?: unknown[]; complete?: boolean }) => {
+            if (!isCurrentRequest() || !Array.isArray(update.results)) return;
+            const parsed = parseServers(update.results as StreamItem[]);
+            if (parsed.length === 0) return;
+            latestResults = update.results;
+            data = { results: update.results };
+            const currentEmbed = activeServerRef.current?.embed;
+            const stillAvailable = currentEmbed
+              ? parsed.find((server) => server.embed === currentEmbed)
+              : undefined;
+            setServers(parsed);
+            setActiveServer(stillAvailable || parsed[0]);
+            setState("ready");
+          };
+
+          const consumeLine = (line: string) => {
+            if (!line.trim()) return;
+            const update = JSON.parse(line) as { results?: unknown[]; complete?: boolean };
+            applyUpdate(update);
+          };
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (!isCurrentRequest()) {
+              await reader.cancel();
+              return;
+            }
+            pending += decoder.decode(value, { stream: !done });
+            const lines = pending.split("\n");
+            pending = lines.pop() || "";
+            for (const line of lines) consumeLine(line);
+            if (done) break;
+          }
+          if (pending.trim()) consumeLine(pending);
+          if (latestResults.length > 0) {
+            data = { results: latestResults };
+          }
         }
       } catch { /* try the existing Worker stream fallback below */ }
 
+      if (!isCurrentRequest()) return;
       if (!data) {
         try {
-          const res = await fetch(`${CF_STREAM_URL}${qs}`);
+          const res = await fetch(`${CF_STREAM_URL}${qs}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!isCurrentRequest()) return;
           if (res.ok) {
             const json = await res.json();
             if (Array.isArray(json?.results) && json.results.length > 0) data = json;
@@ -235,33 +304,49 @@ export function StreamPlayer({
         } catch { /* try next endpoint */ }
       }
 
+      if (!isCurrentRequest()) return;
       const parsed = parseServers((data?.results ?? []) as import("@/types/api").StreamItem[]);
       if (parsed.length === 0) {
         if (!isRetry) {
-          retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
+          retryTimerRef.current = setTimeout(() => {
+            if (isCurrentRequest()) void fetchStreams(true);
+          }, 1500);
           return;
         }
         setState("unavailable");
       } else {
+        const currentEmbed = activeServerRef.current?.embed;
+        const stillAvailable = currentEmbed
+          ? parsed.find((server) => server.embed === currentEmbed)
+          : undefined;
         setServers(parsed);
-        setActiveServer(parsed[0]);
+        setActiveServer(stillAvailable || parsed[0]);
         setState("ready");
       }
-    } catch {
+    } catch (error) {
+      if (!isCurrentRequest()) return;
+      if (error instanceof DOMException && error.name === "AbortError") return;
       if (!isRetry) {
-        retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
+        retryTimerRef.current = setTimeout(() => {
+          if (isCurrentRequest()) void fetchStreams(true);
+        }, 1500);
         return;
       }
       setState("error");
+    } finally {
+      if (requestControllerRef.current === controller) requestControllerRef.current = null;
     }
-  }, [animeSlug, season, episode]);
+  }, [animeSlug, season, episode, playbackIdentity]);
 
 
   useEffect(() => {
-    const t = window.setTimeout(() => fetchStreams(false), 0);
+    const t = window.setTimeout(() => { void fetchStreams(false); }, 0);
     return () => {
       window.clearTimeout(t);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      requestGenerationRef.current += 1;
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
     };
   }, [fetchStreams]);
 
