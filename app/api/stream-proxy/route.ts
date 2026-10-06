@@ -374,7 +374,7 @@ async function fetchAnimeSaltSources(
 
   // Retrieve AnimeSalt through the general Worker proxy, then use the existing direct fallback.
   for (const targetUrl of candidates) {
-    const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}`;
+    const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`;
     // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
     const fetchUrls = [proxyUrl, targetUrl];
 
