@@ -398,6 +398,7 @@ async function fetchAnimeSaltSources(
           headers: {
             ...DEFAULT_HEADERS,
             Accept: "text/html",
+            ...(attemptType === "Worker" ? { Origin: "https://hindianime-seven.vercel.app" } : {}),
           },
         });
         clearTimeout(timer);
