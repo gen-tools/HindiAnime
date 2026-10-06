@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
+import { buildAnimeSaltEpisodeCandidates, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
 
 // Stream links are dynamic and short-lived
@@ -337,49 +338,29 @@ function assembleServers(
   return list;
 }
 
-function isCloudflareChallenge(text: string): boolean {
-  return (
-    text.includes("Just a moment...") ||
-    text.includes("cf-chl-widget") ||
-    text.includes("challenge-platform") ||
-    text.includes("cf-browser-verification") ||
-    text.includes("Attention Required! | Cloudflare") ||
-    text.includes("enable-javascript") ||
-    text.includes("security check")
-  );
-}
-
 /**
- * Fetch streaming embed sources directly from AnimeSalt (animesalt.cx).
+ * Parse streaming embed sources from AnimeSalt HTML, fetched either by the
+ * existing Worker request (GET) or by the browser through that same Worker (POST).
  * Extracts AbyssPlayer multi-language embeds (Hindi, Japanese, English, etc.)
  * and direct video iframes (MyStream / ravok.buzz).
  */
 async function fetchAnimeSaltSources(
   slug: string,
   season: string,
-  episode: string
+  episode: string,
+  browserResult?: { targetUrl: string; html: string } | null
 ): Promise<StreamItem[]> {
-  const sNum = parseInt(season, 10) || 1;
-  const epNum = parseInt(episode, 10) || 1;
-  const baseSlug = slug
-    .replace(/-season-\d+$/i, "")
-    .replace(/-s\d+$/i, "")
-    .replace(/-\d+(st|nd|rd|th)-season$/i, "");
-
-  const candidates = [
-    `https://animesalt.cx/episode/${baseSlug}-${sNum}x${epNum}/`,
-    `https://animesalt.cx/episode/${slug}-${sNum}x${epNum}/`,
-    `https://animesalt.cx/episode/${baseSlug}-${epNum}/`,
-  ];
+  const candidates = buildAnimeSaltEpisodeCandidates(slug, season, episode);
+  if (browserResult && !candidates.includes(browserResult.targetUrl)) return [];
 
   // Retrieve AnimeSalt through the general Worker proxy.
-  for (const targetUrl of candidates) {
+  for (const targetUrl of browserResult ? [browserResult.targetUrl] : candidates) {
     const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`;
     // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
-    const fetchUrls = [proxyUrl];
+    const fetchUrls: Array<string | null> = browserResult ? [null] : [proxyUrl];
 
     for (const urlToFetch of fetchUrls) {
-      const attemptType = urlToFetch === proxyUrl ? "Worker" : "Direct";
+      const attemptType = browserResult ? "Browser Worker" : "Worker";
       const target = new URL(targetUrl);
       const targetHostPath = `${target.hostname}${target.pathname}`;
       let httpStatus: number | null = null;
@@ -390,23 +371,32 @@ async function fetchAnimeSaltSources(
       let caughtError: string | null = null;
 
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(urlToFetch, {
-          signal: controller.signal,
-          cache: "no-store",
-          headers: {
-            ...DEFAULT_HEADERS,
-            Accept: "text/html",
-            ...(attemptType === "Worker" ? { Origin: "https://hindianime-seven.vercel.app" } : {}),
-          },
-        });
-        clearTimeout(timer);
-        httpStatus = res.status;
-        contentType = res.headers.get("content-type");
-        const html = await res.text();
+        let html: string;
+        let responseOk = true;
+        if (browserResult) {
+          httpStatus = 200;
+          contentType = "text/html";
+          html = browserResult.html;
+        } else {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(urlToFetch!, {
+            signal: controller.signal,
+            cache: "no-store",
+            headers: {
+              ...DEFAULT_HEADERS,
+              Accept: "text/html",
+              Origin: "https://hindianime-seven.vercel.app",
+            },
+          });
+          clearTimeout(timer);
+          httpStatus = res.status;
+          responseOk = res.ok;
+          contentType = res.headers.get("content-type");
+          html = await res.text();
+        }
         responseBodyLength = html.length;
-        passedResponseChecks = res.ok && html.length >= 1000 && !html.includes("404 Not Found") && !isCloudflareChallenge(html);
+        passedResponseChecks = responseOk && isValidAnimeSaltHtml(html);
         if (!passedResponseChecks) continue;
 
         const items: StreamItem[] = [];
@@ -487,6 +477,46 @@ async function fetchAnimeSaltSources(
   return [];
 }
 
+async function buildStreamResponse(
+  cleanId: string,
+  season: string,
+  ep: string,
+  browserResult?: { targetUrl: string; html: string } | null
+) {
+  const [{ rawSources: tokoRaw, byLanguage }, animeSaltItems] = await Promise.all([
+    fetchTokoSources(cleanId, season, ep),
+    browserResult === undefined
+      ? fetchAnimeSaltSources(cleanId, season, ep)
+      : browserResult === null
+        ? Promise.resolve([])
+        : fetchAnimeSaltSources(cleanId, season, ep, browserResult),
+  ]);
+
+  const finalResults = assembleServers(tokoRaw, animeSaltItems);
+
+  if (finalResults.length > 0) {
+    return NextResponse.json(
+      {
+        success: true,
+        message: "Stream Found!!",
+        version: "v2-cf-animesalt",
+        saltCount: animeSaltItems.length,
+        results: finalResults,
+        byLanguage,
+      },
+      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
+    );
+  }
+
+  return NextResponse.json(
+    { success: false, message: "No valid streams found", results: [], saltCount: 0 },
+    {
+      status: 404,
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+    }
+  );
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
@@ -511,33 +541,48 @@ export async function GET(request: Request) {
 
   const cleanId = cleanAnimeSlug(decodedId) || decodedId;
 
-  // Fetch Toko sources and AnimeSalt sources in parallel
-  const [{ rawSources: tokoRaw, byLanguage }, animeSaltItems] = await Promise.all([
-    fetchTokoSources(cleanId, season, ep),
-    fetchAnimeSaltSources(cleanId, season, ep),
-  ]);
+  return buildStreamResponse(cleanId, season, ep);
+}
 
-  const finalResults = assembleServers(tokoRaw, animeSaltItems);
-
-  if (finalResults.length > 0) {
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Stream Found!!",
-        version: "v2-cf-animesalt",
-        saltCount: animeSaltItems.length,
-        results: finalResults,
-        byLanguage,
-      },
-      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
-    );
+export async function POST(request: Request) {
+  const contentLength = Number(request.headers.get("content-length") || 0);
+  if (contentLength > 512 * 1024) {
+    return NextResponse.json({ success: false, message: "AnimeSalt response is too large" }, { status: 413 });
   }
 
-  return NextResponse.json(
-    { success: false, message: "No valid streams found", results: [] },
-    {
-      status: 404,
-      headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return NextResponse.json({ success: false, message: "Invalid JSON body" }, { status: 400 });
+  }
+  if (!payload || typeof payload !== "object") {
+    return NextResponse.json({ success: false, message: "Invalid request body" }, { status: 400 });
+  }
+
+  const body = payload as Record<string, unknown>;
+  const id = typeof body.id === "string" ? body.id : "";
+  if (!id) {
+    return NextResponse.json({ success: false, message: "Missing required parameter: id" }, { status: 400 });
+  }
+  const season = String(body.season ?? "1");
+  const ep = String(body.ep ?? "1");
+  const cleanId = cleanAnimeSlug(id) || id;
+
+  let browserResult: { targetUrl: string; html: string } | null = null;
+  if (body.animeSaltHtml !== undefined && body.animeSaltHtml !== null) {
+    const targetUrl = typeof body.animeSaltTargetUrl === "string" ? body.animeSaltTargetUrl : "";
+    const html = typeof body.animeSaltHtml === "string" ? body.animeSaltHtml : "";
+    const byteLength = new TextEncoder().encode(html).byteLength;
+    if (
+      !buildAnimeSaltEpisodeCandidates(cleanId, season, ep).includes(targetUrl) ||
+      byteLength > 512 * 1024 ||
+      !isValidAnimeSaltHtml(html)
+    ) {
+      return NextResponse.json({ success: false, message: "Invalid AnimeSalt response" }, { status: 400 });
     }
-  );
+    browserResult = { targetUrl, html };
+  }
+
+  return buildStreamResponse(cleanId, season, ep, browserResult);
 }

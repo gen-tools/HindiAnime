@@ -13,7 +13,8 @@ import {
   RectangleHorizontal,
 } from "lucide-react";
 import { StreamItem } from "@/types/api";
-import { isValidEmbedUrl } from "@/lib/api/client";
+import { cleanAnimeSlug, isValidEmbedUrl } from "@/lib/api/client";
+import { buildAnimeSaltEpisodeCandidates, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -87,7 +88,31 @@ const CF_WORKER_BASE = (
   .replace(/\/\?url=$/, "")
   .replace(/\?url=$/, "")
   .replace(/\/$/, "");
+const CF_GENERAL_PROXY_URL = `${CF_WORKER_BASE}/?url=`;
 const CF_STREAM_URL = `${CF_WORKER_BASE}/stream`;
+
+async function fetchAnimeSaltHtml(
+  slug: string,
+  season: number,
+  episode: number
+): Promise<{ targetUrl: string; html: string } | null> {
+  const cleanId = cleanAnimeSlug(slug) || slug;
+  for (const targetUrl of buildAnimeSaltEpisodeCandidates(cleanId, season, episode)) {
+    try {
+      const response = await fetch(`${CF_GENERAL_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`, {
+        cache: "no-store",
+      });
+      if (!response.ok) continue;
+      const html = await response.text();
+      if (html.length <= 512 * 1024 && isValidAnimeSaltHtml(html)) {
+        return { targetUrl, html };
+      }
+    } catch {
+      // Try the next existing AnimeSalt episode URL candidate.
+    }
+  }
+  return null;
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -178,22 +203,34 @@ export function StreamPlayer({
 
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
 
-    // Query our own /api/stream-proxy first for instant, identical servers on both localhost and production.
-    // Fall back to the Cloudflare Worker stream endpoint if /api/stream-proxy fails.
-    const endpoints = [`/api/stream-proxy${qs}`, `${CF_STREAM_URL}${qs}`];
-
     try {
       let data: { results?: unknown[] } | null = null;
 
-      for (const endpoint of endpoints) {
+      const animeSalt = await fetchAnimeSaltHtml(animeSlug, season, episode);
+      try {
+        const res = await fetch("/api/stream-proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: animeSlug,
+            season,
+            ep: episode,
+            animeSaltTargetUrl: animeSalt?.targetUrl ?? null,
+            animeSaltHtml: animeSalt?.html ?? null,
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json?.results) && json.results.length > 0) data = json;
+        }
+      } catch { /* try the existing Worker stream fallback below */ }
+
+      if (!data) {
         try {
-          const res = await fetch(endpoint);
+          const res = await fetch(`${CF_STREAM_URL}${qs}`);
           if (res.ok) {
             const json = await res.json();
-            if (Array.isArray(json?.results) && json.results.length > 0) {
-              data = json;
-              break;
-            }
+            if (Array.isArray(json?.results) && json.results.length > 0) data = json;
           }
         } catch { /* try next endpoint */ }
       }
