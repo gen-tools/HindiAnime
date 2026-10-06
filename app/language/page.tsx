@@ -16,7 +16,7 @@ import type { LanguageCode } from "@/types/language";
 export const metadata: Metadata = {
   title: "Browse Anime by Language | Hindi, Tamil, Telugu & More",
   description:
-    "Explore anime dubbed and subtitled in Hindi, Tamil, Telugu, English, Japanese, Malayalam, Kannada, Bengali, Marathi, and Korean.",
+    "Explore anime dubbed and subtitled in Hindi, Tamil, Telugu, English, Japanese, Marathi, and Korean.",
 };
 
 const languageDetails: Record<
@@ -65,27 +65,6 @@ const languageDetails: Record<
     subCount: "90%",
     flag: "🇰🇷",
   },
-  malayalam: {
-    native: "മലയാളം",
-    description: "Malayalam dubbed anime and subtitle options for South Indian anime fans.",
-    dubCount: "70%",
-    subCount: "85%",
-    flag: "🇮🇳",
-  },
-  kannada: {
-    native: "ಕನ್ನಡ",
-    description: "Kannada audio dubs and localized subtitles for popular anime titles.",
-    dubCount: "70%",
-    subCount: "85%",
-    flag: "🇮🇳",
-  },
-  bengali: {
-    native: "বাংলা",
-    description: "Bengali translated subtitles and dubbed episodes for Eastern India fans.",
-    dubCount: "65%",
-    subCount: "85%",
-    flag: "🇮🇳",
-  },
   marathi: {
     native: "मराठी",
     description: "Marathi dubbed anime movies and television broadcasts.",
@@ -106,7 +85,7 @@ export default async function LanguagesDirectoryPage() {
   const hindiAnime = getAnimeByLanguage("hindi").slice(0, 6);
   const regionalAnime = browseItems
     .filter((a) =>
-      a.languages.some((l) => ["tamil", "telugu", "malayalam", "kannada", "bengali", "marathi"].includes(l))
+      a.languages.some((l) => ["tamil", "telugu", "marathi"].includes(l))
     )
     .slice(0, 6);
 
@@ -125,13 +104,13 @@ export default async function LanguagesDirectoryPage() {
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-text-secondary sm:text-base">
             Hindi Anime brings you anime in your mother tongue. Switch between Hindi, Tamil, Telugu,
-            English, Japanese, and more with crystal-clear audio dubbing and precise subtitles.
+            English, Japanese, Korean, and Marathi with clear audio and subtitle options.
           </p>
 
           <div className="mt-6 flex flex-wrap gap-4 text-xs font-medium text-text-muted">
             <span className="flex items-center gap-1.5 rounded-lg border border-border-line bg-surface/80 px-3 py-1.5 text-text-secondary">
               <Headphones className="h-4 w-4 text-green-light" />
-              10+ Dubbed Audio Languages
+              7 Supported Languages
             </span>
             <span className="flex items-center gap-1.5 rounded-lg border border-border-line bg-surface/80 px-3 py-1.5 text-text-secondary">
               <Subtitles className="h-4 w-4 text-green-light" />
@@ -212,7 +191,15 @@ export default async function LanguagesDirectoryPage() {
                         key={item.id}
                         className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-border-line"
                       >
-                        <PosterArt seed={item.poster} title={item.title} fillContainer showOverlay={false} showSprocket={false} />
+                      <PosterArt
+                        seed={item.poster}
+                        title={item.title}
+                        fillContainer
+                        sizes="40px"
+                        loading="lazy"
+                        showOverlay={false}
+                        showSprocket={false}
+                      />
                       </div>
                     ))}
                     <div className="ml-auto flex items-center gap-1 text-xs font-semibold text-green-light group-hover:translate-x-1 transition-transform">
@@ -248,7 +235,7 @@ export default async function LanguagesDirectoryPage() {
         <AnimeGrid items={hindiAnime} />
       </section>
 
-      {/* Featured Regional Dubs (Tamil, Telugu, Bengali) */}
+      {/* Featured Regional Dubs */}
       <section className="mt-16">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2">

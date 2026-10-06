@@ -23,7 +23,7 @@ export function LanguageSection() {
               key={lang.code}
               href={`/language/${lang.code}`}
               className={cn(
-                "focus-ring rounded-full border px-5 py-2.5 text-sm font-semibold transition-all hover:-translate-y-0.5",
+                "focus-ring rounded-full border px-5 py-2.5 text-sm font-semibold transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-0.5 active:scale-[0.98]",
                 i === 0
                   ? "border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_16px_-4px_rgba(34,197,94,0.5)]"
                   : "border-border-line bg-surface text-text-secondary hover:border-green-primary/60 hover:text-white"

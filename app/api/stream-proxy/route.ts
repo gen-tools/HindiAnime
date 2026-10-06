@@ -14,6 +14,11 @@ const TOKO_API_URL = (
 ).replace(/\/+$/, "");
 
 const TOKO_TIMEOUT_MS = 25_000;
+const TOKO_SOURCE_CACHE_TTL_MS = 5_000;
+const tokoSourceCache = new Map<
+  string,
+  { expiresAt: number; value: { rawSources: TokoSource[]; byLanguage?: Record<string, unknown> } }
+>();
 
 const DEFAULT_HEADERS = {
   "User-Agent":
@@ -83,6 +88,119 @@ function slugToTitleVariants(slug: string, season: string): string[] {
   ];
 }
 
+type TokoPrioritySource = TokoSource & { providerPriority?: number };
+
+function orderTokoSources(sources: TokoSource[]): TokoSource[] {
+  const languageTier = (source: TokoSource) => {
+    const language = (source.audioLanguage || "").toLowerCase().trim();
+    if (language === "hi") return 0;
+    if (["ta", "te", "ml", "kn", "bn", "mr"].includes(language)) return 1;
+    if (language === "en") return 2;
+    if (language === "ja") return 3;
+    return 4;
+  };
+  const typeTier = (source: TokoSource) => {
+    if (source.type === "hls" || source.isM3U8) return 0;
+    if (source.type === "mp4") return 1;
+    return 2;
+  };
+
+  // Match the backend's final JSON ordering while SSE sources arrive in provider
+  // completion order. This keeps existing role selection and provider priority.
+  return [...sources].sort((left, right) => {
+    const languageDifference = languageTier(left) - languageTier(right);
+    if (languageDifference) return languageDifference;
+    const typeDifference = typeTier(left) - typeTier(right);
+    if (typeDifference) return typeDifference;
+    const leftPriority = (left as TokoPrioritySource).providerPriority ?? 999;
+    const rightPriority = (right as TokoPrioritySource).providerPriority ?? 999;
+    return leftPriority - rightPriority;
+  });
+}
+
+function groupTokoSourcesByLanguage(sources: TokoSource[]): Record<string, unknown> {
+  const groups: Record<string, { code: string; label: string; flag: string; isDub: boolean; sources: TokoSource[] }> = {};
+  for (const source of sources) {
+    const code = source.audioLanguage || "und";
+    if (!groups[code]) {
+      groups[code] = {
+        code,
+        label: source.language || code.toUpperCase(),
+        flag: source.languageLabel?.trim().split(/\s+/)[0] || "🌐",
+        isDub: Boolean(source.isDub),
+        sources: [],
+      };
+    }
+    groups[code].sources.push(source);
+  }
+  return groups;
+}
+
+async function readTokoResponse(
+  response: Response,
+  onSource?: (source: TokoSource) => void
+): Promise<{ rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null> {
+  const rawSources: TokoSource[] = [];
+  const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+
+  if (!contentType.includes("text/event-stream")) {
+    const text = await response.text();
+    if (text.includes("<!DOCTYPE html") || text.toLowerCase().includes("challenge")) return null;
+    const data = JSON.parse(text) as TokoStreamResponse;
+    for (const source of data.sources || []) onSource?.(source);
+    return { rawSources: data.sources || [], byLanguage: data.byLanguage, complete: true };
+  }
+
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  let complete = false;
+  let byLanguage: Record<string, unknown> | undefined;
+
+  const processEvent = (frame: string) => {
+    let eventName = "message";
+    const dataLines: string[] = [];
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) return;
+
+    const payload = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+    if (eventName === "source") {
+      const source = payload as unknown as TokoSource;
+      if (typeof source.url === "string" && source.url.trim()) {
+        rawSources.push(source);
+        onSource?.(source);
+      }
+    } else if (eventName === "done") {
+      complete = true;
+      if (payload.byLanguage && typeof payload.byLanguage === "object") {
+        byLanguage = payload.byLanguage as Record<string, unknown>;
+      }
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      const frames = pending.split(/\r?\n\r?\n/);
+      pending = frames.pop() || "";
+      for (const frame of frames) processEvent(frame);
+    }
+    pending += decoder.decode();
+    if (pending.trim()) processEvent(pending);
+  } catch {
+    // Keep sources already received if the provider sweep or request is aborted.
+  }
+
+  if (!complete && rawSources.length === 0) return null;
+  return { rawSources, byLanguage, complete };
+}
+
 function isBlockedSource(s: TokoSource): boolean {
   const provider = (s.providerName || s.source || s.server || "").toLowerCase();
   if (provider.includes("hindmovie") || provider.includes("mvlink") || provider.includes("animesama")) return true;
@@ -123,8 +241,15 @@ async function fetchTokoSources(
   slug: string,
   season: string,
   episodeNumber: string,
-  requestSignal?: AbortSignal
+  requestSignal?: AbortSignal,
+  onSource?: (source: TokoSource) => void
 ): Promise<{ rawSources: TokoSource[]; byLanguage?: Record<string, unknown> }> {
+  const cacheKey = JSON.stringify([slug.toLowerCase(), season, episodeNumber]);
+  if (requestSignal?.aborted) return { rawSources: [] };
+  const cached = tokoSourceCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached) tokoSourceCache.delete(cacheKey);
+
   // Season-aware title variants: Toko uses the title (not ?season=) for content routing
   const titleVariants = slugToTitleVariants(slug, season);
   if (titleVariants.length === 0) return { rawSources: [] };
@@ -134,73 +259,68 @@ async function fetchTokoSources(
   // Keep season + episode for any Toko backends that DO parse them
   params.set("season", season);
   params.set("episode", episodeNumber);
-  params.set("stream", "0");
+  // Omit stream=0 to use the backend's existing progressive SSE response.
 
   const directUrl = `${TOKO_API_URL}/api/v3/toko/stream?${params.toString()}`;
   const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(directUrl)}`;
 
-  let data: TokoStreamResponse | null = null;
+  let data: { rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null = null;
 
-  // 1. Try direct fetch
-  try {
+  const fetchSources = async (url: string) => {
     const controller = new AbortController();
     const abortFromRequest = () => controller.abort();
     if (requestSignal?.aborted) controller.abort();
     else requestSignal?.addEventListener("abort", abortFromRequest, { once: true });
     const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
     try {
-      const res = await fetch(directUrl, {
+      const res = await fetch(url, {
         signal: controller.signal,
         cache: "no-store",
         headers: DEFAULT_HEADERS,
       });
-      if (res.ok) {
-        const text = await res.text();
-        if (!text.includes("<!DOCTYPE html") && !text.includes("challenge")) {
-          data = JSON.parse(text) as TokoStreamResponse;
-        }
-      }
+      if (!res.ok) return null;
+      return await readTokoResponse(res, onSource);
     } finally {
       clearTimeout(timer);
       requestSignal?.removeEventListener("abort", abortFromRequest);
     }
-  } catch {
-    // direct fetch error, fall back to worker proxy
+  };
+
+  // Vercel egress is not a reliable path to Toko; use the existing Worker
+  // immediately there instead of waiting on a request that is likely to fail.
+  if (process.env.VERCEL !== "1") {
+    try {
+      data = await fetchSources(directUrl);
+    } catch {
+      // direct fetch error, fall back to worker proxy
+    }
   }
 
   // 2. Try proxy fetch if direct fetch failed
   if (!data && !requestSignal?.aborted) {
     try {
-      const controller = new AbortController();
-      const abortFromRequest = () => controller.abort();
-      if (requestSignal?.aborted) controller.abort();
-      else requestSignal?.addEventListener("abort", abortFromRequest, { once: true });
-      const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
-      try {
-        const res = await fetch(proxyUrl, {
-          signal: controller.signal,
-          cache: "no-store",
-          headers: DEFAULT_HEADERS,
-        });
-        if (res.ok) {
-          const text = await res.text();
-          if (!text.includes("<!DOCTYPE html") && !text.includes("challenge")) {
-            data = JSON.parse(text) as TokoStreamResponse;
-          }
-        }
-      } finally {
-        clearTimeout(timer);
-        requestSignal?.removeEventListener("abort", abortFromRequest);
-      }
+      data = await fetchSources(proxyUrl);
     } catch {
       // proxy error
     }
   }
 
 
-
-  const rawSources: TokoSource[] = data?.sources || [];
-  return { rawSources, byLanguage: data?.byLanguage };
+  const rawSources = orderTokoSources(data?.rawSources || []);
+  const result = { rawSources, byLanguage: data?.byLanguage || groupTokoSourcesByLanguage(rawSources) };
+  if (rawSources.length > 0 && data?.complete) {
+    // Toko links are short-lived. Reuse only briefly and only for this exact
+    // anime/season/episode; never cache empty or failed responses.
+    if (tokoSourceCache.size >= 100) {
+      const now = Date.now();
+      for (const [key, entry] of tokoSourceCache) {
+        if (entry.expiresAt <= now) tokoSourceCache.delete(key);
+      }
+      if (tokoSourceCache.size >= 100) tokoSourceCache.delete(tokoSourceCache.keys().next().value!);
+    }
+    tokoSourceCache.set(cacheKey, { expiresAt: Date.now() + TOKO_SOURCE_CACHE_TTL_MS, value: result });
+  }
+  return result;
 }
 
 function isHindi(s: { audioLanguage?: string; language?: string; languageLabel?: string }): boolean {
@@ -599,7 +719,6 @@ export async function POST(request: Request) {
     browserResult = { targetUrl, html };
   }
 
-  const tokoPromise = fetchTokoSources(cleanId, season, ep, request.signal);
   const animeSaltPromise = browserResult
     ? fetchAnimeSaltSources(cleanId, season, ep, browserResult)
     : Promise.resolve([] as StreamItem[]);
@@ -607,28 +726,53 @@ export async function POST(request: Request) {
 
   const bodyStream = new ReadableStream<Uint8Array>({
     start(controller) {
+      let animeSaltItems: StreamItem[] | null = null;
+      let tokoRaw: TokoSource[] = [];
+      let lastSnapshot = "";
       const emit = (value: Record<string, unknown>) => {
-        controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+        if (request.signal.aborted) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+        } catch {
+          // The client may have navigated away while Toko was still resolving.
+        }
       };
 
-      void (async () => {
-        const animeSaltItems = await animeSaltPromise;
-        const partialResults = assembleServers([], animeSaltItems);
-        if (partialResults.length > 0) {
-          emit({ results: partialResults, saltCount: animeSaltItems.length, complete: false });
+      const emitSnapshot = (complete: boolean, byLanguage?: Record<string, unknown>) => {
+        if (!animeSaltItems) return;
+        const results = assembleServers(orderTokoSources(tokoRaw), animeSaltItems);
+        const signature = results.map((item) => `${item.server}\u0000${item.label}\u0000${item.embed}`).join("\u0001");
+        if (!complete && signature === lastSnapshot) return;
+        lastSnapshot = signature;
+        if (results.length > 0 || complete) {
+          emit({
+            ...(complete
+              ? {
+                  success: results.length > 0,
+                  message: results.length > 0 ? "Stream Found!!" : "No valid streams found",
+                  version: "v2-cf-animesalt",
+                }
+              : {}),
+            results,
+            saltCount: animeSaltItems.length,
+            ...(byLanguage ? { byLanguage } : {}),
+            complete,
+          });
         }
+      };
 
-        const { rawSources: tokoRaw, byLanguage } = await tokoPromise;
-        const finalResults = assembleServers(tokoRaw, animeSaltItems);
-        emit({
-          success: finalResults.length > 0,
-          message: finalResults.length > 0 ? "Stream Found!!" : "No valid streams found",
-          version: "v2-cf-animesalt",
-          saltCount: animeSaltItems.length,
-          results: finalResults,
-          byLanguage,
-          complete: true,
-        });
+      const tokoPromise = fetchTokoSources(cleanId, season, ep, request.signal, (source) => {
+        tokoRaw.push(source);
+        emitSnapshot(false);
+      });
+
+      void (async () => {
+        animeSaltItems = await animeSaltPromise;
+        emitSnapshot(false);
+
+        const { rawSources, byLanguage } = await tokoPromise;
+        tokoRaw = rawSources;
+        emitSnapshot(true, byLanguage);
         controller.close();
       })().catch((error) => controller.error(error));
     },

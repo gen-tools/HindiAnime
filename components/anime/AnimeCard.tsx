@@ -12,24 +12,32 @@ export function AnimeCard({
   rank,
   className,
   imageLoading,
+  imageSizes,
 }: {
   item: Anime;
   rank?: number;
   className?: string;
   imageLoading?: "lazy" | "eager";
+  imageSizes?: string;
 }) {
   return (
     <Link
       href={`/anime/${item.slug}`}
       className={cn(
-        "focus-ring group relative block shrink-0 rounded-xl transition-all duration-300 hover:-translate-y-1",
+        "focus-ring group relative block shrink-0 rounded-xl transition-transform duration-200 hover:-translate-y-1 active:scale-[0.99]",
         className
       )}
     >
-      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl border border-border-line bg-surface-card transition-all duration-300 group-hover:border-green-primary/70 group-hover:shadow-[0_10px_30px_-8px_rgba(34,197,94,0.4)]">
+      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl border border-border-line bg-surface-card transition-colors duration-200 group-hover:border-green-primary/70">
         {/* Poster Image with subtle scale */}
-        <div className="h-full w-full transition-transform duration-500 ease-out group-hover:scale-105">
-          <PosterArt seed={item.poster} title={item.title} loading={imageLoading} className="h-full w-full object-cover" />
+        <div className="h-full w-full transition-transform duration-300 ease-out group-hover:scale-[1.03]">
+          <PosterArt
+            seed={item.poster}
+            title={item.title}
+            loading={imageLoading}
+            sizes={imageSizes || "(max-width: 640px) 45vw, (max-width: 768px) 30vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 180px"}
+            className="h-full w-full object-cover"
+          />
         </div>
 
         {/* Top Badges */}
@@ -46,13 +54,13 @@ export function AnimeCard({
         {/* Bottom metadata snippet */}
         <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-10 flex items-center justify-between text-[11px] font-medium text-white/90">
           <span>{item.year || (item.status === "Completed" ? "Full" : item.status || "")}</span>
-          {item.episodeCount && item.episodeCount > 1 ? (
+          {item.type !== "Movie" && item.episodeCount && item.episodeCount > 1 ? (
             <span className="text-[10px] text-text-secondary">{item.episodeCount} eps</span>
           ) : null}
         </div>
 
         {/* Hover Play Overlay */}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/45 backdrop-blur-[1px] opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           <span className="flex h-11 w-11 items-center justify-center rounded-full bg-green-bright text-black shadow-[0_0_20px_rgba(34,197,94,0.8)] transition-transform duration-300 group-hover:scale-110 active:scale-95">
             <Play className="h-5 w-5 translate-x-0.5 fill-black" />
           </span>

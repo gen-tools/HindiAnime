@@ -378,16 +378,18 @@ export default async function AnimeDetailPage({
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
+  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
   // A title is only a movie if it has NO series episodes and is confirmed as a movie
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
-    (
-      mockItem?.type === "Movie" ||
-      Boolean(directData?.isMovie) ||
-      (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
-    );
+    mockItem?.type === "Movie" ||
+    directData?.isMovie === true ||
+    animeData?.quality?.toUpperCase().includes("MOVIE") === true ||
+    searchItemType === "Movie" ||
+    (!hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      mockItem?.type !== "TV" &&
+      Boolean(matchingMovieData?.title));
 
   let item: Anime | undefined;
   if (isMovie && matchingMovieData?.title) {
@@ -535,7 +537,12 @@ export default async function AnimeDetailPage({
   }
 
   // Ensure slug and id are strictly preserved
-  item = { ...item, id: cleanSlug, slug: cleanSlug };
+  item = {
+    ...item,
+    id: cleanSlug,
+    slug: cleanSlug,
+    type: isMovie ? "Movie" : item.type,
+  };
 
   // Resolve actual genres from scraped, API, movie, or mock data
   const resolvedGenres =
@@ -554,23 +561,7 @@ export default async function AnimeDetailPage({
   // 2. Discover episodes & seasons
   let episodes: Episode[] = [];
 
-  if (isMovie) {
-    episodes = [
-      {
-        id: "ep-1-1",
-        animeSlug: cleanSlug,
-        animeTitle: item.title,
-        animePoster: item.poster,
-        season: 1,
-        number: 1,
-        title: "Full Movie",
-        thumbnail: item.poster,
-        durationMinutes: item.durationMinutes || 110,
-        languages: item.languages,
-        releasedAt: new Date().toISOString().split("T")[0],
-      },
-    ];
-  } else {
+  if (!isMovie) {
     const totalSeasons =
       availableSeasons.length || directData?.seasons?.length || mockItem?.seasons || item.seasons;
     item = { ...item, seasons: totalSeasons };
@@ -611,7 +602,7 @@ export default async function AnimeDetailPage({
 
   // 3. Build season list
   const allSeasons = isMovie
-    ? [1]
+    ? []
     : Array.from(
         new Set([
           ...(availableSeasons.length ? availableSeasons : [1]),
@@ -622,13 +613,13 @@ export default async function AnimeDetailPage({
       ).sort((a, b) => a - b);
 
   const seasonList: SeasonItem[] = isMovie
-    ? [{ season: "1", text: "Movie" }]
+    ? []
     : allSeasons.map((s) => ({
         season: String(s),
         text: `Season ${s}`,
       }));
 
-  const firstEpisodeId = episodes.length > 0 ? episodes[0].id : `ep-${seasonNum}-1`;
+  const firstEpisodeId = isMovie ? undefined : episodes[0]?.id;
 
   // ── Build "You Might Also Like" genre-based anime ─────────────────────────
   const nonGenreTags = new Set([
@@ -733,7 +724,7 @@ export default async function AnimeDetailPage({
 
       <AnimeInfo item={item} firstEpisodeId={firstEpisodeId} />
 
-      {episodes.length > 0 && (
+      {!isMovie && episodes.length > 0 && (
         <div className="container-page mt-10">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2">

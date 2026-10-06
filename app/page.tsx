@@ -1,5 +1,5 @@
 import { AnimeHero } from "@/components/anime/AnimeHero";
-import { HomeContinueWatching } from "@/components/home/HomeContinueWatching";
+import { DeferredHomeContinueWatching } from "@/components/home/DeferredHomeContinueWatching";
 import { TrendingSection } from "@/components/home/TrendingSection";
 import { PopularSection } from "@/components/home/PopularSection";
 import { LatestSection } from "@/components/home/LatestSection";
@@ -42,7 +42,7 @@ export default async function HomePage() {
       <AnimeHero items={displayHeroItems} />
 
       {/* Continue Watching (renders only when user has active watch progress) */}
-      <HomeContinueWatching />
+      <DeferredHomeContinueWatching />
 
       {/* 2. Trending Now */}
       <FadeIn>

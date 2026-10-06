@@ -10,7 +10,7 @@ const pillars = [
   {
     icon: Globe2,
     title: "Multi-language by design",
-    body: "Every title on Hindi Anime is built around language availability first — audio and subtitles across ten languages, shown clearly before you press play.",
+    body: "Every title on Hindi Anime is built around language availability first — audio and subtitles across seven supported languages, shown clearly before you press play.",
   },
   {
     icon: Layers,

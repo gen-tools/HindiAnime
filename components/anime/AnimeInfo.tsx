@@ -8,11 +8,10 @@ import { formatDuration } from "@/lib/utils";
 import Link from "next/link";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
 import { FavoriteButton } from "./FavoriteButton";
+import { buildWatchHref } from "@/lib/watch-routing";
 
 export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeId?: string }) {
-  const targetWatchHref = firstEpisodeId
-    ? `/watch/${item.slug}/${firstEpisodeId}`
-    : `/watch/${item.slug}/ep-1-1`;
+  const targetWatchHref = buildWatchHref(item.slug, item.type, firstEpisodeId);
 
   return (
     <div className="container-page relative -mt-28 flex flex-col gap-6 pb-4 sm:-mt-36 md:flex-row md:gap-8">
@@ -48,7 +47,9 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
               {formatDuration(item.durationMinutes)}
             </span>
           )}
-          {item.episodeCount > 0 && <span className="text-text-secondary">{item.episodeCount} Episodes</span>}
+          {item.type !== "Movie" && item.episodeCount > 0 && (
+            <span className="text-text-secondary">{item.episodeCount} Episodes</span>
+          )}
         </div>
 
         {item.genres && item.genres.length > 0 && (

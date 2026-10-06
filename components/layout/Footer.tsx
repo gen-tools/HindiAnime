@@ -26,7 +26,7 @@ export function Footer() {
         <div className="col-span-2 lg:col-span-2">
           <Logo />
           <p className="mt-4 max-w-xs text-sm leading-relaxed text-text-muted">
-            Watch Hindi dubbed anime online. Discover dubbed and subbed anime series and movies in Hindi, Tamil, Telugu, English, Japanese, Korean, Malayalam, Kannada, Bengali, and Marathi, all in one place.
+            Watch Hindi dubbed anime online. Discover dubbed and subbed anime series and movies in Hindi, Tamil, Telugu, English, Japanese, Korean, and Marathi, all in one place.
           </p>
         </div>
 
@@ -66,9 +66,6 @@ export function Footer() {
               { label: "Hindi Dubbed Anime", href: "/language/hindi" },
               { label: "Tamil Dubbed Anime", href: "/language/tamil" },
               { label: "Telugu Dubbed Anime", href: "/language/telugu" },
-              { label: "Bengali Dubbed Anime", href: "/language/bengali" },
-              { label: "Kannada Dubbed Anime", href: "/language/kannada" },
-              { label: "Malayalam Dubbed Anime", href: "/language/malayalam" },
             ].map((l) => (
               <li key={l.href}>
                 <Link

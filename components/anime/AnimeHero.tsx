@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { Play, Info, Star, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
-import { AnimatePresence, motion, type Variants } from "motion/react";
 import type { Anime } from "@/types/anime";
 import { ButtonLink } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -11,21 +10,9 @@ import { LanguageBadges } from "./LanguageBadges";
 import { PosterArt } from "./PosterArt";
 import { FavoriteButton } from "./FavoriteButton";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
-import { cn } from "@/lib/utils";
+import { buildWatchHref } from "@/lib/watch-routing";
 
 const SLIDE_DURATION = 7500;
-
-const containerVariants: Variants = {
-  hidden: {},
-  show: {
-    transition: { staggerChildren: 0.08, delayChildren: 0.04 },
-  },
-};
-
-const itemVariants: Variants = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: "easeOut" } },
-};
 
 export function AnimeHero({ items }: { items: Anime[] }) {
   const [index, setIndex] = useState(0);
@@ -52,42 +39,40 @@ export function AnimeHero({ items }: { items: Anime[] }) {
 
   useEffect(() => {
     if (items.length <= 1) return;
-    const timer = setInterval(() => {
-      setIndex((i) => (i + 1) % items.length);
-      setCycleKey((k) => k + 1);
-    }, SLIDE_DURATION);
-    return () => clearInterval(timer);
+
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const syncRotation = () => {
+      if (timer) clearInterval(timer);
+      timer = undefined;
+      if (motionPreference.matches) return;
+
+      timer = setInterval(() => {
+        setIndex((i) => (i + 1) % items.length);
+        setCycleKey((k) => k + 1);
+      }, SLIDE_DURATION);
+    };
+
+    syncRotation();
+    motionPreference.addEventListener("change", syncRotation);
+    return () => {
+      if (timer) clearInterval(timer);
+      motionPreference.removeEventListener("change", syncRotation);
+    };
   }, [items.length]);
 
   if (!item) return null;
 
-  const watchHref = `/watch/${item.slug}/ep-1-1`;
+  const watchHref = buildWatchHref(item.slug, item.type);
 
   return (
     <section className="relative overflow-hidden border-b border-border-line bg-background">
       {/* ─── Layer 1: Cinematic Backdrop ─────────────────────────────────── */}
-      <AnimatePresence mode="sync">
-        <motion.div
-          key={item.slug}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ opacity: { duration: 0.85, ease: "easeInOut" } }}
-          className="absolute inset-0 transform-gpu"
+      <div
+          className="hero-backdrop absolute inset-0"
+          data-changing={cycleKey > 0 ? "true" : undefined}
+          data-phase={cycleKey % 2 === 0 ? "even" : "odd"}
         >
-          {/* Atmospheric blur wash (desktop only to save mobile bandwidth & GPU compositing) */}
-          <div className="hidden sm:block absolute inset-0">
-            <PosterArt
-              seed={item.backdrop || item.poster}
-              title={item.title}
-              orientation="landscape"
-              priority={false}
-              showOverlay={false}
-              showSprocket={false}
-              fillContainer
-              className="absolute inset-0 h-full w-full scale-110 opacity-35 blur-3xl"
-            />
-          </div>
           {/* Crisp cinematic cover (primary LCP visual element) */}
           <PosterArt
             seed={item.backdrop || item.poster}
@@ -101,8 +86,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
             className="absolute inset-0 h-full w-full opacity-50 sm:opacity-60"
             imageClassName="object-cover object-center"
           />
-        </motion.div>
-      </AnimatePresence>
+      </div>
 
       {/* ─── Layer 2: Multi-stop Cinematic Gradients for Readability ─────── */}
       {/* Bottom heavy vignette */}
@@ -115,17 +99,13 @@ export function AnimeHero({ items }: { items: Anime[] }) {
       {/* ─── Layer 3: Hero Content Container ─────────────────────────────── */}
       <div className="container-page relative z-10 flex min-h-[480px] flex-col justify-end pb-8 pt-16 sm:min-h-[520px] sm:pb-12 sm:pt-20 md:min-h-[560px] md:flex-row md:items-end md:justify-between lg:min-h-[600px]">
         {/* Left Column: Title, Metadata, CTA */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={item.slug}
-            variants={containerVariants}
-            initial="hidden"
-            animate="show"
-            exit={{ opacity: 0, y: -16, transition: { duration: 0.22, ease: "easeIn" } }}
-            className="flex max-w-2xl flex-1 flex-col gap-3.5 sm:gap-4 md:pb-2"
+          <div
+            className="hero-content flex max-w-2xl flex-1 flex-col gap-3.5 sm:gap-4 md:pb-2"
+            data-changing={cycleKey > 0 ? "true" : undefined}
+            data-phase={cycleKey % 2 === 0 ? "even" : "odd"}
           >
             {/* Spotlight Eyebrow Badge */}
-            <motion.div variants={itemVariants} className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-green-primary/40 bg-green-primary/15 px-3 py-1 text-xs font-bold uppercase tracking-wider text-green-light shadow-sm">
                 <span className="h-2 w-2 rounded-full bg-green-bright animate-pulse" />
                 Featured Spotlight
@@ -135,19 +115,17 @@ export function AnimeHero({ items }: { items: Anime[] }) {
                   {item.type}
                 </span>
               )}
-            </motion.div>
+            </div>
 
             {/* Anime Title */}
-            <motion.h1
-              variants={itemVariants}
+            <h1
               className="font-display text-3xl font-black leading-[1.06] tracking-tight text-white drop-shadow-lg sm:text-5xl md:text-6xl"
             >
               {item.title}
-            </motion.h1>
+            </h1>
 
             {/* Clean Metadata Row */}
-            <motion.div
-              variants={itemVariants}
+            <div
               className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs sm:text-sm"
             >
               {item.rating > 0 && (
@@ -164,46 +142,44 @@ export function AnimeHero({ items }: { items: Anime[] }) {
                   {item.status}
                 </Badge>
               )}
-              {item.episodeCount && item.episodeCount > 0 && (
+              {item.type !== "Movie" && item.episodeCount && item.episodeCount > 0 && (
                 <span className="font-medium text-text-muted">
                   {item.episodeCount} {item.episodeCount === 1 ? "Episode" : "Episodes"}
                 </span>
               )}
-            </motion.div>
+            </div>
 
             {/* Real Genre Badges */}
             {item.genres && item.genres.length > 0 && (
-              <motion.div variants={itemVariants} className="flex flex-wrap items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {item.genres.slice(0, 4).map((g) => (
                   <Link key={g} href={`/genre/${g}`}>
-                    <span className="rounded-md border border-border-line bg-surface/80 px-2.5 py-0.5 text-[11px] font-medium capitalize text-text-secondary hover:border-green-primary/50 hover:text-green-light transition-colors">
+                    <span className="rounded-md border border-border-line bg-surface/80 px-2.5 py-0.5 text-[11px] font-medium capitalize text-text-secondary transition-[color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:text-green-light">
                       {g.replace("-", " ")}
                     </span>
                   </Link>
                 ))}
-              </motion.div>
+              </div>
             )}
 
             {/* Synopsis */}
             {item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK && (
-              <motion.p
-                variants={itemVariants}
+              <p
                 className="line-clamp-2 max-w-xl text-xs leading-relaxed text-text-secondary sm:line-clamp-3 sm:text-sm md:text-[15px]"
               >
                 {item.synopsis}
-              </motion.p>
+              </p>
             )}
 
             {/* Languages */}
             {item.languages && item.languages.length > 0 && (
-              <motion.div variants={itemVariants}>
+              <div>
                 <LanguageBadges languages={item.languages} max={4} className="text-xs" />
-              </motion.div>
+              </div>
             )}
 
             {/* Action Buttons with Watch Now, Details, and Add to List */}
-            <motion.div
-              variants={itemVariants}
+            <div
               className="mt-2 flex flex-wrap items-center gap-2.5 sm:gap-3"
             >
               <ButtonLink
@@ -236,12 +212,11 @@ export function AnimeHero({ items }: { items: Anime[] }) {
                   languages: item.languages,
                 }}
               />
-            </motion.div>
+            </div>
 
             {/* Carousel Slide Indicators & Arrows */}
             {items.length > 1 && (
-              <motion.div
-                variants={itemVariants}
+              <div
                 className="mt-3 flex items-center justify-between gap-4 pt-1 max-w-md"
               >
                 <div className="flex items-center gap-1.5 sm:gap-2">
@@ -255,12 +230,10 @@ export function AnimeHero({ items }: { items: Anime[] }) {
                       className="focus-ring relative h-1.5 w-6 overflow-hidden rounded-full bg-white/20 transition-all sm:w-9"
                     >
                       {i === index ? (
-                        <motion.span
+                        <span
                           key={cycleKey}
-                          initial={{ scaleX: 0 }}
-                          animate={{ scaleX: 1 }}
-                          transition={{ duration: SLIDE_DURATION / 1000, ease: "linear" }}
-                          className="absolute inset-y-0 left-0 w-full origin-left rounded-full bg-green-bright shadow-[0_0_8px_rgba(34,197,94,0.8)]"
+                          style={{ animationDuration: `${SLIDE_DURATION}ms` }}
+                          className="hero-slide-progress absolute inset-y-0 left-0 w-full origin-left rounded-full bg-green-bright shadow-[0_0_8px_rgba(34,197,94,0.8)]"
                         />
                       ) : (
                         <span className="absolute inset-0 rounded-full bg-white/20 transition-colors hover:bg-white/40" />
@@ -287,23 +260,18 @@ export function AnimeHero({ items }: { items: Anime[] }) {
                     <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
-              </motion.div>
+              </div>
             )}
-          </motion.div>
-        </AnimatePresence>
+          </div>
 
         {/* Right Column: Featured Poster Artwork Card (Desktop & Tablet) */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={item.slug}
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.22, ease: "easeIn" } }}
-            transition={{ duration: 0.42, ease: "easeOut" }}
-            className="hidden w-52 shrink-0 self-center md:block lg:w-64 xl:w-72"
+          <div
+            className="hero-poster hidden w-52 shrink-0 self-center md:block lg:w-64 xl:w-72"
+            data-changing={cycleKey > 0 ? "true" : undefined}
+            data-phase={cycleKey % 2 === 0 ? "even" : "odd"}
           >
-            <div className="group relative overflow-hidden rounded-2xl border-2 border-border-line shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] ring-1 ring-green-primary/30 transition-all duration-300 hover:scale-[1.02] hover:border-green-primary/60 hover:shadow-green-primary/10">
-              <PosterArt seed={item.poster} title={item.title} orientation="portrait" priority />
+            <div className="group relative overflow-hidden rounded-2xl border-2 border-border-line shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] ring-1 ring-green-primary/30 transition-[border-color,transform] duration-200 hover:scale-[1.02] hover:border-green-primary/60">
+              <PosterArt seed={item.poster} title={item.title} orientation="portrait" />
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
                 <Link
                   href={watchHref}
@@ -313,8 +281,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
                 </Link>
               </div>
             </div>
-          </motion.div>
-        </AnimatePresence>
+          </div>
       </div>
     </section>
   );

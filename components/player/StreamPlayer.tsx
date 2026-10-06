@@ -513,7 +513,7 @@ export function StreamPlayer({
                   type="button"
                   onClick={handleNextServer}
                   title="Switch to next server if video is blank or not working"
-                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95 cursor-pointer"
+                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
                 >
                   <Server className="h-3.5 w-3.5 text-green-bright" />
                   <span>Change Server</span>
@@ -523,7 +523,7 @@ export function StreamPlayer({
                 type="button"
                 onClick={() => setReloadKey((k) => k + 1)}
                 title="Reload current player"
-                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95 cursor-pointer"
+                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-green-bright" />
                 <span>Reload</span>

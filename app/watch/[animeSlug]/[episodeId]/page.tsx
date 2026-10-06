@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { EpisodeNavigation } from "@/components/episodes/EpisodeNavigation";
@@ -270,12 +270,20 @@ export default async function WatchPage({
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
+  const mockAnime = getAnimeBySlug(cleanSlug);
+  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
-  // A title is only a movie if it has NO series episodes and is confirmed as a movie
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
-    (Boolean(directData?.isMovie) || (Boolean(movieData?.title) && !animeData?.title));
+    mockAnime?.type === "Movie" ||
+    directData?.isMovie === true ||
+    animeData?.quality?.toUpperCase().includes("MOVIE") === true ||
+    searchItemType === "Movie" ||
+    (!hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      Boolean(movieData?.title) &&
+      !animeData?.title);
+
+  if (isMovie) redirect(`/watch/${cleanSlug}`);
 
   let anime: Anime = createFallbackAnime(cleanSlug);
   if (isMovie && movieData?.title) {
@@ -318,7 +326,6 @@ export default async function WatchPage({
   const totalSeasonsCount =
     discoveredSeasons.length || directData?.seasons?.length || anime.seasons || 1;
 
-  const mockAnime = getAnimeBySlug(cleanSlug);
   const resolvedGenres =
     (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
     (animeData?.genres && animeData.genres.length > 0 ? animeData.genres : undefined) ||
@@ -364,89 +371,53 @@ export default async function WatchPage({
     ? Array.from({ length: infoSeasonCount }, (_, index) => index + 1)
     : [seasonNumber];
 
-  const availableSeasons = isMovie
-    ? [1]
-    : Array.from(new Set([...discoveredList, seasonNumber])).sort((a, b) => a - b);
+  const availableSeasons = Array.from(
+    new Set([...discoveredList, seasonNumber])
+  ).sort((a, b) => a - b);
 
   const seasonList: SeasonItem[] = availableSeasons.map((season) => ({
     season: String(season),
-    text: isMovie ? "Movie" : `Season ${season}`,
+    text: `Season ${season}`,
   }));
 
   // ── 2. Build episodes list for current season ──────────────────────────────
   let episodes: Episode[] = [];
 
-  if (isMovie) {
-    episodes = [
-      {
-        id: "ep-1-1",
-        animeSlug: cleanSlug,
-        animeTitle: anime.title,
-        animePoster: anime.poster,
-        season: 1,
-        number: 1,
-        title: "Full Movie",
-        thumbnail: anime.poster,
-        durationMinutes: anime.durationMinutes || 110,
-        languages: anime.languages,
-        releasedAt: new Date().toISOString().split("T")[0],
-      },
-    ];
-  } else {
-    if (effectiveRawEpisodes.length > 0) {
-      episodes = deduplicateEpisodes(
-        effectiveRawEpisodes.map((ep, idx) =>
-          mapApiEpisodeToEpisode(
-            ep,
-            anime.slug,
-            anime.title,
-            anime.poster,
-            anime.languages,
-            seasonNumber,
-            idx
-          )
+  if (effectiveRawEpisodes.length > 0) {
+    episodes = deduplicateEpisodes(
+      effectiveRawEpisodes.map((ep, idx) =>
+        mapApiEpisodeToEpisode(
+          ep,
+          anime.slug,
+          anime.title,
+          anime.poster,
+          anime.languages,
+          seasonNumber,
+          idx
         )
-      );
-    }
+      )
+    );
   }
 
   // If still empty, synthesize the full episode list for the season
   if (episodes.length === 0) {
-    if (isMovie) {
-      episodes = [
-        {
-          id: episodeId,
-          animeSlug: anime.slug,
-          animeTitle: anime.title,
-          animePoster: anime.poster,
-          season: 1,
-          number: 1,
-          title: "Full Movie",
-          thumbnail: anime.poster,
-          durationMinutes: anime.durationMinutes || 110,
-          languages: anime.languages,
-          releasedAt: new Date().toISOString().split("T")[0],
-        },
-      ];
-    } else {
-      const totalCount = Math.max(anime.episodeCount || 12, episodeNumber);
-      episodes = Array.from({ length: totalCount }, (_, i) => {
-        const num = i + 1;
-        return {
-          id: `ep-${seasonNumber}-${num}`,
-          animeSlug: anime.slug,
-          animeTitle: anime.title,
-          animePoster: anime.poster,
-          season: seasonNumber,
-          number: num,
-          title: `Episode ${num}`,
-          thumbnail: anime.poster,
-          durationMinutes: 24,
-          languages: anime.languages,
-          releasedAt: new Date().toISOString().split("T")[0],
-        };
-      });
-    }
+    const totalCount = Math.max(anime.episodeCount || 12, episodeNumber);
+    episodes = Array.from({ length: totalCount }, (_, i) => {
+      const num = i + 1;
+      return {
+        id: `ep-${seasonNumber}-${num}`,
+        animeSlug: anime.slug,
+        animeTitle: anime.title,
+        animePoster: anime.poster,
+        season: seasonNumber,
+        number: num,
+        title: `Episode ${num}`,
+        thumbnail: anime.poster,
+        durationMinutes: 24,
+        languages: anime.languages,
+        releasedAt: new Date().toISOString().split("T")[0],
+      };
+    });
   }
 
   // ── 3. Find current active episode ─────────────────────────────────────────
@@ -467,9 +438,9 @@ export default async function WatchPage({
       animePoster: anime.poster,
       season: seasonNumber,
       number: episodeNumber,
-      title: isMovie ? "Full Movie" : `Episode ${episodeNumber}`,
+      title: `Episode ${episodeNumber}`,
       thumbnail: anime.poster,
-      durationMinutes: isMovie ? 110 : 24,
+      durationMinutes: 24,
       languages: anime.languages,
       releasedAt: new Date().toISOString().split("T")[0],
     };
@@ -477,9 +448,7 @@ export default async function WatchPage({
   const prevEpisode = currentIndex > 0 ? episodes[currentIndex - 1] : undefined;
   const nextEpisode = currentIndex >= 0 ? episodes[currentIndex + 1] : undefined;
 
-  const episodeTitle = isMovie
-    ? `${anime.title} — Full Movie`
-    : `EP ${episode.number} — ${episode.title}`;
+  const episodeTitle = `EP ${episode.number} — ${episode.title}`;
 
   // ── 4. Build "You Might Also Like" genre-based anime ───────────────────────
   const nonGenreTags = new Set([

@@ -33,9 +33,6 @@ const KNOWN_LANGUAGES: Record<string, LanguageCode> = {
   japanese: "japanese",
   tamil: "tamil",
   telugu: "telugu",
-  bengali: "bengali",
-  malayalam: "malayalam",
-  kannada: "kannada",
   marathi: "marathi",
   korean: "korean",
 };
@@ -53,7 +50,7 @@ export function parseLanguages(langStr?: string): LanguageCode[] {
       matched.push(KNOWN_LANGUAGES[l]);
     }
   }
-  return matched.length > 0 ? matched : ["hindi"];
+  return matched;
 }
 
 export function parseDurationMinutes(durationStr?: string): number {

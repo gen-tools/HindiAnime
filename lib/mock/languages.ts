@@ -7,9 +7,6 @@ export const languages: Language[] = [
   { code: "english", label: "English", shortLabel: "ENG" },
   { code: "japanese", label: "Japanese", shortLabel: "JPN" },
   { code: "korean", label: "Korean", shortLabel: "KOR" },
-  { code: "malayalam", label: "Malayalam", shortLabel: "MAL" },
-  { code: "kannada", label: "Kannada", shortLabel: "KAN" },
-  { code: "bengali", label: "Bengali", shortLabel: "BEN" },
   { code: "marathi", label: "Marathi", shortLabel: "MAR" },
 ];
 

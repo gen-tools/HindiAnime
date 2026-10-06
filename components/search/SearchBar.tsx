@@ -188,7 +188,7 @@ export function SearchBar({
         <ul
           role="listbox"
           aria-label="Search suggestions"
-          className="absolute left-0 right-0 z-50 max-h-80 overflow-y-auto rounded-b-2xl border border-t-0 border-border-line bg-surface shadow-xl"
+          className="search-suggestions-enter absolute left-0 right-0 z-50 max-h-80 overflow-y-auto rounded-b-2xl border border-t-0 border-border-line bg-surface shadow-xl"
         >
           {suggestions.map((item, idx) => {
             const isActive = idx === activeIndex;

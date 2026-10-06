@@ -11,6 +11,7 @@ import {
 } from "@/lib/storage/userDataService";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { cn } from "@/lib/utils";
+import { buildStoredWatchHref, isStoredMovieWatch } from "@/lib/watch-routing";
 
 // One-time migration key: when the poster-extraction bug was fixed,
 // stale IndexedDB records may still have wrong cross-contaminated
@@ -145,7 +146,7 @@ export function HomeContinueWatching() {
               >
                 {/* Poster Artwork with Hover Resume */}
                 <Link
-                  href={`/watch/${item.animeSlug}/${item.episodeId}`}
+                  href={buildStoredWatchHref(item)}
                   className="relative block aspect-[2/3] w-full overflow-hidden bg-surface-card"
                 >
                   <PosterArt
@@ -179,15 +180,17 @@ export function HomeContinueWatching() {
 
                 {/* Info & Metadata */}
                 <div className="p-3">
-                  <Link href={`/watch/${item.animeSlug}/${item.episodeId}`}>
+                  <Link href={buildStoredWatchHref(item)}>
                     <h3 className="truncate text-sm font-semibold text-text-primary transition-colors group-hover:text-green-light">
                       {item.animeTitle}
                     </h3>
                   </Link>
                   <div className="mt-1 flex items-center justify-between text-xs text-text-muted">
-                    <span className="font-medium text-green-light">
-                      S{item.season} · EP {item.episode}
-                    </span>
+                    {isStoredMovieWatch(item) ? (
+                      <span className="font-medium text-green-light">Movie</span>
+                    ) : (
+                      <span className="font-medium text-green-light">S{item.season} · EP {item.episode}</span>
+                    )}
                     <span className="truncate max-w-[80px] text-[11px]">
                       {item.episodeTitle || "Episode"}
                     </span>

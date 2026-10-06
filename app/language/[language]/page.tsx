@@ -45,30 +45,6 @@ const languageConfigs: Record<string, LanguagePageConfig> = {
     intro:
       "Watch popular Telugu dubbed anime releases and enjoy anime in Telugu with high-quality audio. Explore a curated selection of Telugu anime series and movies ready for streaming.",
   },
-  bengali: {
-    h1: "Bengali Dubbed Anime",
-    title: "Bengali Dubbed Anime - Watch Anime in Bengali",
-    description:
-      "Watch Bengali dubbed anime and explore anime in Bengali online. Enjoy popular animated series with regional audio and find great shows to stream.",
-    intro:
-      "Browse engaging Bengali dubbed anime and enjoy anime in Bengali with localized dubs. Discover compelling stories and popular Bengali anime episodes available to watch online.",
-  },
-  kannada: {
-    h1: "Kannada Dubbed Anime",
-    title: "Kannada Dubbed Anime - Watch Anime in Kannada",
-    description:
-      "Watch Kannada dubbed anime and stream anime in Kannada online. Browse popular series with local audio tracks and find your next anime to watch.",
-    intro:
-      "Stream entertaining Kannada dubbed anime and watch anime in Kannada with regional voice dubbing. Discover trending Kannada anime series and episodes updated for fans.",
-  },
-  malayalam: {
-    h1: "Malayalam Dubbed Anime",
-    title: "Malayalam Dubbed Anime - Watch Anime in Malayalam",
-    description:
-      "Watch Malayalam dubbed anime and discover anime in Malayalam online. Stream popular series with Malayalam audio and start watching your favorites.",
-    intro:
-      "Discover quality Malayalam dubbed anime and experience anime in Malayalam with regional audio options. Stream beloved Malayalam anime series and movies in one convenient place.",
-  },
   english: {
     h1: "English Dubbed Anime",
     title: "English Dubbed Anime - Watch Anime in English",
