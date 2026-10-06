@@ -75,7 +75,7 @@ export default {
 
     const proxyHeaders = {
       "User-Agent": BROWSER_UA,
-      Accept: request.headers.get("Accept") || "*/*",
+      Accept: "*/*",
       "Accept-Language": "en-US,en;q=0.9",
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
