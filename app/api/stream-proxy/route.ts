@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle, isValidEmbedUrl } from "@/lib/api/client";
-import { buildAnimeSaltEpisodeCandidates, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
+import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
 
 // Stream links are dynamic and short-lived
@@ -496,10 +496,11 @@ async function fetchAnimeSaltSources(
   slug: string,
   season: string,
   episode: string,
-  browserResult?: { targetUrl: string; html: string } | null
+  browserResult?: { targetUrl: string; html: string; isMovie?: boolean } | null
 ): Promise<StreamItem[]> {
   const candidates = buildAnimeSaltEpisodeCandidates(slug, season, episode);
-  if (browserResult && !candidates.includes(browserResult.targetUrl)) return [];
+  const validMovieUrl = browserResult?.isMovie && browserResult.targetUrl === buildAnimeSaltMovieUrl(slug);
+  if (browserResult && !validMovieUrl && !candidates.includes(browserResult.targetUrl)) return [];
 
   // Retrieve AnimeSalt through the general Worker proxy.
   for (const targetUrl of browserResult ? [browserResult.targetUrl] : candidates) {
@@ -717,19 +718,22 @@ export async function POST(request: Request) {
   const ep = String(body.ep ?? "1");
   const cleanId = cleanAnimeSlug(id) || id;
 
-  let browserResult: { targetUrl: string; html: string } | null = null;
+  let browserResult: { targetUrl: string; html: string; isMovie?: boolean } | null = null;
   if (body.animeSaltHtml !== undefined && body.animeSaltHtml !== null) {
     const targetUrl = typeof body.animeSaltTargetUrl === "string" ? body.animeSaltTargetUrl : "";
     const html = typeof body.animeSaltHtml === "string" ? body.animeSaltHtml : "";
+    const isMovie = body.isMovie === true;
     const byteLength = new TextEncoder().encode(html).byteLength;
     if (
-      !buildAnimeSaltEpisodeCandidates(cleanId, season, ep).includes(targetUrl) ||
+      !(isMovie
+        ? targetUrl === buildAnimeSaltMovieUrl(cleanId)
+        : buildAnimeSaltEpisodeCandidates(cleanId, season, ep).includes(targetUrl)) ||
       byteLength > 512 * 1024 ||
       !isValidAnimeSaltHtml(html)
     ) {
       return NextResponse.json({ success: false, message: "Invalid AnimeSalt response" }, { status: 400 });
     }
-    browserResult = { targetUrl, html };
+    browserResult = { targetUrl, html, isMovie };
   }
 
   const animeSaltPromise = browserResult

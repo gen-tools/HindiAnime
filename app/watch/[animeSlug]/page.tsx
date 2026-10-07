@@ -127,6 +127,7 @@ export default async function MovieWatchPage({
           season={1}
           episode={1}
           episodeTitle={`${title} — Full Movie`}
+          isMovie
         />
 
         <div className="mt-5 flex gap-4">

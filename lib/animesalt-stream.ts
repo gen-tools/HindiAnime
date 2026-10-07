@@ -16,6 +16,14 @@ export function buildAnimeSaltEpisodeCandidates(
   ];
 }
 
+export function buildAnimeSaltMovieUrl(slug: string): string {
+  const cleanSlug = slug
+    .replace(/^https?:\/\/(?:www\.)?animesalt\.cx\//i, "")
+    .replace(/^movies\//i, "")
+    .replace(/^\/+|\/+$/g, "");
+  return `https://animesalt.cx/movies/${cleanSlug}/`;
+}
+
 export function isValidAnimeSaltHtml(html: string): boolean {
   return (
     html.length >= 1000 &&

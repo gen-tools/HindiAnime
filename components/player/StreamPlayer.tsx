@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { StreamItem } from "@/types/api";
 import { cleanAnimeSlug, isValidEmbedUrl } from "@/lib/api/client";
-import { buildAnimeSaltEpisodeCandidates, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
+import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -95,10 +95,14 @@ async function fetchAnimeSaltHtml(
   slug: string,
   season: number,
   episode: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  isMovie: boolean
 ): Promise<{ targetUrl: string; html: string } | null> {
   const cleanId = cleanAnimeSlug(slug) || slug;
-  for (const targetUrl of buildAnimeSaltEpisodeCandidates(cleanId, season, episode)) {
+  const targetUrls = isMovie
+    ? [buildAnimeSaltMovieUrl(cleanId)]
+    : buildAnimeSaltEpisodeCandidates(cleanId, season, episode);
+  for (const targetUrl of targetUrls) {
     try {
       const response = await fetch(`${CF_GENERAL_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`, {
         cache: "no-store",
@@ -124,11 +128,13 @@ export function StreamPlayer({
   season,
   episode,
   episodeTitle,
+  isMovie = false,
 }: {
   animeSlug: string;
   season: number;
   episode: number;
   episodeTitle: string;
+  isMovie?: boolean;
   languages?: string[];
 }) {
   const playbackIdentity = `${animeSlug}:s${season}:e${episode}`;
@@ -225,7 +231,7 @@ export function StreamPlayer({
     try {
       let data: { results?: unknown[] } | null = null;
 
-      const animeSalt = await fetchAnimeSaltHtml(animeSlug, season, episode, controller.signal);
+      const animeSalt = await fetchAnimeSaltHtml(animeSlug, season, episode, controller.signal, isMovie);
       if (!isCurrentRequest()) return;
 
       try {
@@ -238,6 +244,7 @@ export function StreamPlayer({
             id: animeSlug,
             season,
             ep: episode,
+            isMovie,
             animeSaltTargetUrl: animeSalt?.targetUrl ?? null,
             animeSaltHtml: animeSalt?.html ?? null,
           }),
@@ -336,7 +343,7 @@ export function StreamPlayer({
     } finally {
       if (requestControllerRef.current === controller) requestControllerRef.current = null;
     }
-  }, [animeSlug, season, episode, playbackIdentity]);
+  }, [animeSlug, season, episode, playbackIdentity, isMovie]);
 
 
   useEffect(() => {
