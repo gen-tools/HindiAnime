@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { Bookmark, Check } from "lucide-react";
 import { isFavorite, toggleFavorite } from "@/lib/storage/userDataService";
 import { cn } from "@/lib/utils";
+import type { AnimeType } from "@/types/anime";
 
 interface FavoriteButtonProps {
   anime: {
@@ -11,7 +12,7 @@ interface FavoriteButtonProps {
     title: string;
     poster: string;
     rating?: number;
-    type?: string;
+    type?: AnimeType;
     genres?: string[];
     languages?: string[];
   };

@@ -14,6 +14,7 @@ import {
   dbClearAllStores,
   isIndexedDbSupported,
 } from "./indexedDb";
+import type { AnimeType } from "@/types/anime";
 
 export interface GuestProfile {
   id: string; // e.g. "guest-X7K29"
@@ -25,6 +26,7 @@ export interface ContinueWatchingItem {
   animeSlug: string;
   animeTitle: string;
   animePoster: string;
+  type?: AnimeType;
   season: number;
   episode: number;
   episodeId: string;
@@ -39,6 +41,7 @@ export interface WatchHistoryItem {
   animeSlug: string;
   animeTitle: string;
   animePoster: string;
+  type?: AnimeType;
   season: number;
   episode: number;
   episodeId: string;
@@ -54,7 +57,7 @@ export interface FavoriteItem {
   title: string;
   poster: string;
   rating?: number;
-  type?: string;
+  type?: AnimeType;
   genres?: string[];
   languages?: string[];
   addedAt: string;
@@ -153,6 +156,7 @@ export async function recordWatchProgress(entry: {
   animeSlug: string;
   animeTitle: string;
   animePoster: string;
+  type?: AnimeType;
   season: number;
   episode: number;
   episodeId: string;
@@ -172,6 +176,7 @@ export async function recordWatchProgress(entry: {
     animeSlug: entry.animeSlug,
     animeTitle: entry.animeTitle,
     animePoster: entry.animePoster,
+    type: entry.type,
     season: entry.season,
     episode: entry.episode,
     episodeId: entry.episodeId,
@@ -189,6 +194,7 @@ export async function recordWatchProgress(entry: {
     animeSlug: entry.animeSlug,
     animeTitle: entry.animeTitle,
     animePoster: entry.animePoster,
+    type: entry.type,
     season: entry.season,
     episode: entry.episode,
     episodeId: entry.episodeId,
@@ -251,7 +257,7 @@ export async function toggleFavorite(anime: {
   title: string;
   poster: string;
   rating?: number;
-  type?: string;
+  type?: AnimeType;
   genres?: string[];
   languages?: string[];
 }): Promise<boolean> {

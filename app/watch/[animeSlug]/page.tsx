@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
+import { WatchTracker } from "@/components/player/WatchTracker";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { getAnimeBySlug } from "@/lib/mock/anime";
 import {
@@ -16,6 +17,7 @@ import {
   searchAnime,
   scrapeDirectSeriesData,
   isUsableImageUrl,
+  parseDurationMinutes,
   SYNOPSIS_FALLBACK,
 } from "@/lib/api/client";
 
@@ -103,6 +105,21 @@ export default async function MovieWatchPage({
           <span className="mx-1.5">/</span>
           <span className="text-text-secondary">{title}</span>
         </nav>
+
+        <WatchTracker
+          animeSlug={slug}
+          animeTitle={title}
+          animePoster={poster}
+          type="Movie"
+          season={0}
+          episode={0}
+          episodeId="movie"
+          episodeTitle="Full Movie"
+          durationMinutes={movieData?.run_time || movieData?.runningTime
+            ? parseDurationMinutes(movieData.run_time || movieData.runningTime)
+            : undefined}
+          genres={directData?.genres || matchingMovie?.genres?.map((genre) => genre.toLowerCase().replace(/\s+/g, "-")) || []}
+        />
 
         <StreamPlayer
           key={`${slug}:movie`}

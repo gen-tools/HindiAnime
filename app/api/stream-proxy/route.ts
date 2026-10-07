@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
+import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle, isValidEmbedUrl } from "@/lib/api/client";
 import { buildAnimeSaltEpisodeCandidates, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
 
@@ -426,19 +426,32 @@ function assembleServers(
     add(saltMyStream, "Server 2 · 🇮🇳 MyStream");
   }
 
-  // ── Slot 3: Toko Hindi Dub embed #1 (cloudy.upns.one / abyssplayer) ───────
-  const s3 = rawSources.find(
-    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
+  // Keep the current Server 4 candidate (the next Hindi embed after the
+  // original Server 3 candidate) fixed while Server 3 moves to another source.
+  const hindiEmbedCandidate = (s: TokoSource) =>
+    !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "");
+  const originalS3 = rawSources.find(hindiEmbedCandidate);
+  const s4 = rawSources.find(
+    (s) => hindiEmbedCandidate(s) && s.url !== originalS3?.url
   );
+  const s3 = rawSources.find(
+    (s) =>
+      hindiEmbedCandidate(s) &&
+      s.url !== originalS3?.url &&
+      s.url !== s4?.url &&
+      isValidEmbedUrl(s.url)
+  );
+
+  // ── Slot 3: Toko Hindi Dub embed; skip the known failing first choice ─────
   if (s3) add(buildTokoItem(s3), "Server 3 · 🇮🇳 Hindi Dub (Toko)");
 
   // ── Slot 4: Toko Hindi Dub embed #2 ─────────────────────────────────────
-  const s4 = rawSources.find(
-    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
-  );
   if (s4) {
     add(buildTokoItem(s4), "Server 4 · 🇮🇳 Hindi Dub (Toko Alt)");
   }
+  // Retain the original Server 3 URL in deduplication so no other role takes
+  // it after the Server 3 substitution.
+  if (originalS3?.url) usedUrls.add(originalS3.url);
 
   // ── Slot 5: AnimeSalt Tamil (Abyss) ───────────────────────────────────────
   const s5Salt = animeSaltItems.find((s) => isTamil(s) && !usedUrls.has(s.embed));

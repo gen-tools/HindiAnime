@@ -577,6 +577,7 @@ export default async function WatchPage({
         animeSlug={anime.slug}
         animeTitle={anime.title}
         animePoster={anime.poster}
+        type={anime.type}
         season={episode.season}
         episode={episode.number}
         episodeId={episode.id}
