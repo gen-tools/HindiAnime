@@ -82,13 +82,15 @@ export async function generateMetadata({
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
 
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
-    (
-      mockItem?.type === "Movie" ||
-      Boolean(directData?.isMovie) ||
-      (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
-    );
+    animeData?.format?.toUpperCase() === "MOVIE" ||
+    movieData?.format?.toUpperCase() === "MOVIE" ||
+    mockItem?.type === "Movie" ||
+    Boolean(directData?.isMovie) ||
+    (!hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      mockItem?.type !== "TV" &&
+      Boolean(matchingMovieData?.title) &&
+      !animeData?.title);
 
   let item: Anime | undefined;
   if (isMovie && matchingMovieData?.title) {
@@ -382,6 +384,8 @@ export default async function AnimeDetailPage({
 
   // A title is only a movie if it has NO series episodes and is confirmed as a movie
   const isMovie =
+    animeData?.format?.toUpperCase() === "MOVIE" ||
+    movieData?.format?.toUpperCase() === "MOVIE" ||
     mockItem?.type === "Movie" ||
     directData?.isMovie === true ||
     animeData?.quality?.toUpperCase().includes("MOVIE") === true ||

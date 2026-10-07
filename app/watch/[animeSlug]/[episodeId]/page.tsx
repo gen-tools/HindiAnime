@@ -95,9 +95,13 @@ export async function generateMetadata({
   const animeDataMeta = resolveAnimeInfoData(apiInfo);
 
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
-    (Boolean(directData?.isMovie) || (Boolean(movieData?.title) && !animeDataMeta?.title));
+    animeDataMeta?.format?.toUpperCase() === "MOVIE" ||
+    movieData?.format?.toUpperCase() === "MOVIE" ||
+    Boolean(directData?.isMovie) ||
+    (!hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      Boolean(movieData?.title) &&
+      !animeDataMeta?.title);
 
   let anime: Anime = createFallbackAnime(cleanSlug);
   if (isMovie && movieData?.title) {
@@ -274,6 +278,8 @@ export default async function WatchPage({
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
   const isMovie =
+    animeData?.format?.toUpperCase() === "MOVIE" ||
+    movieData?.format?.toUpperCase() === "MOVIE" ||
     mockAnime?.type === "Movie" ||
     directData?.isMovie === true ||
     animeData?.quality?.toUpperCase().includes("MOVIE") === true ||

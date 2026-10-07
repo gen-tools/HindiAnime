@@ -64,28 +64,6 @@ export function AnimeRowControls({
           <ChevronRight className="h-4 w-4" />
         </button>
       </div>
-      <>
-        {canScrollLeft && (
-          <button
-            type="button"
-            onClick={() => scroll("left")}
-            className="focus-ring absolute -left-3.5 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-border-line bg-background/90 p-2.5 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:border-green-primary hover:bg-green-primary hover:text-black md:flex"
-            aria-label={`Scroll ${title} left`}
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
-        )}
-        {canScrollRight && (
-          <button
-            type="button"
-            onClick={() => scroll("right")}
-            className="focus-ring absolute -right-3.5 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-border-line bg-background/90 p-2.5 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:border-green-primary hover:bg-green-primary hover:text-black md:flex"
-            aria-label={`Scroll ${title} right`}
-          >
-            <ChevronRight className="h-5 w-5" />
-          </button>
-        )}
-      </>
     </>
   );
 }

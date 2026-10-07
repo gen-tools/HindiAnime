@@ -446,7 +446,10 @@ export function mapApiInfoToAnime(
   const synopsis = getApiSynopsis(data);
 
   // Quality field ("" or "Movie") — determine type
-  const type = data.quality?.toUpperCase().includes("MOVIE") ? "Movie" : "TV";
+  const type =
+    data.format?.toUpperCase() === "MOVIE" || data.quality?.toUpperCase().includes("MOVIE")
+      ? "Movie"
+      : "TV";
 
   return {
     id: cleanSlug,
@@ -1919,6 +1922,7 @@ export async function fetchAniListMeta(
     return {
       title: resolvedTitle,
       anime_id: slugOrTitle,
+      format: m.format,
       poster,
       backdrop,
       overview,

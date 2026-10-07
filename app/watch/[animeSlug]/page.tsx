@@ -66,6 +66,8 @@ export default async function MovieWatchPage({
   const hasSeriesEpisodes = Boolean(episodes?.results?.episodes?.length);
   const hasMultipleSeasons = (seasons?.length || 0) > 1 || (directData?.seasons?.length || 0) > 1;
   const isMovie =
+    animeData?.format?.toUpperCase() === "MOVIE" ||
+    movieData?.format?.toUpperCase() === "MOVIE" ||
     mockAnime?.type === "Movie" ||
     directData?.isMovie === true ||
     animeData?.quality?.toUpperCase().includes("MOVIE") === true ||
