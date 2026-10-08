@@ -309,7 +309,7 @@ export async function generateMetadata({
 
   const seoDescription = buildAnimeDescription(item);
   const ogType = item.type === "Movie" ? "video.movie" : "video.tv_show";
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
 
   return {
     title: {

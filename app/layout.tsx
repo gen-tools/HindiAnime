@@ -14,8 +14,10 @@ const bebas = Bebas_Neue({
   display: "swap",
 });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
+
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com"),
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "Hindi Anime | Watch Hindi Dubbed Anime Online",
     template: "%s | Hindi Anime",
@@ -27,20 +29,38 @@ export const metadata: Metadata = {
     description:
       "Watch Hindi dubbed anime online, plus anime in Tamil, Telugu, English and Japanese. Explore popular series, movies, latest episodes and genres on Hindi Anime.",
     siteName: "Hindi Anime",
+    url: SITE_URL,
     type: "website",
   },
+  // Public pages are indexable by default; individual API/proxy routes set their own noindex
   robots: {
-    index: false,
-    follow: false,
-    nocache: true,
+    index: true,
+    follow: true,
     googleBot: {
-      index: false,
-      follow: false,
-      noimageindex: true,
+      index: true,
+      follow: true,
+      noimageindex: false,
       "max-video-preview": -1,
-      "max-image-preview": "none",
+      "max-image-preview": "large",
       "max-snippet": -1,
     },
+  },
+};
+
+// WebSite structured data — signals preferred site name to Google
+const websiteJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "Hindi Anime",
+  alternateName: ["HindiAnime", "Hindi Anime Online"],
+  url: SITE_URL,
+  potentialAction: {
+    "@type": "SearchAction",
+    target: {
+      "@type": "EntryPoint",
+      urlTemplate: `${SITE_URL}/search?q={search_term_string}`,
+    },
+    "query-input": "required name=search_term_string",
   },
 };
 
@@ -51,6 +71,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${inter.variable} ${manrope.variable} ${bebas.variable}`}
       suppressHydrationWarning
     >
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
+        />
+      </head>
       <body
         className="flex min-h-screen flex-col font-body antialiased"
         suppressHydrationWarning

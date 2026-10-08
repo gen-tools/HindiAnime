@@ -27,16 +27,24 @@ const nextConfig: NextConfig = {
     contentDispositionType: "inline",
   },
 
+  async redirects() {
+    return [
+      {
+        // www → non-www permanent redirect
+        source: "/:path*",
+        has: [{ type: "host", value: "www.hindi-anime.com" }],
+        destination: "https://hindi-anime.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
+
   async headers() {
     return [
       {
-        // Global security headers for all routes
+        // Global security headers for all routes — NO X-Robots-Tag here (let meta robots handle it per page)
         source: "/:path*",
         headers: [
-          {
-            key: "X-Robots-Tag",
-            value: "noindex, nofollow, noarchive, nosnippet, noimageindex",
-          },
           {
             key: "X-Content-Type-Options",
             value: "nosniff",
@@ -54,6 +62,10 @@ const nextConfig: NextConfig = {
             value: "camera=(), microphone=(), geolocation=()",
           },
           {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
+          },
+          {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
@@ -69,6 +81,16 @@ const nextConfig: NextConfig = {
               "base-uri 'self'",
               "form-action 'self'",
             ].join("; "),
+          },
+        ],
+      },
+      {
+        // API and stream-proxy endpoints: block indexing via X-Robots-Tag
+        source: "/api/:path*",
+        headers: [
+          {
+            key: "X-Robots-Tag",
+            value: "noindex, nofollow, noarchive",
           },
         ],
       },

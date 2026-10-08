@@ -169,7 +169,7 @@ export async function generateMetadata({
   const cleanTitle = cleanAnimeTitle(rawTitle) || formatDisplayTitle(cleanSlug);
 
   // ── Build SEO metadata for the episode/watch page ────────────────────────
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
 
   // Episode label: "Season 1 Episode 3" or "Full Movie"
   let episodeLabel: string;

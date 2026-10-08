@@ -105,7 +105,7 @@ export async function generateMetadata({
   if (!lang) return {};
 
   const config = getLanguageConfig(lang.code, lang.label);
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
   const canonicalUrl = `${siteUrl}/language/${lang.code}`;
 
   const fullTitle = `${config.title} | Hindi Anime`;
