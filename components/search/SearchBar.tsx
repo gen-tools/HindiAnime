@@ -44,8 +44,11 @@ export function SearchBar({
   useEffect(() => {
     const q = debouncedValue.trim();
     if (q.length < 2) {
+      abortRef.current?.abort();
+      abortRef.current = null;
       setSuggestions([]);
       setOpen(false);
+      setLoading(false);
       return;
     }
 
@@ -55,20 +58,32 @@ export function SearchBar({
     abortRef.current = controller;
 
     setLoading(true);
-    fetch(`/api/suggestions?q=${encodeURIComponent(q)}`, {
-      signal: controller.signal,
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (abortRef.current !== controller) return;
+    const loadSuggestions = async () => {
+      try {
+        const response = await fetch(`/api/suggestions?q=${encodeURIComponent(q)}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Suggestions request failed (${response.status})`);
+        const data = await response.json();
+        if (controller.signal.aborted || abortRef.current !== controller) return;
         setSuggestions(data.results ?? []);
         setOpen(true);
         setActiveIndex(-1);
-      })
-      .catch(() => {})
-      .finally(() => {
+      } catch (error) {
+        if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
+        if (abortRef.current === controller) {
+          console.error("[SearchBar] Suggestions request failed:", error);
+        }
+      } finally {
         if (abortRef.current === controller) setLoading(false);
-      });
+      }
+    };
+
+    void loadSuggestions();
+    return () => {
+      controller.abort();
+      if (abortRef.current === controller) abortRef.current = null;
+    };
   }, [debouncedValue]);
 
   // Close dropdown on outside click

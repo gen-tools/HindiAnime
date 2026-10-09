@@ -22,6 +22,8 @@ import { formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 import { createCanonicalMetadata } from "@/lib/seo";
+import { redirect } from "next/navigation";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 
 export const metadata: Metadata = createCanonicalMetadata("/movies", {
   title: "Anime Movies",
@@ -35,7 +37,22 @@ export default async function MoviesPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const params = await searchParams;
-  const page = Math.max(1, Number(params.page) || 1);
+  const filterParams = normalizeFilterParams(params, {
+    omit: ["country", "type"],
+    sortOptions: ["rating", "year", "title"],
+  });
+  const validCategories = ["all", "hindi", "action", "romance", "top_rated"];
+  const categoryValue = params.category;
+  const invalidCategory = Boolean(categoryValue && !validCategories.includes(categoryValue));
+  if (invalidCategory) {
+    filterParams.delete("category");
+  }
+  if (invalidCategory || hasFilterParamChanges(params, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/movies${query ? `?${query}` : ""}`);
+  }
+
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
   const movieResponse = await getCatalog("movies", page);
   const totalPages = movieResponse?.results?.totalPages ?? 1;
   const apiMovies = await enrichAnimeSynopses(
@@ -46,10 +63,11 @@ export default async function MoviesPage({
   const featured = apiMovies[0];
   let results = [...apiMovies];
 
-  const category = params.category || "all";
-  const genre = params.genre;
-  const language = params.language;
-  const sort = params.sort || "rating";
+  const category = filterParams.get("category") || "all";
+  const genre = filterParams.get("genre");
+  const language = filterParams.get("language");
+  const sort = filterParams.get("sort") || "rating";
+  const year = filterParams.get("year");
 
   if (category === "hindi") {
     results = results.filter((m) => m.languages.includes("hindi"));
@@ -63,20 +81,20 @@ export default async function MoviesPage({
 
   if (genre) results = results.filter((m) => m.genres.includes(genre));
   if (language) results = results.filter((m) => m.languages.includes(language as never));
-  if (params.year) results = results.filter((m) => String(m.year) === params.year);
+  if (year) results = results.filter((m) => String(m.year) === year);
 
   if (sort === "rating") results = [...results].sort((a, b) => b.rating - a.rating);
   if (sort === "year") results = [...results].sort((a, b) => b.year - a.year);
   if (sort === "title") results = [...results].sort((a, b) => a.title.localeCompare(b.title));
 
   function buildHref(p: number) {
-    const next = new URLSearchParams(params as Record<string, string>);
+    const next = new URLSearchParams(filterParams);
     next.set("page", String(p));
     return `/movies?${next.toString()}`;
   }
 
   const showSpotlight =
-    featured && page === 1 && category === "all" && !genre && !language && !params.year;
+    featured && page === 1 && category === "all" && !genre && !language && !year;
 
   return (
     <div>
@@ -220,7 +238,12 @@ export default async function MoviesPage({
 
         {/* Filters */}
         <Suspense fallback={<div className="h-11" />}>
-          <MoviesFilterBar />
+      <MoviesFilterBar
+        category={category}
+        genre={genre ?? ""}
+        language={language ?? ""}
+        sort={sort}
+      />
         </Suspense>
 
         {/* Movies Grid */}
@@ -299,10 +322,21 @@ export default async function MoviesPage({
   );
 }
 
-function MoviesFilterBar() {
+function MoviesFilterBar({
+  category,
+  genre,
+  language,
+  sort,
+}: {
+  category: string;
+  genre: string;
+  language: string;
+  sort: string;
+}) {
   return (
     <form className="grid grid-cols-2 gap-3 sm:grid-cols-4" action="/movies" method="get">
-      <Select name="genre" defaultValue="" aria-label="Filter by genre">
+      {category !== "all" && <input type="hidden" name="category" value={category} />}
+      <Select name="genre" value={genre} aria-label="Filter by genre">
         <option value="">All Genres</option>
         {genres.map((g) => (
           <option key={g.slug} value={g.slug}>
@@ -310,7 +344,7 @@ function MoviesFilterBar() {
           </option>
         ))}
       </Select>
-      <Select name="language" defaultValue="" aria-label="Filter by language">
+      <Select name="language" value={language} aria-label="Filter by language">
         <option value="">All Languages</option>
         {languages.map((l) => (
           <option key={l.code} value={l.code}>
@@ -318,7 +352,7 @@ function MoviesFilterBar() {
           </option>
         ))}
       </Select>
-      <Select name="sort" defaultValue="rating" aria-label="Sort movies">
+      <Select name="sort" value={sort} aria-label="Sort movies">
         <option value="rating">Top Rated</option>
         <option value="year">Newest Year</option>
         <option value="title">A–Z</option>

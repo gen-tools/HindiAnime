@@ -17,6 +17,8 @@ import {
 import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
 import { createCanonicalMetadata } from "@/lib/seo";
+import { redirect } from "next/navigation";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 
 export const metadata: Metadata = createCanonicalMetadata("/search", {
   title: "Search",
@@ -29,13 +31,21 @@ export default async function SearchPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const params = await searchParams;
-  const rawQ = (params.q || params.s)?.trim() ?? "";
-  const genre = params.genre;
-  const language = params.language;
-  const country = params.country;
-  const type = params.type;
-  const sort = params.sort ?? "rating";
-  const page = Math.max(1, Number(params.page) || 1);
+  const filterParams = normalizeFilterParams(params, {
+    sortOptions: ["rating", "year", "title"],
+  });
+  if (hasFilterParamChanges(params, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/search${query ? `?${query}` : ""}`);
+  }
+
+  const rawQ = (filterParams.get("q") || filterParams.get("s"))?.trim() ?? "";
+  const genre = filterParams.get("genre") ?? undefined;
+  const language = filterParams.get("language") ?? undefined;
+  const country = filterParams.get("country") ?? undefined;
+  const type = filterParams.get("type") ?? undefined;
+  const sort = filterParams.get("sort") ?? "rating";
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
 
   let results: Anime[] = [];
   let totalPages = 1;
@@ -94,7 +104,7 @@ export default async function SearchPage({
     if (language) next.set("language", language);
     if (country) next.set("country", country);
     if (type) next.set("type", type);
-    if (params.sort) next.set("sort", params.sort);
+    if (filterParams.get("sort")) next.set("sort", filterParams.get("sort")!);
     next.set("page", String(p));
     return `/search?${next.toString()}`;
   }

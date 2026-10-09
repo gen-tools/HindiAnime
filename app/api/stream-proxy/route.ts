@@ -602,9 +602,17 @@ async function fetchAnimeSaltSources(
           }
         }
 
-        parserResultCount = items.length;
-        if (items.length > 0) {
-          return items;
+        const myStream = items.find((item) => item.embed.includes("ravok.buzz"));
+        const unavailableMyStream = myStream
+          ? await isKnownUnavailableMyStream(myStream.embed)
+          : false;
+        const validatedItems = unavailableMyStream
+          ? items.filter((item) => item !== myStream)
+          : items;
+
+        parserResultCount = validatedItems.length;
+        if (validatedItems.length > 0) {
+          return validatedItems;
         }
       } catch (err) {
         caughtError = err instanceof Error ? err.message : String(err);
@@ -664,6 +672,39 @@ async function buildStreamResponse(
       headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
     }
   );
+}
+
+async function isKnownUnavailableMyStream(embedUrl: string): Promise<boolean> {
+  try {
+    if (new URL(embedUrl).hostname.toLowerCase() !== "ravok.buzz") return false;
+  } catch {
+    return false;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const response = await fetch(`${CF_PROXY_URL}${encodeURIComponent(embedUrl)}`, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { ...DEFAULT_HEADERS, Accept: "text/html" },
+    });
+    if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("text/html")) {
+      return false;
+    }
+
+    const html = await response.text();
+    return (
+      html.length <= 64 * 1024 &&
+      /<title[^>]*>\s*error\s*<\/title>/i.test(html) &&
+      /\bvideo not found\b/i.test(html)
+    );
+  } catch {
+    // A failed health check is inconclusive; leave source handling unchanged.
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function GET(request: Request) {

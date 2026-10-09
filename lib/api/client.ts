@@ -1596,6 +1596,40 @@ function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean
   ].some((items) => Array.isArray(items) && items.length > 0);
 }
 
+function mergeHomepageFeeds(
+  primary: HomepageApiResponse | null | undefined,
+  supplemental: HomepageApiResponse | null | undefined
+): HomepageApiResponse | null {
+  if (!hasHomepageItems(primary)) return hasHomepageItems(supplemental) ? supplemental! : null;
+  if (!hasHomepageItems(supplemental)) return primary!;
+
+  const primarySections = primary!.data.results;
+  const supplementalSections = supplemental!.data.results;
+  const mergeSection = <T extends { anime_id: string }>(first: T[], second: T[]): T[] => {
+    const seen = new Set<string>();
+    return [...first, ...second].filter((item) => {
+      const slug = cleanAnimeSlug(item.anime_id);
+      if (!slug || seen.has(slug)) return false;
+      seen.add(slug);
+      return true;
+    });
+  };
+
+  return {
+    success: primary!.success && supplemental!.success,
+    data: {
+      success: primary!.data.success && supplemental!.data.success,
+      results: {
+        fresh_drops: mergeSection(primarySections.fresh_drops, supplementalSections.fresh_drops),
+        latest_animeMovies: mergeSection(primarySections.latest_animeMovies, supplementalSections.latest_animeMovies),
+        mostWatched_Films: mergeSection(primarySections.mostWatched_Films, supplementalSections.mostWatched_Films),
+        mostWatched_Series: mergeSection(primarySections.mostWatched_Series, supplementalSections.mostWatched_Series),
+        on_air_series: mergeSection(primarySections.on_air_series, supplementalSections.on_air_series),
+      },
+    },
+  };
+}
+
 export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | null> {
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
     return homepageFeedCache.data;
@@ -1654,28 +1688,34 @@ export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | 
 }
 
 export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
+  let apiFeed: HomepageApiResponse | null = null;
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
     });
     if (res.ok) {
       const data = (await res.json()) as HomepageApiResponse;
-      // A previous failed scrape can be cached by the legacy API as an object
-      // containing five empty arrays. Treat that as a failure and continue to
-      // the direct source instead of rendering a blank homepage.
       if (hasHomepageItems(data)) {
-        homepageFeedCache = { data, timestamp: Date.now() };
-        return data;
+        if (data.data.success !== false) {
+          homepageFeedCache = { data, timestamp: Date.now() };
+          return data;
+        }
+        apiFeed = data;
       }
     }
   } catch (err) {
     console.error("getHomepageFeed API error:", err);
   }
 
-  // Fallback 1: Direct upstream scraper from animesalt.cx
+  // Incomplete API snapshots can contain useful rows while omitting whole
+  // sections. Supplement missing sections from the existing direct scraper.
   const scrapedFeed = await scrapeDirectHomepageFeed();
-  if (hasHomepageItems(scrapedFeed)) {
-    return scrapedFeed;
+  const mergedFeed = mergeHomepageFeeds(apiFeed, scrapedFeed);
+  if (hasHomepageItems(mergedFeed)) {
+    if (mergedFeed?.data.success !== false) {
+      homepageFeedCache = { data: mergedFeed!, timestamp: Date.now() };
+    }
+    return mergedFeed;
   }
 
   // Fallback 2: Cached in-memory feed if available
@@ -2018,6 +2058,7 @@ export async function getMovieInfo(
         results: {
           title: aniMeta.title,
           anime_id: cleanId,
+          format: aniMeta.format,
           poster: aniMeta.poster,
           backdrop: aniMeta.backdrop,
           overview: aniMeta.overview,

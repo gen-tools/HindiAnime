@@ -81,6 +81,15 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   return servers;
 }
 
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "name" in error &&
+      error.name === "AbortError"
+  );
+}
+
 // CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
 const CF_WORKER_BASE = (
   process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
@@ -331,8 +340,8 @@ export function StreamPlayer({
         setState("ready");
       }
     } catch (error) {
+      if (isAbortError(error)) return;
       if (!isCurrentRequest()) return;
-      if (error instanceof DOMException && error.name === "AbortError") return;
       if (!isRetry) {
         retryTimerRef.current = setTimeout(() => {
           if (isCurrentRequest()) void fetchStreams(true);
@@ -429,6 +438,7 @@ export function StreamPlayer({
                 embed={activeServer.embed}
                 title={episodeTitle}
                 reloadKey={reloadKey}
+                restrictNavigation={/^Server [234]\b/.test(activeServer.label)}
               />
             )}
 
@@ -668,9 +678,9 @@ function ErrorState({
 
 // ─── EmbedFrame ──────────────────────────────────────────────────────────────
 //
-// Embed providers (toonstream, AnimeSalt, etc.) are loaded without a `sandbox`
-// attribute so they cannot detect us as an ad-blocker/sandbox environment.
-// Popup ads are blocked at the JS level via the `window.open` override below.
+// Keep the main player surface permissive for provider compatibility. The
+// MyStream and Toko Hindi embed roles receive a sandbox that blocks popups and
+// top-level navigation while retaining scripts and media presentation.
 // We intentionally do NOT gate player health on the iframe `onload` event:
 // cross-origin embeds initialize their video via deferred subresource/script
 // loads whose completion the parent frame cannot observe, and a short
@@ -681,19 +691,14 @@ function EmbedFrame({
   embed,
   title,
   reloadKey,
+  restrictNavigation = false,
 }: {
   embed: string;
   title: string;
   reloadKey: number;
+  restrictNavigation?: boolean;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  // Block popup ads launched from the parent scope while the embed is mounted
-  useEffect(() => {
-    const orig = window.open;
-    window.open = () => null;
-    return () => { window.open = orig; };
-  }, []);
 
   // Cache-bust only on manual reload so a stale embed is re-fetched; the
   // initial render always uses the original `embed` URL untouched.
@@ -711,6 +716,7 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
+      sandbox={restrictNavigation ? "allow-scripts allow-same-origin allow-presentation" : undefined}
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes

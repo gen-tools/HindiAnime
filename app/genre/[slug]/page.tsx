@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
 import { ListingFilters } from "@/components/search/ListingFilters";
@@ -13,6 +13,8 @@ import { posterPalette } from "@/lib/poster";
 import { Layers, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createCanonicalMetadata } from "@/lib/seo";
+import { matchesCountry } from "@/lib/mock/countries";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 
 const PAGE_SIZE = 12;
 
@@ -46,8 +48,21 @@ export default async function GenrePage({
   const genre = getGenre(slug);
   if (!genre) notFound();
 
-  const { language, type, sort = "rating" } = sParams;
-  const page = Math.max(1, Number(sParams.page) || 1);
+  const filterParams = normalizeFilterParams(sParams, {
+    omit: ["genre"],
+    sortOptions: ["rating", "recent", "title"],
+  });
+  if (hasFilterParamChanges(sParams, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/genre/${slug}${query ? `?${query}` : ""}`);
+  }
+
+  const language = filterParams.get("language");
+  const country = filterParams.get("country");
+  const type = filterParams.get("type");
+  const sort = filterParams.get("sort") ?? "recent";
+  const year = filterParams.get("year");
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
 
   const genreData = await getGenreCatalog(slug, page);
   let items = genreData.results;
@@ -55,8 +70,9 @@ export default async function GenrePage({
   const years = [...new Set(items.map((a) => a.year).filter((y) => y > 0))].sort((a, b) => b - a);
 
   if (language) items = items.filter((a) => a.languages.includes(language as never));
+  if (country) items = items.filter((a) => matchesCountry(a, country));
   if (type) items = items.filter((a) => a.type === type);
-  if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
+  if (year) items = items.filter((a) => String(a.year) === year);
 
   if (sort === "rating") items = [...items].sort((a, b) => (b.rating || 0) - (a.rating || 0));
   if (sort === "recent") items = [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -65,9 +81,25 @@ export default async function GenrePage({
   const paged = items;
 
   function buildHref(p: number) {
-    const next = new URLSearchParams(sParams as Record<string, string>);
+    const next = new URLSearchParams(filterParams);
     next.set("page", String(p));
     return `/genre/${slug}?${next.toString()}`;
+  }
+
+  function buildGenreHref(nextGenre: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("page");
+    const query = next.toString();
+    return `/genre/${nextGenre}${query ? `?${query}` : ""}`;
+  }
+
+  function buildLanguageHref(nextLanguage: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("language");
+    next.delete("page");
+    next.set("genre", slug);
+    const query = next.toString();
+    return `/language/${nextLanguage}${query ? `?${query}` : ""}`;
   }
 
   const { palette } = posterPalette(slug);
@@ -89,7 +121,7 @@ export default async function GenrePage({
           return (
             <Link
               key={g.slug}
-              href={`/genre/${g.slug}`}
+              href={buildGenreHref(g.slug)}
               className={cn(
                 "rounded-full px-4 py-1.5 text-xs font-semibold whitespace-nowrap transition-all",
                 isActive
@@ -158,7 +190,7 @@ export default async function GenrePage({
           {languages.map((l) => (
             <Link
               key={l.code}
-              href={`/language/${l.code}`}
+              href={buildLanguageHref(l.code)}
               className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
             >
               {l.label} Dubbed

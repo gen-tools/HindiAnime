@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { languages } from "@/lib/mock/languages";
 import { genres } from "@/lib/mock/genres";
 import { createCanonicalMetadata } from "@/lib/seo";
+import { matchesCountry } from "@/lib/mock/countries";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 
 interface LanguagePageConfig {
   h1: string;
@@ -166,8 +168,21 @@ export default async function LanguagePage({
   if (!lang) notFound();
 
   const config = getLanguageConfig(lang.code, lang.label);
-  const { genre, type, sort = "rating" } = sParams;
-  const page = Math.max(1, Number(sParams.page) || 1);
+  const filterParams = normalizeFilterParams(sParams, {
+    omit: ["language"],
+    sortOptions: ["rating", "recent", "title"],
+  });
+  if (hasFilterParamChanges(sParams, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/language/${language}${query ? `?${query}` : ""}`);
+  }
+
+  const genre = filterParams.get("genre");
+  const country = filterParams.get("country");
+  const type = filterParams.get("type");
+  const sort = filterParams.get("sort") ?? "recent";
+  const year = filterParams.get("year");
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
 
   const langData = await getLanguageCatalog(language, page);
   let items = langData.results;
@@ -175,8 +190,9 @@ export default async function LanguagePage({
   const years = [...new Set(items.map((a) => a.year).filter((y) => y > 0))].sort((a, b) => b - a);
 
   if (genre) items = items.filter((a) => a.genres.includes(genre));
+  if (country) items = items.filter((a) => matchesCountry(a, country));
   if (type) items = items.filter((a) => a.type === type);
-  if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
+  if (year) items = items.filter((a) => String(a.year) === year);
 
   if (sort === "rating") items = [...items].sort((a, b) => (b.rating || 0) - (a.rating || 0));
   if (sort === "recent") items = [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -185,10 +201,24 @@ export default async function LanguagePage({
   const paged = items;
 
   function buildHref(p: number) {
-    const next = new URLSearchParams(sParams as Record<string, string>);
-    next.delete("language");
+    const next = new URLSearchParams(filterParams);
     next.set("page", String(p));
     return `/language/${language}?${next.toString()}`;
+  }
+
+  function buildLanguageHref(nextLanguage: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("page");
+    const query = next.toString();
+    return `/language/${nextLanguage}${query ? `?${query}` : ""}`;
+  }
+
+  function buildGenreHref(nextGenre: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("page");
+    next.set("language", language);
+    const query = next.toString();
+    return `/genre/${nextGenre}${query ? `?${query}` : ""}`;
   }
 
   return (
@@ -207,7 +237,7 @@ export default async function LanguagePage({
           return (
             <Link
               key={l.code}
-              href={`/language/${l.code}`}
+              href={buildLanguageHref(l.code)}
               className={cn(
                 "rounded-full px-4 py-1.5 text-xs font-semibold whitespace-nowrap transition-all",
                 isActive
@@ -281,7 +311,7 @@ export default async function LanguagePage({
           {genres.slice(0, 8).map((g) => (
             <Link
               key={g.slug}
-              href={`/genre/${g.slug}`}
+              href={buildGenreHref(g.slug)}
               className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
             >
               {g.label} Anime
