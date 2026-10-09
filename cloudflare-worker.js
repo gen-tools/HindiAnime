@@ -36,6 +36,11 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders(request) });
     }
 
+    // ── Route: /catalog — allowlisted AnimeSalt catalog fetch only ───────────
+    if (url.pathname === "/catalog") {
+      return handleCatalog(url, request);
+    }
+
     // ── Route: /stream — resolve streaming sources via Toko ───────────────────
     if (url.pathname === "/stream") {
       try {
@@ -110,6 +115,89 @@ export default {
     }
   },
 };
+
+// Fetch only known AnimeSalt catalog pages. Callers provide a catalog kind and
+// page number, never an arbitrary target URL, so this route cannot proxy back to
+// this Worker or another host.
+async function handleCatalog(url, request) {
+  const kinds = url.searchParams.getAll("kind");
+  const pages = url.searchParams.getAll("page");
+  const kind = kinds.length === 1 ? kinds[0] : "";
+  const pageText = pages.length === 1 ? pages[0] : "";
+  const page = Number(pageText);
+  const hasUnexpectedParameter = Array.from(url.searchParams.keys()).some(
+    (key) => key !== "kind" && key !== "page"
+  );
+
+  if (
+    request.method !== "GET" ||
+    hasUnexpectedParameter ||
+    (kind !== "series" && kind !== "movies") ||
+    !/^[1-9]\d*$/.test(pageText) ||
+    !Number.isSafeInteger(page)
+  ) {
+    return jsonResponse({ success: false, message: "Invalid catalog request" }, 400, request);
+  }
+
+  const upstreamPath = `/${kind}/page/${page}/`;
+  const targetUrl = `https://animesalt.cx${upstreamPath}`;
+  const proxyHeaders = {
+    "User-Agent": BROWSER_UA,
+    Accept: "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+  };
+
+  try {
+    const upstream = await fetch(targetUrl, {
+      method: "GET",
+      headers: proxyHeaders,
+      redirect: "follow",
+      cf: { cacheTtl: 30, cacheEverything: false },
+    });
+    const headers = new Headers(upstream.headers);
+    const cors = corsHeaders(request);
+    for (const [key, value] of Object.entries(cors)) headers.set(key, value);
+    headers.delete("x-frame-options");
+    headers.delete("content-security-policy");
+    headers.delete("content-security-policy-report-only");
+
+    const upstreamServer = upstream.headers.get("server");
+    const upstreamCfRay = upstream.headers.get("cf-ray");
+    if (upstreamServer) headers.set("x-catalog-upstream-server", upstreamServer);
+    if (upstreamCfRay) headers.set("x-catalog-upstream-cf-ray", upstreamCfRay);
+
+    console.info("[catalog-proxy]", JSON.stringify({
+      kind,
+      page,
+      upstreamPath,
+      status: upstream.status,
+      contentType: upstream.headers.get("content-type"),
+      contentLength: upstream.headers.get("content-length"),
+      server: upstreamServer,
+      cfRay: upstreamCfRay,
+    }));
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers,
+    });
+  } catch (error) {
+    const message = String(error?.message || error || "Unknown error")
+      .replace(/https?:\/\/\S+/gi, "[url]")
+      .slice(0, 180);
+    console.error("[catalog-proxy]", JSON.stringify({
+      kind,
+      page,
+      upstreamPath,
+      errorName: error?.name || "Error",
+      errorMessage: message,
+    }));
+    return jsonResponse({ success: false, message: "Catalog upstream request failed" }, 502, request);
+  }
+}
 
 // ── /stream handler ───────────────────────────────────────────────────────────
 // Server Slot Layout (9 slots):
