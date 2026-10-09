@@ -22,11 +22,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export const metadata: Metadata = {
+import { createCanonicalMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = createCanonicalMetadata("/genre", {
   title: "Anime Genres",
   description:
     "Discover anime across all genres including Action, Adventure, Fantasy, Romance, Sci-Fi, and more on Hindi Anime.",
-};
+});
 
 const genreIcons: Record<string, LucideIcon> = {
   action: Swords,

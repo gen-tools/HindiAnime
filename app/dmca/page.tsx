@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { ShieldAlert, FileText, CheckCircle2, AlertTriangle, Mail } from "lucide-react";
+import { createCanonicalMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/dmca", {
   title: "DMCA Policy",
   description: "DMCA copyright policy and takedown request guidelines for Hindi Anime.",
-};
+});
 
 export default function DmcaPolicyPage() {
   return (

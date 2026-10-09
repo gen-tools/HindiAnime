@@ -12,12 +12,13 @@ import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Badge } from "@/components/ui/Badge";
 import { Globe, Headphones, Subtitles, ArrowRight, Sparkles, Flame } from "lucide-react";
 import type { LanguageCode } from "@/types/language";
+import { createCanonicalMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/language", {
   title: "Browse Anime by Language | Hindi, Tamil, Telugu & More",
   description:
-    "Explore anime dubbed and subtitled in Hindi, Tamil, Telugu, English, Japanese, Marathi, and Korean.",
-};
+    "Explore anime dubbed and subtitled in Hindi, Tamil, Telugu, English, and Japanese.",
+});
 
 const languageDetails: Record<
   string,
@@ -58,20 +59,6 @@ const languageDetails: Record<
     subCount: "100%",
     flag: "🇯🇵",
   },
-  korean: {
-    native: "한국어",
-    description: "Korean audio and subtitles for manhwa adaptations and webtoon-inspired anime.",
-    dubCount: "75%",
-    subCount: "90%",
-    flag: "🇰🇷",
-  },
-  marathi: {
-    native: "मराठी",
-    description: "Marathi dubbed anime movies and television broadcasts.",
-    dubCount: "65%",
-    subCount: "80%",
-    flag: "🇮🇳",
-  },
 };
 
 export default async function LanguagesDirectoryPage() {
@@ -85,7 +72,7 @@ export default async function LanguagesDirectoryPage() {
   const hindiAnime = getAnimeByLanguage("hindi").slice(0, 6);
   const regionalAnime = browseItems
     .filter((a) =>
-      a.languages.some((l) => ["tamil", "telugu", "marathi"].includes(l))
+      a.languages.some((l) => ["tamil", "telugu"].includes(l))
     )
     .slice(0, 6);
 
@@ -104,13 +91,13 @@ export default async function LanguagesDirectoryPage() {
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-text-secondary sm:text-base">
             Hindi Anime brings you anime in your mother tongue. Switch between Hindi, Tamil, Telugu,
-            English, Japanese, Korean, and Marathi with clear audio and subtitle options.
+            English, and Japanese with clear audio and subtitle options.
           </p>
 
           <div className="mt-6 flex flex-wrap gap-4 text-xs font-medium text-text-muted">
             <span className="flex items-center gap-1.5 rounded-lg border border-border-line bg-surface/80 px-3 py-1.5 text-text-secondary">
               <Headphones className="h-4 w-4 text-green-light" />
-              7 Supported Languages
+              5 Supported Languages
             </span>
             <span className="flex items-center gap-1.5 rounded-lg border border-border-line bg-surface/80 px-3 py-1.5 text-text-secondary">
               <Subtitles className="h-4 w-4 text-green-light" />

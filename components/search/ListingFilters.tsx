@@ -11,6 +11,12 @@ export function ListingFilters({ years }: { years: number[] }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const pathSegments = pathname.split("/").filter(Boolean);
+  const isLanguagePage = pathSegments[0] === "language" && Boolean(pathSegments[1]);
+  const activeLanguage = isLanguagePage
+    ? (searchParams.get("language") || pathSegments[1])
+    : (searchParams.get("language") ?? "");
+
   function updateParam(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set(key, value);
@@ -19,12 +25,28 @@ export function ListingFilters({ years }: { years: number[] }) {
     router.push(`${pathname}?${params.toString()}`);
   }
 
+  function handleLanguageChange(newLang: string) {
+    if (isLanguagePage) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("language");
+      params.delete("page");
+      const qs = params.toString();
+      if (newLang) {
+        router.push(`/language/${newLang}${qs ? `?${qs}` : ""}`);
+      } else {
+        router.push(`/language${qs ? `?${qs}` : ""}`);
+      }
+    } else {
+      updateParam("language", newLang);
+    }
+  }
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <Select
         aria-label="Filter by language"
-        value={searchParams.get("language") ?? ""}
-        onChange={(e) => updateParam("language", e.target.value)}
+        value={activeLanguage}
+        onChange={(e) => handleLanguageChange(e.target.value)}
       >
         <option value="">All Languages</option>
         {languages.map((l) => (

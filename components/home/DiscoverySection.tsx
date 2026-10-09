@@ -12,7 +12,7 @@ export function DiscoverySection() {
           />
           <span className="eyebrow relative inline-block text-sm text-green-light">KEEP EXPLORING</span>
           <h2 className="font-display relative mx-auto mt-3 max-w-lg text-2xl font-extrabold text-text-primary md:text-3xl">
-            Hundreds of titles across seven supported languages, updated every week.
+            Hundreds of titles across five supported languages, updated every week.
           </h2>
           <p className="relative mx-auto mt-3 max-w-md text-sm text-text-secondary">
             Search by genre, language, or what&apos;s airing this week — there&apos;s always something new

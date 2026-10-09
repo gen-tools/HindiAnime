@@ -4,12 +4,13 @@ import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
 import { NoResultsState } from "@/components/search/SearchStates";
 import { getCatalog, mapSearchItemToAnime } from "@/lib/api/client";
+import { createCanonicalMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/series", {
   title: "Anime Series Catalog",
   description:
     "Explore and stream anime TV series and multi-season anime on Hindi Anime.",
-};
+});
 
 export default async function SeriesPage({
   searchParams,

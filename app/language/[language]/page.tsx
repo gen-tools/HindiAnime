@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
 import { ListingFilters } from "@/components/search/ListingFilters";
@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 import { languages } from "@/lib/mock/languages";
 import { genres } from "@/lib/mock/genres";
+import { createCanonicalMetadata } from "@/lib/seo";
 
 interface LanguagePageConfig {
   h1: string;
@@ -61,22 +62,6 @@ const languageConfigs: Record<string, LanguagePageConfig> = {
     intro:
       "Experience original Japanese anime broadcasts with multi-language subtitle tracks. Stream classic masterpieces and ongoing seasonal anime in authentic Japanese voice.",
   },
-  korean: {
-    h1: "Korean Dubbed Anime",
-    title: "Korean Dubbed Anime - Watch Anime in Korean",
-    description:
-      "Watch Korean dubbed anime and manhwa adaptations online with clear audio and multi-language subtitles.",
-    intro:
-      "Explore Korean dubbed anime and webtoon adaptations with Korean audio dubs. Stream engaging anime series and special releases.",
-  },
-  marathi: {
-    h1: "Marathi Dubbed Anime",
-    title: "Marathi Dubbed Anime - Watch Anime in Marathi",
-    description:
-      "Watch Marathi dubbed anime episodes and films online with localized regional audio tracks.",
-    intro:
-      "Stream entertaining Marathi dubbed anime with regional voiceovers. Discover available Marathi anime series and movies for regional anime fans.",
-  },
 };
 
 function getLanguageConfig(code: string, label: string): LanguagePageConfig {
@@ -102,7 +87,14 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { language } = await params;
   const lang = languages.find((l) => l.code === language);
-  if (!lang) return {};
+  if (!lang) {
+    return {
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
 
   const config = getLanguageConfig(lang.code, lang.label);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
@@ -110,14 +102,11 @@ export async function generateMetadata({
 
   const fullTitle = `${config.title} | Hindi Anime`;
 
-  return {
+  return createCanonicalMetadata(`/language/${lang.code}`, {
     title: {
       absolute: fullTitle,
     },
     description: config.description,
-    alternates: {
-      canonical: canonicalUrl,
-    },
     robots: {
       index: true,
       follow: true,
@@ -137,7 +126,7 @@ export async function generateMetadata({
       title: config.title,
       description: config.description,
     },
-  };
+  });
 }
 
 export default async function LanguagePage({
@@ -149,6 +138,30 @@ export default async function LanguagePage({
 }) {
   const { language } = await params;
   const sParams = await searchParams;
+
+  const queryLanguage = sParams.language?.toLowerCase().trim();
+  if (queryLanguage !== undefined) {
+    const nextParams = new URLSearchParams(sParams as Record<string, string>);
+    nextParams.delete("language");
+    nextParams.delete("page");
+    const qs = nextParams.toString();
+
+    if (!queryLanguage || queryLanguage === "all") {
+      redirect(`/language${qs ? `?${qs}` : ""}`);
+    }
+
+    const targetLang = languages.find((l) => l.code === queryLanguage);
+    if (targetLang) {
+      if (targetLang.code !== language) {
+        redirect(`/language/${targetLang.code}${qs ? `?${qs}` : ""}`);
+      } else {
+        redirect(`/language/${language}${qs ? `?${qs}` : ""}`);
+      }
+    } else {
+      redirect(`/language/${language}${qs ? `?${qs}` : ""}`);
+    }
+  }
+
   const lang = languages.find((l) => l.code === language);
   if (!lang) notFound();
 
@@ -173,6 +186,7 @@ export default async function LanguagePage({
 
   function buildHref(p: number) {
     const next = new URLSearchParams(sParams as Record<string, string>);
+    next.delete("language");
     next.set("page", String(p));
     return `/language/${language}?${next.toString()}`;
   }

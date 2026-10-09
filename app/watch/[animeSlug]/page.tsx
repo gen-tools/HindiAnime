@@ -1,5 +1,7 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { createCanonicalMetadata } from "@/lib/seo";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { PosterArt } from "@/components/anime/PosterArt";
@@ -33,6 +35,20 @@ function movieTitleMatchesSlug(title: string, slug: string): boolean {
   const normalizedTitle = normalizeTitle(title).replace(/-movie$/, "");
   const normalizedSlug = normalizeTitle(slug).replace(/-movie$/, "");
   return normalizedTitle === normalizedSlug;
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ animeSlug: string }>;
+}): Promise<Metadata> {
+  const { animeSlug: rawSlug } = await params;
+  const slug = cleanAnimeSlug(rawSlug) || rawSlug;
+  const title = formatDisplayTitle(slug);
+  return createCanonicalMetadata(`/watch/${slug}`, {
+    title: `${title} - Full Movie`,
+    description: `Watch ${title} full movie online in Hindi and regional languages on Hindi Anime.`,
+  });
 }
 
 export default async function MovieWatchPage({

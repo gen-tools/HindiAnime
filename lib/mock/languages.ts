@@ -6,8 +6,6 @@ export const languages: Language[] = [
   { code: "telugu", label: "Telugu", shortLabel: "TEL" },
   { code: "english", label: "English", shortLabel: "ENG" },
   { code: "japanese", label: "Japanese", shortLabel: "JPN" },
-  { code: "korean", label: "Korean", shortLabel: "KOR" },
-  { code: "marathi", label: "Marathi", shortLabel: "MAR" },
 ];
 
 export function getLanguageLabel(code: string) {

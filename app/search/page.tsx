@@ -16,11 +16,12 @@ import {
 } from "@/lib/api/client";
 import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
+import { createCanonicalMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/search", {
   title: "Search",
   description: "Search anime, movies, and characters across Hindi Anime's catalog.",
-};
+});
 
 export default async function SearchPage({
   searchParams,

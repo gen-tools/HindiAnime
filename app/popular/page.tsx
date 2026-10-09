@@ -6,11 +6,12 @@ import { PosterArt } from "@/components/anime/PosterArt";
 import { Badge } from "@/components/ui/Badge";
 import { getPopularAnime, getTrendingAnime } from "@/lib/mock/anime";
 import { getHomepageData } from "@/lib/api/client";
+import { createCanonicalMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/popular", {
   title: "Popular Anime",
   description: "The most watched and top-rated anime on Hindi Anime right now.",
-};
+});
 
 export default async function PopularPage() {
   const { popularItems, trendingItems } = await getHomepageData();

@@ -21,11 +21,13 @@ import { languages } from "@/lib/mock/languages";
 import { formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = {
+import { createCanonicalMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = createCanonicalMetadata("/movies", {
   title: "Anime Movies",
   description:
     "Explore and stream anime movies in Hindi and regional languages on Hindi Anime.",
-};
+});
 
 export default async function MoviesPage({
   searchParams,

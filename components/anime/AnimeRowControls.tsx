@@ -11,7 +11,7 @@ export function AnimeRowControls({
   title: string;
 }) {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
 
   const checkScroll = useCallback(() => {
     const row = document.getElementById(targetId);

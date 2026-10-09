@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { FileText, CheckCircle2, AlertTriangle, Shield } from "lucide-react";
+import { createCanonicalMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/terms", {
   title: "Terms of Service",
   description: "Terms of Service and platform usage terms for Hindi Anime.",
-};
+});
 
 export default function TermsOfServicePage() {
   return (

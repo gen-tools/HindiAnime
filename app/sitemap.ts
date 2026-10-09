@@ -2,8 +2,9 @@ import type { MetadataRoute } from "next";
 import { anime } from "@/lib/mock/anime";
 import { genres } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
+import { CANONICAL_SITE_ORIGIN } from "@/lib/seo";
 
-const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
+const BASE_URL = CANONICAL_SITE_ORIGIN;
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const staticRoutes = [

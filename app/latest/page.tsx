@@ -16,11 +16,13 @@ import { Sparkles, Tv, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { deduplicateEpisodes, getEpisodeIdentity } from "@/lib/episodes";
 
-export const metadata: Metadata = {
+import { createCanonicalMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = createCanonicalMetadata("/latest", {
   title: "Latest Releases & New Episodes",
   description:
     "Watch newly dropped anime episodes and freshly added anime series and movies on Hindi Anime.",
-};
+});
 
 const PAGE_SIZE = 12;
 

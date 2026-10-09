@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { Sparkles, Globe2, Layers } from "lucide-react";
+import { createCanonicalMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/about", {
   title: "About",
   description: "About Hindi Anime — a multi-language anime streaming platform.",
-};
+});
 
 const pillars = [
   {

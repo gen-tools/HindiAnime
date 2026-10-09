@@ -14,10 +14,12 @@ const bebas = Bebas_Neue({
   display: "swap",
 });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
+import { CANONICAL_SITE_ORIGIN } from "@/lib/seo";
+
+const SITE_URL = CANONICAL_SITE_ORIGIN;
 
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE_URL),
+  metadataBase: new URL(CANONICAL_SITE_ORIGIN),
   title: {
     default: "Hindi Anime | Watch Hindi Dubbed Anime Online",
     template: "%s | Hindi Anime",

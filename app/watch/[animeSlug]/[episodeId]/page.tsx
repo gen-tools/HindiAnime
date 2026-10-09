@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
@@ -210,7 +211,7 @@ export async function generateMetadata({
 
   const seoDescription = buildWatchDescription();
 
-  return {
+  return createCanonicalMetadata(`/watch/${cleanSlug}/${episodeId}`, {
     title: {
       absolute: seoTitle,
     },
@@ -229,8 +230,7 @@ export async function generateMetadata({
       title: seoTitle,
       description: seoDescription,
     },
-    alternates: { canonical: `/watch/${cleanSlug}/${episodeId}` },
-  };
+  });
 }
 
 export default async function WatchPage({

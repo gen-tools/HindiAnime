@@ -33,8 +33,6 @@ const KNOWN_LANGUAGES: Record<string, LanguageCode> = {
   japanese: "japanese",
   tamil: "tamil",
   telugu: "telugu",
-  marathi: "marathi",
-  korean: "korean",
 };
 
 export function parseLanguages(langStr?: string): LanguageCode[] {

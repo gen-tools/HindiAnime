@@ -28,6 +28,7 @@ import {
   parseLanguages,
 } from "@/lib/api/client";
 import type { Anime } from "@/types/anime";
+import { createCanonicalMetadata } from "@/lib/seo";
 import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
@@ -311,7 +312,7 @@ export async function generateMetadata({
   const ogType = item.type === "Movie" ? "video.movie" : "video.tv_show";
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindi-anime.com";
 
-  return {
+  return createCanonicalMetadata(`/anime/${cleanSlug}`, {
     title: {
       absolute: seoTitle,
     },
@@ -330,8 +331,7 @@ export async function generateMetadata({
       title: seoTitle,
       description: seoDescription,
     },
-    alternates: { canonical: `/anime/${cleanSlug}` },
-  };
+  });
 }
 
 export default async function AnimeDetailPage({

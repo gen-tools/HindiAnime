@@ -12,6 +12,7 @@ import { getGenreCatalog } from "@/lib/api/client";
 import { posterPalette } from "@/lib/poster";
 import { Layers, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createCanonicalMetadata } from "@/lib/seo";
 
 const PAGE_SIZE = 12;
 
@@ -27,10 +28,10 @@ export async function generateMetadata({
   const { slug } = await params;
   const genre = getGenre(slug);
   if (!genre) return {};
-  return {
+  return createCanonicalMetadata(`/genre/${genre.slug}`, {
     title: `${genre.label} Anime`,
     description: `Explore ${genre.label.toLowerCase()} anime series and movies on Hindi Anime — ${genre.description.toLowerCase()}.`,
-  };
+  });
 }
 
 export default async function GenrePage({
