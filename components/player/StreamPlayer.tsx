@@ -57,7 +57,22 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     const isOwnProxy =
       streamUrl.startsWith("/api/") ||
       streamUrl.includes(".workers.dev");
-    if (!isOwnProxy && !isValidEmbedUrl(streamUrl)) continue;
+    const isAllowedRubyServer4 = (() => {
+      if (
+        item.server !== "Server 4" ||
+        item.type !== "embed" ||
+        item.audioLanguage?.toLowerCase() !== "hi" ||
+        !item.label?.includes("Hindi Dub (Toko Alt)")
+      ) return false;
+      try {
+        const url = new URL(streamUrl);
+        return url.protocol === "https:" && url.hostname.toLowerCase() === "rubystm.com" &&
+          /^\/e\/[a-z0-9]+\.html$/i.test(url.pathname);
+      } catch {
+        return false;
+      }
+    })();
+    if (!isOwnProxy && !isAllowedRubyServer4 && !isValidEmbedUrl(streamUrl)) continue;
 
     seen.add(dedupeKey);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
@@ -88,6 +103,11 @@ function isAbortError(error: unknown): boolean {
       "name" in error &&
       error.name === "AbortError"
   );
+}
+
+function abortPlaybackRequest(controller: AbortController | null, message: string) {
+  if (!controller || controller.signal.aborted) return;
+  controller.abort(new DOMException(message, "AbortError"));
 }
 
 // CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
@@ -219,7 +239,7 @@ export function StreamPlayer({
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchStreams = useCallback(async (isRetry = false) => {
-    requestControllerRef.current?.abort();
+    abortPlaybackRequest(requestControllerRef.current, "Playback request superseded");
     const controller = new AbortController();
     requestControllerRef.current = controller;
     const requestGeneration = ++requestGenerationRef.current;
@@ -303,7 +323,10 @@ export function StreamPlayer({
             data = { results: latestResults };
           }
         }
-      } catch { /* try the existing Worker stream fallback below */ }
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) return;
+        /* try the existing Worker stream fallback below */
+      }
 
       if (!isCurrentRequest()) return;
       if (!data) {
@@ -317,7 +340,10 @@ export function StreamPlayer({
             const json = await res.json();
             if (Array.isArray(json?.results) && json.results.length > 0) data = json;
           }
-        } catch { /* try next endpoint */ }
+        } catch (error) {
+          if (isAbortError(error) || controller.signal.aborted) return;
+          /* try next endpoint */
+        }
       }
 
       if (!isCurrentRequest()) return;
@@ -361,8 +387,9 @@ export function StreamPlayer({
       window.clearTimeout(t);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       requestGenerationRef.current += 1;
-      requestControllerRef.current?.abort();
+      const controller = requestControllerRef.current;
       requestControllerRef.current = null;
+      abortPlaybackRequest(controller, "Playback request cleaned up");
     };
   }, [fetchStreams]);
 
@@ -438,7 +465,7 @@ export function StreamPlayer({
                 embed={activeServer.embed}
                 title={episodeTitle}
                 reloadKey={reloadKey}
-                restrictNavigation={/^Server [234]\b/.test(activeServer.label)}
+                restrictNavigation={false}
               />
             )}
 
@@ -679,8 +706,8 @@ function ErrorState({
 // ─── EmbedFrame ──────────────────────────────────────────────────────────────
 //
 // Keep the main player surface permissive for provider compatibility. The
-// MyStream and Toko Hindi embed roles receive a sandbox that blocks popups and
-// top-level navigation while retaining scripts and media presentation.
+// MyStream and Toko Hindi embeds are left unsandboxed so their provider players
+// can initialize. No current server role opts into the navigation sandbox.
 // We intentionally do NOT gate player health on the iframe `onload` event:
 // cross-origin embeds initialize their video via deferred subresource/script
 // loads whose completion the parent frame cannot observe, and a short

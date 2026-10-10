@@ -431,14 +431,25 @@ function assembleServers(
   const hindiEmbedCandidate = (s: TokoSource) =>
     !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "");
   const originalS3 = rawSources.find(hindiEmbedCandidate);
-  const s4 = rawSources.find(
+  const isHindiRubyEmbed = (s: TokoSource) => {
+    if (s.providerName !== "toonstream" || !isHindi(s) || isDirect(s)) return false;
+    try {
+      const url = new URL(s.url);
+      return url.protocol === "https:" && url.hostname.toLowerCase() === "rubystm.com" &&
+        /^\/e\/[a-z0-9]+\.html$/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  };
+  const existingS4Candidate = rawSources.find(
     (s) => hindiEmbedCandidate(s) && s.url !== originalS3?.url
   );
+  const s4 = rawSources.find(isHindiRubyEmbed) || existingS4Candidate;
   const s3 = rawSources.find(
     (s) =>
       hindiEmbedCandidate(s) &&
       s.url !== originalS3?.url &&
-      s.url !== s4?.url &&
+      s.url !== existingS4Candidate?.url &&
       isValidEmbedUrl(s.url)
   );
 
