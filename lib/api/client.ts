@@ -646,7 +646,28 @@ export async function scrapeAnimeSaltCatalog(
         ? `https://animesalt.cx/${kind}/`
         : `https://animesalt.cx/${kind}/page/${page}/`;
 
-    const html = await fetchHtmlWithWorkerFallback(url);
+    let html: string | null = null;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      try {
+        const response = await fetch(buildWorkerCatalogUrl(kind, page), {
+          headers: DEFAULT_SCRAPER_HEADERS,
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("text/html")) {
+          const candidate = await response.text();
+          if (!is404Html(candidate)) html = candidate;
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // Preserve the existing general-proxy/direct fallback if the restricted route is unavailable.
+    }
+
+    if (!html) html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
     const result = parseAnimeSaltArticles(html, page);
     if (result) {
@@ -2213,6 +2234,18 @@ export function buildWorkerProxyUrl(targetUrl: string): string {
     "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
   return `${base}/?url=${encodeURIComponent(targetUrl)}`;
+}
+
+function buildWorkerCatalogUrl(kind: "series" | "movies", page: number): string {
+  const base = (
+    process.env.NEXT_PUBLIC_CF_PROXY_URL ||
+    process.env.CF_PROXY_URL ||
+    "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+  ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
+  const url = new URL(`${base}/catalog`);
+  url.searchParams.set("kind", kind);
+  url.searchParams.set("page", String(page));
+  return url.toString();
 }
 
 const WORKER_PROXY_URL = buildWorkerProxyUrl("");
