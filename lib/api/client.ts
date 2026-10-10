@@ -1214,7 +1214,7 @@ export async function getCatalog(
 ): Promise<AnimeCatalogResponse | null> {
   // 1. Try upstream JSON API first
   try {
-    const res = await fetch(buildApiWorkerProxyUrl(`/api/${kind}?page=${page}`), {
+    const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
       next: { revalidate: 60 },
     });
     if (res.ok) {
@@ -1431,7 +1431,7 @@ export async function searchGlobalAnime(
 
 export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null> {
   try {
-    const res = await fetch(buildApiWorkerProxyUrl("/api/newadded"), {
+    const res = await fetch(`${API_BASE_URL}/api/newadded`, {
       next: { revalidate: 60 },
     });
     if (res.ok) {
@@ -1690,7 +1690,7 @@ export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | 
 export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
   let apiFeed: HomepageApiResponse | null = null;
   try {
-    const res = await fetch(buildApiWorkerProxyUrl("/api"), {
+    const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
     });
     if (res.ok) {
@@ -1814,9 +1814,7 @@ export async function searchAnime(
 
   // 1. Try upstream API
   try {
-    const url = buildApiWorkerProxyUrl(
-      `/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`
-    );
+    const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`;
     const res = await fetch(url, {
       next: { revalidate: 60 },
     });
@@ -1998,7 +1996,7 @@ export async function getAnimeInfo(
 
   // 2. Fetch from legacy API if available
   try {
-    const url = buildApiWorkerProxyUrl(`/api/info?id=${encodeURIComponent(cleanId)}`);
+    const url = `${API_BASE_URL}/api/info?id=${encodeURIComponent(cleanId)}`;
     const res = await fetch(url, {
       next: { revalidate: 300 },
     });
@@ -2074,7 +2072,7 @@ export async function getMovieInfo(
   } catch {}
 
   try {
-    const res = await fetch(buildApiWorkerProxyUrl(`/api/movie?id=${encodeURIComponent(cleanId)}`), {
+    const res = await fetch(`${API_BASE_URL}/api/movie?id=${encodeURIComponent(cleanId)}`, {
       next: { revalidate: 300 },
     });
     if (res.ok) {
@@ -2215,11 +2213,6 @@ export function buildWorkerProxyUrl(targetUrl: string): string {
     "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
   return `${base}/?url=${encodeURIComponent(targetUrl)}`;
-}
-
-function buildApiWorkerProxyUrl(path: string): string {
-  const targetUrl = new URL(path, `${API_BASE_URL.replace(/\/+$/, "")}/`).toString();
-  return buildWorkerProxyUrl(targetUrl);
 }
 
 const WORKER_PROXY_URL = buildWorkerProxyUrl("");
