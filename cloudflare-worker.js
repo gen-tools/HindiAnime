@@ -139,7 +139,9 @@ async function handleCatalog(url, request) {
     return jsonResponse({ success: false, message: "Invalid catalog request" }, 400, request);
   }
 
-  const upstreamPath = `/${kind}/page/${page}/`;
+  const upstreamPath = page === 1
+    ? `/${kind}/feed/`
+    : `/${kind}/feed/?paged=${page}`;
   const targetUrl = `https://animesalt.cx${upstreamPath}`;
   const proxyHeaders = {
     "User-Agent": BROWSER_UA,
@@ -156,12 +158,106 @@ async function handleCatalog(url, request) {
       redirect: "follow",
       cf: { cacheTtl: 30, cacheEverything: false },
     });
+
+    let totalPages = null;
+    let pageSize = null;
+    let feedItemCount = null;
+    if (upstream.ok) {
+      try {
+        const feedText = await upstream.clone().text();
+        feedItemCount = (feedText.match(/<item(?:\s|>)/gi) || []).length;
+        if (page === 1) pageSize = feedItemCount;
+        if (page !== 1) {
+          const firstPage = await fetch(`https://animesalt.cx/${kind}/feed/`, {
+            headers: proxyHeaders,
+            redirect: "follow",
+            cf: { cacheTtl: 30, cacheEverything: false },
+          });
+          if (firstPage.ok) {
+            const firstPageText = await firstPage.text();
+            const firstPageSize = (firstPageText.match(/<item(?:\s|>)/gi) || []).length;
+            if (firstPageSize > 0) pageSize = firstPageSize;
+          }
+        }
+
+        const sitemapIndex = await fetch("https://animesalt.cx/sitemap_index.xml", {
+          headers: proxyHeaders,
+          redirect: "follow",
+          cf: { cacheTtl: 3600, cacheEverything: false },
+        });
+        if (sitemapIndex.ok) {
+          const sitemapXml = await sitemapIndex.text();
+          const sitemapUrls = [...sitemapXml.matchAll(/<loc>\s*(https?:[^<]+?)\s*<\/loc>/gi)]
+            .map((match) => {
+              try {
+                const sitemapUrl = new URL(match[1]);
+                return sitemapUrl.protocol === "https:" &&
+                  ["animesalt.cx", "www.animesalt.cx"].includes(sitemapUrl.hostname) &&
+                  new RegExp(`^/${kind}-sitemap\\d+\\.xml$`).test(sitemapUrl.pathname)
+                  ? sitemapUrl.toString()
+                  : null;
+              } catch {
+                return null;
+              }
+            })
+            .filter(Boolean);
+
+          const sitemapResults = await Promise.all(sitemapUrls.map(async (sitemapUrl) => {
+            try {
+              const sitemap = await fetch(sitemapUrl, {
+                headers: proxyHeaders,
+                redirect: "follow",
+                cf: { cacheTtl: 3600, cacheEverything: false },
+              });
+              if (!sitemap.ok) return [];
+              const xml = await sitemap.text();
+              return [...xml.matchAll(/<loc>\s*(https?:[^<]+?)\s*<\/loc>/gi)]
+                .map((match) => {
+                  try {
+                    const entryUrl = new URL(match[1]);
+                    const segments = entryUrl.pathname.split("/").filter(Boolean);
+                    return entryUrl.protocol === "https:" &&
+                      ["animesalt.cx", "www.animesalt.cx"].includes(entryUrl.hostname) &&
+                      segments.length === 2 && segments[0] === kind
+                      ? entryUrl.toString()
+                      : null;
+                  } catch {
+                    return null;
+                  }
+                })
+                .filter(Boolean);
+            } catch {
+              return [];
+            }
+          }));
+
+          const catalogEntries = new Set(sitemapResults.flat());
+          if (pageSize > 0 && catalogEntries.size > 0) {
+            totalPages = Math.ceil(catalogEntries.size / pageSize);
+          }
+        }
+      } catch {
+        // A successful public feed remains usable if optional pagination discovery fails.
+      }
+    }
+
     const headers = new Headers(upstream.headers);
     const cors = corsHeaders(request);
     for (const [key, value] of Object.entries(cors)) headers.set(key, value);
     headers.delete("x-frame-options");
     headers.delete("content-security-policy");
     headers.delete("content-security-policy-report-only");
+    if (Number.isSafeInteger(totalPages) && totalPages > 0) {
+      headers.set("x-catalog-total-pages", String(totalPages));
+    }
+    if (Number.isSafeInteger(pageSize) && pageSize > 0) {
+      headers.set("x-catalog-page-size", String(pageSize));
+    }
+    headers.set(
+      "Access-Control-Expose-Headers",
+      `${headers.get("Access-Control-Expose-Headers") || ""}, X-Catalog-Total-Pages, X-Catalog-Page-Size`
+        .replace(/^,\s*/, "")
+    );
 
     const upstreamServer = upstream.headers.get("server");
     const upstreamCfRay = upstream.headers.get("cf-ray");
@@ -177,6 +273,8 @@ async function handleCatalog(url, request) {
       contentLength: upstream.headers.get("content-length"),
       server: upstreamServer,
       cfRay: upstreamCfRay,
+      feedItemCount: Number.isSafeInteger(feedItemCount) ? feedItemCount : null,
+      totalPages,
     }));
 
     return new Response(upstream.body, {

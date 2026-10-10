@@ -585,8 +585,43 @@ const catalogPageCache = new Map<string, { data: CatalogPageResult; timestamp: n
 
 export function parseAnimeSaltArticles(
   html: string,
-  page: number
+  page: number,
+  pagination?: { totalPages?: number; pageSize?: number }
 ): CatalogPageResult | null {
+  if (/<rss\b/i.test(html)) {
+    const decodeFeedText = (value: string) =>
+      decodeHtmlEntities(value).replace(/&#(x[\da-f]+|\d+);/gi, (entity, code: string) => {
+        const point = code[0].toLowerCase() === "x"
+          ? Number.parseInt(code.slice(1), 16)
+          : Number.parseInt(code, 10);
+        return Number.isSafeInteger(point) && point > 0 && point <= 0x10ffff
+          ? String.fromCodePoint(point)
+          : entity;
+      });
+    const results: AnimeSearchResult[] = [];
+    const items = html.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi);
+    for (const item of items) {
+      const itemHtml = item[1];
+      const rawTitle = itemHtml.match(/<title(?:\s[^>]*)?>([\s\S]*?)<\/title>/i)?.[1] || "";
+      const rawLink = itemHtml.match(/<link(?:\s[^>]*)?>([\s\S]*?)<\/link>/i)?.[1] || "";
+      const title = decodeFeedText(rawTitle.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim());
+      const link = decodeFeedText(rawLink.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim());
+      const slug = cleanAnimeSlug(link);
+      if (!title || !slug || !/^https?:\/\//i.test(link)) continue;
+      results.push({ title, anime_id: link, poster: null });
+    }
+
+    if (results.length === 0) return null;
+    const reportedTotalPages = pagination?.totalPages;
+    const reportedPageSize = pagination?.pageSize;
+    const totalPages = Number.isSafeInteger(reportedTotalPages) && reportedTotalPages! > 0
+      ? reportedTotalPages!
+      : Number.isSafeInteger(reportedPageSize) && reportedPageSize! > 0 && results.length < reportedPageSize!
+        ? page
+        : page + 1;
+    return { results, totalPages, currentPage: page };
+  }
+
   const results: AnimeSearchResult[] = [];
   const artRegex = /<article[^>]*class=["'][^"']*post[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi;
   let match: RegExpExecArray | null;
@@ -647,6 +682,7 @@ export async function scrapeAnimeSaltCatalog(
         : `https://animesalt.cx/${kind}/page/${page}/`;
 
     let html: string | null = null;
+    let pagination: { totalPages?: number; pageSize?: number } | undefined;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 6000);
@@ -656,9 +692,20 @@ export async function scrapeAnimeSaltCatalog(
           signal: controller.signal,
           cache: "no-store",
         });
-        if (response.ok && response.headers.get("content-type")?.includes("text/html")) {
+        const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+        if (response.ok && /(?:text\/html|application\/(?:rss\+xml|xml)|text\/xml)/.test(contentType)) {
           const candidate = await response.text();
-          if (!is404Html(candidate)) html = candidate;
+          if (!is404Html(candidate) && (/<rss\b/i.test(candidate) || /<article\b/i.test(candidate))) {
+            html = candidate;
+          }
+          if (html) {
+            const totalPagesHeader = Number(response.headers.get("x-catalog-total-pages"));
+            const pageSizeHeader = Number(response.headers.get("x-catalog-page-size"));
+            pagination = {
+              totalPages: Number.isSafeInteger(totalPagesHeader) && totalPagesHeader > 0 ? totalPagesHeader : undefined,
+              pageSize: Number.isSafeInteger(pageSizeHeader) && pageSizeHeader > 0 ? pageSizeHeader : undefined,
+            };
+          }
         }
       } finally {
         clearTimeout(timer);
@@ -669,7 +716,44 @@ export async function scrapeAnimeSaltCatalog(
 
     if (!html) html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
-    const result = parseAnimeSaltArticles(html, page);
+    let result = parseAnimeSaltArticles(html, page, pagination);
+    if (result?.results.some((item) => !isUsableImageUrl(item.poster))) {
+      try {
+        const imageController = new AbortController();
+        const imageTimer = setTimeout(() => imageController.abort(), 6000);
+        try {
+          const imageResponse = await fetch(buildWorkerProxyUrl(url), {
+            headers: DEFAULT_SCRAPER_HEADERS,
+            signal: imageController.signal,
+            cache: "no-store",
+          });
+          const imageContentType = imageResponse.headers.get("content-type")?.toLowerCase() || "";
+          if (imageResponse.ok && imageContentType.includes("text/html")) {
+            const articleHtml = await imageResponse.text();
+            const articleResults = parseAnimeSaltArticles(articleHtml, page);
+            if (articleResults?.results.length) {
+              const postersBySlug = new Map(
+                articleResults.results
+                  .filter((item) => isUsableImageUrl(item.poster))
+                  .map((item) => [cleanAnimeSlug(item.anime_id), item.poster])
+              );
+              result = {
+                ...result,
+                results: result.results.map((item) => {
+                  if (isUsableImageUrl(item.poster)) return item;
+                  const poster = postersBySlug.get(cleanAnimeSlug(item.anime_id));
+                  return poster ? { ...item, poster } : item;
+                }),
+              };
+            }
+          }
+        } finally {
+          clearTimeout(imageTimer);
+        }
+      } catch {
+        // Keep the valid RSS catalog entries if poster enrichment is unavailable.
+      }
+    }
     if (result) {
       catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
     }
