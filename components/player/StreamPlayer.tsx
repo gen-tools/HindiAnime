@@ -465,7 +465,7 @@ export function StreamPlayer({
                 embed={activeServer.embed}
                 title={episodeTitle}
                 reloadKey={reloadKey}
-                restrictNavigation={false}
+                restrictNavigation={activeServer.label.toLowerCase().includes("mystream")}
               />
             )}
 
@@ -705,9 +705,9 @@ function ErrorState({
 
 // ─── EmbedFrame ──────────────────────────────────────────────────────────────
 //
-// Keep the main player surface permissive for provider compatibility. The
-// MyStream and Toko Hindi embeds are left unsandboxed so their provider players
-// can initialize. No current server role opts into the navigation sandbox.
+// Keep provider embeds permissive except MyStream, which opts into a sandbox
+// that blocks popups and top-frame navigation while allowing scripts, media
+// presentation, and fullscreen. Other provider embeds remain unchanged.
 // We intentionally do NOT gate player health on the iframe `onload` event:
 // cross-origin embeds initialize their video via deferred subresource/script
 // loads whose completion the parent frame cannot observe, and a short
