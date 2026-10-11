@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { Sparkles } from "lucide-react";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
+import { BrowserCatalogFallback } from "@/components/catalog/BrowserCatalogFallback";
 import { Pagination } from "@/components/ui/Pagination";
-import { NoResultsState } from "@/components/search/SearchStates";
 import { getCatalog, mapSearchItemToAnime } from "@/lib/api/client";
 import { createCanonicalMetadata } from "@/lib/seo";
 
@@ -20,11 +20,10 @@ export default async function SeriesPage({
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);
 
-  const seriesResponse = await getCatalog("series", page);
+  const seriesResponse = await getCatalog("series", page, { allowHomepageFallback: false });
   const totalPages = seriesResponse?.results?.totalPages ?? 1;
   const rawResults = seriesResponse?.results?.results ?? [];
   const seriesList = rawResults.map((item) => mapSearchItemToAnime(item, "TV"));
-
   function buildHref(p: number) {
     const next = new URLSearchParams(params as Record<string, string>);
     next.set("page", String(p));
@@ -55,9 +54,11 @@ export default async function SeriesPage({
           <h2 className="font-display text-xl font-bold text-text-primary">
             All Series
           </h2>
-          <p className="text-xs text-text-muted mt-0.5">
-            Page {page} of {totalPages} • Showing {seriesList.length} anime series
-          </p>
+          {seriesList.length > 0 && (
+            <p className="text-xs text-text-muted mt-0.5">
+              Page {page} of {totalPages} • Showing {seriesList.length} anime series
+            </p>
+          )}
         </div>
       </div>
 
@@ -69,7 +70,7 @@ export default async function SeriesPage({
         </div>
       ) : (
         <div className="mt-8">
-          <NoResultsState query="series" />
+          <BrowserCatalogFallback kind="series" page={page} />
         </div>
       )}
     </div>

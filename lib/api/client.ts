@@ -1315,16 +1315,41 @@ export async function getCountryCatalog(
 
 export async function getCatalog(
   kind: "series" | "movies",
-  page = 1
+  page = 1,
+  options: { allowHomepageFallback?: boolean } = {}
 ): Promise<AnimeCatalogResponse | null> {
   // 1. Try upstream JSON API first
   try {
+    // The catalog API uses its existing persistent last-good cache when Redis
+    // is configured. Avoid caching an upstream failure in Next.js so a retry
+    // can recover as soon as the source/API is available again.
     const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (res.ok) {
       const data = (await res.json()) as AnimeCatalogResponse;
       if (data?.results?.results && Array.isArray(data.results.results) && data.results.results.length > 0) {
+        if (data.results.results.some((item) => !isUsableImageUrl(item.poster))) {
+          const posterPage = await scrapeAnimeSaltCatalog(kind, page);
+          if (posterPage?.results.length) {
+            const postersBySlug = new Map(
+              posterPage.results
+                .filter((item) => isUsableImageUrl(item.poster))
+                .map((item) => [cleanAnimeSlug(item.anime_id), item.poster as string])
+            );
+            return {
+              ...data,
+              results: {
+                ...data.results,
+                results: data.results.results.map((item) => {
+                  if (isUsableImageUrl(item.poster)) return item;
+                  const poster = postersBySlug.get(cleanAnimeSlug(item.anime_id));
+                  return poster ? { ...item, poster } : item;
+                }),
+              },
+            };
+          }
+        }
         return data;
       }
     }
@@ -1332,7 +1357,7 @@ export async function getCatalog(
     console.error(`getCatalog ${kind} API error:`, err);
   }
 
-  // 2. Fallback: Direct scraper from animesalt.cx catalog pages (2,500+ titles, paginated)
+  // 2. Fallback: restricted Worker feed for the requested AnimeSalt catalog page.
   try {
     const scraped = await scrapeAnimeSaltCatalog(kind, page);
     if (scraped && scraped.results.length > 0) {
@@ -1350,7 +1375,7 @@ export async function getCatalog(
   }
 
   // 3. Last resort: homepage feed data (page 1 only, limited set)
-  if (page === 1) {
+  if (page === 1 && options.allowHomepageFallback !== false) {
     try {
       const feed = await getHomepageFeed();
       const sections = feed?.data?.results;

@@ -143,6 +143,13 @@ async function handleCatalog(url, request) {
     ? `/${kind}/feed/`
     : `/${kind}/feed/?paged=${page}`;
   const targetUrl = `https://animesalt.cx${upstreamPath}`;
+  const cacheKey = new Request(`${url.origin}/__catalog-cache/${kind}/${page}`);
+  let lastGoodResponse = null;
+  try {
+    lastGoodResponse = await caches.default.match(cacheKey);
+  } catch {
+    // The restricted source route remains usable if the edge cache is unavailable.
+  }
   const proxyHeaders = {
     "User-Agent": BROWSER_UA,
     Accept: "*/*",
@@ -159,13 +166,35 @@ async function handleCatalog(url, request) {
       cf: { cacheTtl: 30, cacheEverything: false },
     });
 
+    const upstreamServer = upstream.headers.get("server");
+    const upstreamCfRay = upstream.headers.get("cf-ray");
+    if (!upstream.ok && lastGoodResponse) {
+      console.warn("[catalog-proxy]", JSON.stringify({
+        kind,
+        page,
+        upstreamPath,
+        status: upstream.status,
+        contentType: upstream.headers.get("content-type"),
+        contentLength: upstream.headers.get("content-length"),
+        server: upstreamServer,
+        cfRay: upstreamCfRay,
+        cacheStatus: "stale-hit",
+      }));
+      return serveStaleCatalog(lastGoodResponse, request);
+    }
+
     let totalPages = null;
     let pageSize = null;
     let feedItemCount = null;
+    let validFeedItemCount = null;
+    let feedIsValid = false;
     if (upstream.ok) {
       try {
         const feedText = await upstream.clone().text();
         feedItemCount = (feedText.match(/<item(?:\s|>)/gi) || []).length;
+        validFeedItemCount = countValidCatalogFeedItems(feedText, kind);
+        feedIsValid = /<rss\b/i.test(feedText) && validFeedItemCount > 0;
+        if (!feedIsValid) throw new Error("Catalog response was not a nonempty RSS feed");
         if (page === 1) pageSize = feedItemCount;
         if (page !== 1) {
           const firstPage = await fetch(`https://animesalt.cx/${kind}/feed/`, {
@@ -241,6 +270,21 @@ async function handleCatalog(url, request) {
       }
     }
 
+    if (upstream.ok && !feedIsValid && lastGoodResponse) {
+      console.warn("[catalog-proxy]", JSON.stringify({
+        kind,
+        page,
+        upstreamPath,
+        status: upstream.status,
+        contentType: upstream.headers.get("content-type"),
+        contentLength: upstream.headers.get("content-length"),
+        server: upstreamServer,
+        cfRay: upstreamCfRay,
+        cacheStatus: "stale-hit-invalid-feed",
+      }));
+      return serveStaleCatalog(lastGoodResponse, request);
+    }
+
     const headers = new Headers(upstream.headers);
     const cors = corsHeaders(request);
     for (const [key, value] of Object.entries(cors)) headers.set(key, value);
@@ -259,8 +303,6 @@ async function handleCatalog(url, request) {
         .replace(/^,\s*/, "")
     );
 
-    const upstreamServer = upstream.headers.get("server");
-    const upstreamCfRay = upstream.headers.get("cf-ray");
     if (upstreamServer) headers.set("x-catalog-upstream-server", upstreamServer);
     if (upstreamCfRay) headers.set("x-catalog-upstream-cf-ray", upstreamCfRay);
 
@@ -274,8 +316,31 @@ async function handleCatalog(url, request) {
       server: upstreamServer,
       cfRay: upstreamCfRay,
       feedItemCount: Number.isSafeInteger(feedItemCount) ? feedItemCount : null,
+      validFeedItemCount: Number.isSafeInteger(validFeedItemCount) ? validFeedItemCount : null,
       totalPages,
+      cacheStatus: "refresh",
     }));
+
+    if (upstream.ok && feedIsValid) {
+      try {
+        const cachedHeaders = new Headers(headers);
+        cachedHeaders.delete("access-control-allow-origin");
+        cachedHeaders.delete("set-cookie");
+        cachedHeaders.set("Cache-Control", "public, max-age=604800");
+        cachedHeaders.set("x-catalog-feed-item-count", String(feedItemCount));
+        await caches.default.put(cacheKey, new Response(upstream.clone().body, {
+          status: 200,
+          headers: cachedHeaders,
+        }));
+      } catch (error) {
+        console.warn("[catalog-proxy-cache]", JSON.stringify({
+          kind,
+          page,
+          status: "write-failed",
+          errorName: error?.name || "Error",
+        }));
+      }
+    }
 
     return new Response(upstream.body, {
       status: upstream.status,
@@ -292,9 +357,65 @@ async function handleCatalog(url, request) {
       upstreamPath,
       errorName: error?.name || "Error",
       errorMessage: message,
+      cacheStatus: lastGoodResponse ? "stale-hit" : "miss",
     }));
+    if (lastGoodResponse) return serveStaleCatalog(lastGoodResponse, request);
     return jsonResponse({ success: false, message: "Catalog upstream request failed" }, 502, request);
   }
+}
+
+function countValidCatalogFeedItems(feedText, kind) {
+  const items = feedText.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi);
+  let validCount = 0;
+
+  for (const [, item] of items) {
+    const rawTitle = item.match(/<title(?:\s[^>]*)?>([\s\S]*?)<\/title>/i)?.[1] || "";
+    const rawLink = item.match(/<link(?:\s[^>]*)?>([\s\S]*?)<\/link>/i)?.[1] || "";
+    const title = rawTitle.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim();
+    const link = rawLink
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+      .replace(/&amp;/gi, "&")
+      .trim();
+
+    try {
+      const detail = new URL(link);
+      const segments = detail.pathname.split("/").filter(Boolean);
+      if (
+        title &&
+        detail.protocol === "https:" &&
+        ["animesalt.cx", "www.animesalt.cx"].includes(detail.hostname) &&
+        segments.length === 2 &&
+        segments[0] === kind &&
+        segments[1]
+      ) validCount += 1;
+    } catch {
+      // Ignore malformed RSS entries when deciding whether the feed is cacheable.
+    }
+  }
+
+  return validCount;
+}
+
+function serveStaleCatalog(cachedResponse, request) {
+  const headers = new Headers(cachedResponse.headers);
+  for (const [key, value] of Object.entries(corsHeaders(request))) headers.set(key, value);
+  headers.set("Cache-Control", "no-store");
+  headers.set("X-Catalog-Cache", "stale");
+  const exposedHeaders = new Set(
+    (headers.get("Access-Control-Expose-Headers") || "")
+      .split(",")
+      .map((header) => header.trim())
+      .filter(Boolean)
+  );
+  exposedHeaders.add("X-Catalog-Total-Pages");
+  exposedHeaders.add("X-Catalog-Page-Size");
+  exposedHeaders.add("X-Catalog-Cache");
+  headers.set("Access-Control-Expose-Headers", [...exposedHeaders].join(", "));
+  console.info("[catalog-proxy-cache]", JSON.stringify({
+    status: "stale-served",
+    itemCount: Number(headers.get("x-catalog-feed-item-count")) || null,
+  }));
+  return new Response(cachedResponse.body, { status: 200, headers });
 }
 
 // ── /stream handler ───────────────────────────────────────────────────────────

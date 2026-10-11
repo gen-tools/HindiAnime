@@ -3,12 +3,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Play, Info, Sparkles, Clock } from "lucide-react";
 import { PosterArt } from "@/components/anime/PosterArt";
+import { BrowserCatalogFallback } from "@/components/catalog/BrowserCatalogFallback";
 import { RatingBadge } from "@/components/ui/RatingBadge";
 import { LanguageBadges } from "@/components/anime/LanguageBadges";
 import { ButtonLink } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Badge } from "@/components/ui/Badge";
-import { NoResultsState } from "@/components/search/SearchStates";
+import { CatalogUnavailableState, NoResultsState } from "@/components/search/SearchStates";
 import { Pagination } from "@/components/ui/Pagination";
 import {
   enrichAnimeSynopses,
@@ -53,7 +54,7 @@ export default async function MoviesPage({
   }
 
   const page = Math.max(1, Number(filterParams.get("page")) || 1);
-  const movieResponse = await getCatalog("movies", page);
+  const movieResponse = await getCatalog("movies", page, { allowHomepageFallback: false });
   const totalPages = movieResponse?.results?.totalPages ?? 1;
   const apiMovies = await enrichAnimeSynopses(
     (movieResponse?.results?.results ?? []).map((item) =>
@@ -171,9 +172,11 @@ export default async function MoviesPage({
             <h2 className="font-display text-2xl font-bold text-text-primary">
               All Anime Movies
             </h2>
-            <p className="text-xs text-text-muted mt-0.5">
-              Page {page} of {totalPages} • Showing {results.length} full-length theatrical features &amp; specials
-            </p>
+            {apiMovies.length > 0 && (
+              <p className="text-xs text-text-muted mt-0.5">
+                Page {page} of {totalPages} • Showing {results.length} full-length theatrical features &amp; specials
+              </p>
+            )}
           </div>
 
           {/* Quick Category Chips */}
@@ -312,7 +315,16 @@ export default async function MoviesPage({
           </div>
           <Pagination page={page} totalPages={totalPages} buildHref={buildHref} />
         </>
-      ) : (
+        ) : apiMovies.length === 0 &&
+          category === "all" && !genre && !language && !year && !filterParams.has("sort") ? (
+          <BrowserCatalogFallback kind="movies" page={page} />
+        ) : apiMovies.length === 0 ? (
+          <div className="mt-8">
+            <CatalogUnavailableState
+              retryHref={`/movies${filterParams.size ? `?${filterParams.toString()}` : ""}`}
+            />
+          </div>
+        ) : (
           <div className="mt-8">
             <NoResultsState />
           </div>
