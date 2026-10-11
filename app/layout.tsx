@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Inter, Manrope, Bebas_Neue } from "next/font/google";
 import "./globals.css";
 import { Header } from "@/components/layout/Header";
@@ -95,6 +96,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </main>
         <Footer />
         <MobileBottomNav />
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-TJRESED02F"
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){window.dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-TJRESED02F');
+          `}
+        </Script>
       </body>
     </html>
   );

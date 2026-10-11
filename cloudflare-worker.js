@@ -1,3 +1,5 @@
+import { WorkerEntrypoint } from "cloudflare:workers";
+
 /**
  * HindiAnime Stream Worker (Toko Backend Powered)
  *
@@ -17,6 +19,8 @@ const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const TOKO_API_URL = "https://api-delta-taupe-46.vercel.app";
+const ANIMESALT_HOMEPAGE_URL = "https://animesalt.cx/";
+const HOMEPAGE_CACHE_CONTROL = "public, max-age=300, stale-if-error=86400";
 
 const ALLOWED_ORIGINS = [
   "https://hindianime-seven.vercel.app",
@@ -86,6 +90,28 @@ export default {
       Pragma: "no-cache",
     };
 
+    const targetHostPath = `${parsedTarget.hostname}${parsedTarget.pathname}`;
+    console.info("[general-proxy]", JSON.stringify({
+      event: "handler-entry",
+      target: targetHostPath,
+    }));
+
+    // The router entrypoint remains uncached. Only this exact GET is delegated
+    // to the separately cache-enabled homepage entrypoint (Wrangler config).
+    if (request.method === "GET" && targetUrl === ANIMESALT_HOMEPAGE_URL) {
+      try {
+        return await ctx.exports.AnimeSaltHomepageCache.fetch(request);
+      } catch (err) {
+        console.warn("[general-proxy]", JSON.stringify({
+          event: "homepage-cache-entrypoint-error",
+          target: targetHostPath,
+          errorName: err instanceof Error ? err.name : "UnknownError",
+        }));
+        return homepageUnavailableResponse(request);
+      }
+    }
+
+    const upstreamStartedAt = Date.now();
     try {
       const proxyRequest = new Request(targetUrl, {
         method: request.method === "HEAD" ? "GET" : request.method,
@@ -95,6 +121,59 @@ export default {
       });
 
       const response = await fetch(proxyRequest, { cf: { cacheTtl: 30, cacheEverything: false } });
+      const upstreamLocation = response.headers.get("location");
+      let locationHostPath = null;
+      if (upstreamLocation) {
+        try {
+          const parsedLocation = new URL(upstreamLocation, targetUrl);
+          locationHostPath = `${parsedLocation.hostname}${parsedLocation.pathname}`;
+        } catch {
+          locationHostPath = "invalid-location";
+        }
+      }
+      console.info("[general-proxy]", JSON.stringify({
+        event: "upstream-response",
+        target: targetHostPath,
+        status: response.status,
+        server: response.headers.get("server"),
+        cfRay: response.headers.get("cf-ray"),
+        location: locationHostPath,
+        contentType: response.headers.get("content-type"),
+        elapsedMs: Date.now() - upstreamStartedAt,
+      }));
+      if (
+        response.status === 403 &&
+        parsedTarget.hostname === "animesalt.cx" &&
+        parsedTarget.pathname === "/" &&
+        (response.headers.get("content-type") || "").toLowerCase().includes("text/html")
+      ) {
+        const classifyPromise = response.clone().text().then((html) => {
+          const code = html.match(/\b(?:error\s*)?(1006|1009|1010|1015|1020|1026|1033)\b/i)?.[1] || null;
+          const classification =
+            response.headers.get("cf-mitigated")?.toLowerCase() === "challenge" ||
+            /<title>\s*just a moment/i.test(html) ||
+            /(?:id=["']challenge-form["']|__cf_chl_(?:tk|opt)|cf-chl-widget)/i.test(html)
+              ? "cloudflare-challenge"
+              : code === "1020" || /sorry, you have been blocked|access denied/i.test(html)
+                ? "access-denied"
+                : "unclassified-html-403";
+          console.warn("[general-proxy]", JSON.stringify({
+            event: "upstream-403-classification",
+            target: targetHostPath,
+            classification,
+            cloudflareCode: code,
+          }));
+        }).catch((err) => {
+          console.warn("[general-proxy]", JSON.stringify({
+            event: "upstream-403-classification",
+            target: targetHostPath,
+            classification: "body-inspection-error",
+            errorName: err instanceof Error ? err.name : "UnknownError",
+          }));
+        });
+        if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(classifyPromise);
+        else classifyPromise.catch(() => {});
+      }
       const responseHeaders = new Headers(response.headers);
       const corsH = corsHeaders(request);
       for (const [k, v] of Object.entries(corsH)) responseHeaders.set(k, v);
@@ -108,6 +187,12 @@ export default {
         headers: responseHeaders,
       });
     } catch (err) {
+      console.warn("[general-proxy]", JSON.stringify({
+        event: "fetch-exception",
+        target: targetHostPath,
+        errorName: err instanceof Error ? err.name : "UnknownError",
+        elapsedMs: Date.now() - upstreamStartedAt,
+      }));
       return new Response(JSON.stringify({ error: "Proxy fetch failed", detail: String(err) }), {
         status: 502,
         headers: { "Content-Type": "application/json", ...corsHeaders(request) },
@@ -115,6 +200,263 @@ export default {
     }
   },
 };
+
+// This entrypoint is enabled for Workers Caching separately from the default
+// router entrypoint. The default router delegates only the exact homepage GET.
+export class AnimeSaltHomepageCache extends WorkerEntrypoint {
+  async fetch(request) {
+    const requestUrl = new URL(request.url);
+    const targetUrl = requestUrl.searchParams.get("url");
+    if (request.method !== "GET" || targetUrl !== ANIMESALT_HOMEPAGE_URL) {
+      return homepageUnavailableResponse(request, 404);
+    }
+
+    const startedAt = Date.now();
+    const targetHostPath = "animesalt.cx/";
+    try {
+      const upstream = await fetch(new Request(ANIMESALT_HOMEPAGE_URL, {
+        method: "GET",
+        headers: {
+          "User-Agent": BROWSER_UA,
+          Accept: "*/*",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+        redirect: "follow",
+      }));
+
+      const contentType = upstream.headers.get("content-type");
+      const location = upstream.headers.get("location");
+      let locationHostPath = null;
+      if (location) {
+        try {
+          const parsedLocation = new URL(location, ANIMESALT_HOMEPAGE_URL);
+          locationHostPath = `${parsedLocation.hostname}${parsedLocation.pathname}`;
+        } catch {
+          locationHostPath = "invalid-location";
+        }
+      }
+      console.info("[general-proxy]", JSON.stringify({
+        event: "upstream-response",
+        target: targetHostPath,
+        status: upstream.status,
+        server: upstream.headers.get("server"),
+        cfRay: upstream.headers.get("cf-ray"),
+        location: locationHostPath,
+        contentType,
+        elapsedMs: Date.now() - startedAt,
+      }));
+
+      if (upstream.status !== 200) {
+        if (upstream.status === 403 && (contentType || "").toLowerCase().includes("text/html")) {
+          await logHomepage403Classification(upstream, targetHostPath);
+        }
+        if (isTransientHomepageStatus(upstream.status)) {
+          console.warn("[general-proxy]", JSON.stringify({
+            event: "homepage-cache-fallback",
+            target: targetHostPath,
+            upstreamStatus: upstream.status,
+            responseStatus: 503,
+          }));
+          return homepageUnavailableResponse(request);
+        }
+        return homepagePassThroughResponse(upstream, request);
+      }
+
+      if (!(contentType || "").toLowerCase().includes("text/html")) {
+        console.warn("[general-proxy]", JSON.stringify({
+          event: "homepage-invalid-response",
+          target: targetHostPath,
+          upstreamStatus: upstream.status,
+          contentType,
+          reason: "not-html",
+        }));
+        return homepageUnavailableResponse(request);
+      }
+
+      const html = await upstream.clone().text();
+      const validation = validateAnimeSaltHomepage(html, upstream.headers);
+      if (!validation.valid) {
+        console.warn("[general-proxy]", JSON.stringify({
+          event: "homepage-invalid-response",
+          target: targetHostPath,
+          upstreamStatus: upstream.status,
+          contentType,
+          responseBytes: new TextEncoder().encode(html).byteLength,
+          entryCount: validation.entryCount,
+          reason: validation.reason,
+        }));
+        return homepageUnavailableResponse(request);
+      }
+
+      const headers = homepageResponseHeaders(upstream.headers, request);
+      headers.set("Cache-Control", HOMEPAGE_CACHE_CONTROL);
+      headers.set("Cloudflare-CDN-Cache-Control", HOMEPAGE_CACHE_CONTROL);
+      headers.set("Vary", appendVary(headers.get("Vary"), "Origin"));
+      console.info("[general-proxy]", JSON.stringify({
+        event: "homepage-cacheable-response",
+        target: targetHostPath,
+        status: 200,
+        responseBytes: new TextEncoder().encode(html).byteLength,
+        entryCount: validation.entryCount,
+        sections: validation.sections,
+        elapsedMs: Date.now() - startedAt,
+      }));
+      return new Response(upstream.body, {
+        status: 200,
+        statusText: upstream.statusText,
+        headers,
+      });
+    } catch (error) {
+      console.warn("[general-proxy]", JSON.stringify({
+        event: "homepage-fetch-exception",
+        target: targetHostPath,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        elapsedMs: Date.now() - startedAt,
+        responseStatus: 503,
+      }));
+      return homepageUnavailableResponse(request);
+    }
+  }
+}
+
+function isTransientHomepageStatus(status) {
+  return status === 403 || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function homepageResponseHeaders(upstreamHeaders, request) {
+  const headers = new Headers(upstreamHeaders);
+  for (const [key, value] of Object.entries(corsHeaders(request))) headers.set(key, value);
+  headers.delete("x-frame-options");
+  headers.delete("content-security-policy");
+  headers.delete("content-security-policy-report-only");
+  return headers;
+}
+
+function homepagePassThroughResponse(upstream, request) {
+  const headers = homepageResponseHeaders(upstream.headers, request);
+  headers.set("Cloudflare-CDN-Cache-Control", "no-store");
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers,
+  });
+}
+
+function homepageUnavailableResponse(request, status = 503) {
+  return new Response(JSON.stringify({ error: "AnimeSalt homepage temporarily unavailable" }), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "Cloudflare-CDN-Cache-Control": "no-store",
+      ...corsHeaders(request),
+    },
+  });
+}
+
+function appendVary(current, value) {
+  const values = new Set((current || "").split(",").map((item) => item.trim()).filter(Boolean));
+  values.add(value);
+  return [...values].join(", ");
+}
+
+function validateAnimeSaltHomepage(html, headers) {
+  const challenge =
+    headers.get("cf-mitigated")?.toLowerCase() === "challenge" ||
+    /<title>\s*just a moment/i.test(html) ||
+    /(?:id=["']challenge-form["']|__cf_chl_(?:tk|opt)|cf-chl-widget)/i.test(html) ||
+    /sorry, you have been blocked|access denied/i.test(html);
+  if (challenge) return { valid: false, entryCount: 0, sections: {}, reason: "challenge-or-denial" };
+  if (!/<html\b/i.test(html)) return { valid: false, entryCount: 0, sections: {}, reason: "missing-html-document" };
+
+  const sections = {
+    freshDrops: countHomepageArticleEntries(html, "Fresh Drops"),
+    mostWatchedSeries: countHomepageChartEntries(html, "Most-Watched Series"),
+    mostWatchedFilms: countHomepageChartEntries(html, "Most-Watched Films"),
+  };
+  const entryCount = Object.values(sections).reduce((sum, count) => sum + count, 0);
+  return {
+    valid: entryCount >= 2,
+    entryCount,
+    sections,
+    reason: entryCount >= 2 ? null : "no-recognized-homepage-entries",
+  };
+}
+
+function homepageSectionChunk(html, sectionName) {
+  const index = html.indexOf(sectionName);
+  if (index < 0) return "";
+  const sectionHtml = html.slice(index, index + 40000);
+  const nextSection = sectionHtml.indexOf('class="section-title', 50);
+  return nextSection > 0 ? sectionHtml.slice(0, nextSection) : sectionHtml;
+}
+
+function countHomepageArticleEntries(html, sectionName) {
+  const chunk = homepageSectionChunk(html, sectionName);
+  const articles = chunk.matchAll(/<article\b[^>]*class=["'][^"']*\bpost\b[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi);
+  let count = 0;
+  for (const [, article] of articles) if (isValidHomepageCard(article, false)) count += 1;
+  return count;
+}
+
+function countHomepageChartEntries(html, sectionName) {
+  const chunk = homepageSectionChunk(html, sectionName);
+  const items = chunk.matchAll(/<div\b[^>]*class=["'][^"']*\bchart-item\b[^"']*["'][^>]*>([\s\S]*?)(?=<div\b[^>]*class=["'][^"']*\bchart-item\b|$)/gi);
+  let count = 0;
+  for (const [, item] of items) if (isValidHomepageCard(item, true)) count += 1;
+  return count;
+}
+
+function isValidHomepageCard(markup, isChart) {
+  const href = markup.match(/<a\b[^>]*href=["']([^"']+)["']/i)?.[1];
+  const imageMarkup = markup.match(/<img\b[^>]*>/i)?.[0] || "";
+  const image = imageMarkup.match(/\b(?:src|data-src|data-lazy-src)=["']([^"']+)["']/i)?.[1];
+  const title = isChart
+    ? markup.match(/class=["']chart-title["'][^>]*>([\s\S]*?)<\//i)?.[1]
+    : markup.match(/class=["']entry-title["'][^>]*>([\s\S]*?)<\//i)?.[1];
+  if (!href || !image || !title?.replace(/<[^>]+>/g, "").trim()) return false;
+
+  try {
+    const detail = new URL(href, ANIMESALT_HOMEPAGE_URL);
+    const poster = new URL(image, ANIMESALT_HOMEPAGE_URL);
+    return detail.protocol === "https:" &&
+      ["animesalt.cx", "www.animesalt.cx"].includes(detail.hostname) &&
+      detail.pathname !== "/" &&
+      ["http:", "https:"].includes(poster.protocol);
+  } catch {
+    return false;
+  }
+}
+
+async function logHomepage403Classification(response, target) {
+  try {
+    const html = await response.clone().text();
+    const code = html.match(/\b(?:error\s*)?(1006|1009|1010|1015|1020|1026|1033)\b/i)?.[1] || null;
+    const classification =
+      response.headers.get("cf-mitigated")?.toLowerCase() === "challenge" ||
+      /<title>\s*just a moment/i.test(html) ||
+      /(?:id=["']challenge-form["']|__cf_chl_(?:tk|opt)|cf-chl-widget)/i.test(html)
+        ? "cloudflare-challenge"
+        : code === "1020" || /sorry, you have been blocked|access denied/i.test(html)
+          ? "access-denied"
+          : "unclassified-html-403";
+    console.warn("[general-proxy]", JSON.stringify({
+      event: "upstream-403-classification",
+      target,
+      classification,
+      cloudflareCode: code,
+    }));
+  } catch (error) {
+    console.warn("[general-proxy]", JSON.stringify({
+      event: "upstream-403-classification",
+      target,
+      classification: "body-inspection-error",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    }));
+  }
+}
 
 // Fetch only known AnimeSalt catalog pages. Callers provide a catalog kind and
 // page number, never an arbitrary target URL, so this route cannot proxy back to
