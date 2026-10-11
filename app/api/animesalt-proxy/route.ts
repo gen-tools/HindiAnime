@@ -23,7 +23,7 @@ function isAllowedHost(hostname: string): boolean {
 const CF_PROXY_RAW =
   process.env.CF_PROXY_URL ||
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
+  "https://proxy.hindi-anime.com/?url=";
 
 const CF_PROXY = CF_PROXY_RAW.includes("?url=")
   ? CF_PROXY_RAW

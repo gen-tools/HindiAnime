@@ -54,9 +54,14 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
     // Our own /api/ proxy URLs and Cloudflare Worker proxy URLs are safe by
     // construction — skip the external URL validator (which rejects root-path URLs).
-    const isOwnProxy =
-      streamUrl.startsWith("/api/") ||
-      streamUrl.includes(".workers.dev");
+    let isWorkerProxy = false;
+    try {
+      const streamHost = new URL(streamUrl).hostname.toLowerCase();
+      isWorkerProxy = streamHost === "proxy.hindi-anime.com" || streamHost.endsWith(".workers.dev");
+    } catch {
+      // Relative application API URLs are handled separately below.
+    }
+    const isOwnProxy = streamUrl.startsWith("/api/") || isWorkerProxy;
     const isAllowedRubyServer4 = (() => {
       if (
         item.server !== "Server 4" ||
@@ -112,7 +117,7 @@ function abortPlaybackRequest(controller: AbortController | null, message: strin
 
 // CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
 const CF_WORKER_BASE = (
-  process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+  process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://proxy.hindi-anime.com"
 )
   .replace(/\/\?url=$/, "")
   .replace(/\?url=$/, "")

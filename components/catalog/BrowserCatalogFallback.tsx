@@ -16,7 +16,7 @@ const ALLOWED_HOSTS = new Set(["animesalt.cx", "www.animesalt.cx"]);
 function workerBaseUrl(): string {
   return (
     process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-    "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+    "https://proxy.hindi-anime.com"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
 }
 

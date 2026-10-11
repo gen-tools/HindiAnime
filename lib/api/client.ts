@@ -2526,7 +2526,7 @@ export function buildWorkerProxyUrl(targetUrl: string): string {
   const base = (
     process.env.NEXT_PUBLIC_CF_PROXY_URL ||
     process.env.CF_PROXY_URL ||
-    "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+    "https://proxy.hindi-anime.com"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
   return `${base}/?url=${encodeURIComponent(targetUrl)}`;
 }
@@ -2535,7 +2535,7 @@ function buildWorkerCatalogUrl(kind: "series" | "movies", page: number): string 
   const base = (
     process.env.NEXT_PUBLIC_CF_PROXY_URL ||
     process.env.CF_PROXY_URL ||
-    "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+    "https://proxy.hindi-anime.com"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
   const url = new URL(`${base}/catalog`);
   url.searchParams.set("kind", kind);

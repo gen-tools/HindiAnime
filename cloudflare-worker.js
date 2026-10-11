@@ -21,15 +21,170 @@ const BROWSER_UA =
 const TOKO_API_URL = "https://api-delta-taupe-46.vercel.app";
 const ANIMESALT_HOMEPAGE_URL = "https://animesalt.cx/";
 const HOMEPAGE_CACHE_CONTROL = "public, max-age=300, stale-if-error=86400";
+const HOMEPAGE_KV_BINDING = "ANIMESALT_HOMEPAGE_KV";
+const HOMEPAGE_KV_KEY = "animesalt-homepage:last-good:v1";
+const HOMEPAGE_MAX_STALE_MS = 24 * 60 * 60 * 1000;
+const HOMEPAGE_FRESH_MS = 5 * 60 * 1000;
+const CATALOG_FRESH_MS = 5 * 60 * 1000;
 
 const ALLOWED_ORIGINS = [
+  "https://hindi-anime.com",
   "https://hindianime-seven.vercel.app",
   "http://localhost:3000",
   "https://localhost:3000",
   "http://localhost:3001",
   "https://localhost:3001",
-  // allow any localhost for dev convenience
 ];
+
+const ALLOWED_GENERAL_HOSTS = new Set([
+  "animesalt.cx",
+  "api-delta-taupe-46.vercel.app",
+]);
+
+function isPositiveInteger(value, maxDigits = 12) {
+  return typeof value === "string" &&
+    value.length <= maxDigits &&
+    /^[1-9]\d*$/.test(value) &&
+    Number.isSafeInteger(Number(value));
+}
+
+function isSafeAnimeSaltSlug(value) {
+  try {
+    const decoded = decodeURIComponent(value);
+    return /^[\p{L}\p{N}]+(?:[\p{L}\p{N}-]*[\p{L}\p{N}])?$/u.test(decoded);
+  } catch {
+    return false;
+  }
+}
+
+function hasOnlyQueryKeys(url, allowedKeys) {
+  return Array.from(url.searchParams.keys()).every((key) => allowedKeys.has(key));
+}
+
+function isAllowedAnimeSaltTarget(url) {
+  const path = url.pathname;
+  const parts = path.split("/").filter(Boolean);
+
+  if (path === "/") {
+    const queries = url.searchParams.getAll("s");
+    return hasOnlyQueryKeys(url, new Set(["s"])) &&
+      (queries.length === 0 || (queries.length === 1 && queries[0].trim().length > 0 && queries[0].length <= 120));
+  }
+
+  if (/^\/page\/[1-9]\d*\/$/.test(path)) {
+    const queries = url.searchParams.getAll("s");
+    return isPositiveInteger(parts[1]) &&
+      hasOnlyQueryKeys(url, new Set(["s"])) &&
+      queries.length === 1 && queries[0].trim().length > 0 && queries[0].length <= 120;
+  }
+
+  if (parts[0] === "series" || parts[0] === "movies") {
+    if (url.search || url.hash) return false;
+    if (parts.length === 1) return path.endsWith("/");
+    if (parts.length === 2) return isSafeAnimeSaltSlug(parts[1]) && path.endsWith("/");
+    return parts.length === 3 && parts[1] === "page" &&
+      isPositiveInteger(parts[2]) && path.endsWith("/");
+  }
+
+  if (parts[0] === "episode") {
+    return parts.length === 2 && isSafeAnimeSaltSlug(parts[1]) && path.endsWith("/") &&
+      !url.search && !url.hash;
+  }
+
+  if (parts[0] === "category" && (parts[1] === "genre" || parts[1] === "language")) {
+    if (parts.length === 3) {
+      return isSafeAnimeSaltSlug(parts[2]) && path.endsWith("/") && !url.search && !url.hash;
+    }
+    return parts.length === 5 && isSafeAnimeSaltSlug(parts[2]) && parts[3] === "page" &&
+      isPositiveInteger(parts[4]) && path.endsWith("/") && !url.search && !url.hash;
+  }
+
+  if (parts[0] === "category" && parts[1] === "type" && parts[2] === "cartoon") {
+    const types = url.searchParams.getAll("type");
+    const allowedPath = parts.length === 3 ||
+      (parts.length === 5 && parts[3] === "page" && isPositiveInteger(parts[4]));
+    return allowedPath && path.endsWith("/") &&
+      hasOnlyQueryKeys(url, new Set(["type"])) &&
+      types.length === 1 && (types[0] === "series" || types[0] === "movies");
+  }
+
+  if (path === "/wp-admin/admin-ajax.php") {
+    const actions = url.searchParams.getAll("action");
+    const seasons = url.searchParams.getAll("season");
+    const posts = url.searchParams.getAll("post");
+    return hasOnlyQueryKeys(url, new Set(["action", "season", "post"])) &&
+      actions.length === 1 && actions[0] === "action_select_season" &&
+      seasons.length === 1 && isPositiveInteger(seasons[0], 4) &&
+      posts.length === 1 && isPositiveInteger(posts[0], 12);
+  }
+
+  return false;
+}
+
+function isAllowedTokoStreamTarget(url) {
+  if (url.pathname !== "/api/v3/toko/stream" || url.hash) return false;
+  const allowedKeys = new Set(["titles[]", "season", "episode", "stream"]);
+  if (!hasOnlyQueryKeys(url, allowedKeys)) return false;
+
+  const titles = url.searchParams.getAll("titles[]");
+  const seasons = url.searchParams.getAll("season");
+  const episodes = url.searchParams.getAll("episode");
+  const streams = url.searchParams.getAll("stream");
+  return titles.length >= 1 && titles.length <= 4 &&
+    titles.every((title) => title.trim().length > 0 && title.length <= 160 && !/[\u0000-\u001f]/.test(title)) &&
+    seasons.length === 1 && isPositiveInteger(seasons[0], 4) &&
+    episodes.length === 1 && isPositiveInteger(episodes[0], 5) &&
+    streams.length <= 1 && (streams.length === 0 || streams[0] === "0");
+}
+
+function isAllowedGeneralTarget(url) {
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.hash ||
+    !ALLOWED_GENERAL_HOSTS.has(url.hostname.toLowerCase())
+  ) return false;
+
+  if (url.hostname.toLowerCase() === "animesalt.cx") return isAllowedAnimeSaltTarget(url);
+  if (url.hostname.toLowerCase() === "api-delta-taupe-46.vercel.app") return isAllowedTokoStreamTarget(url);
+  return false;
+}
+
+async function fetchWithAllowedRedirects(request, isAllowedTarget, fetchOptions = {}) {
+  let currentUrl = new URL(request.url);
+  const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    if (!isAllowedTarget(currentUrl)) return { response: null, blockedRedirect: redirects > 0 };
+    const currentRequest = new Request(currentUrl.toString(), {
+      method: request.method,
+      headers: request.headers,
+      redirect: "manual",
+    });
+    const response = await fetch(currentRequest, fetchOptions);
+    const location = response.headers.get("location");
+    if (!redirectStatuses.has(response.status) || !location) {
+      return { response, blockedRedirect: false };
+    }
+
+    let nextUrl;
+    try {
+      nextUrl = new URL(location, currentUrl);
+    } catch {
+      await response.body?.cancel().catch(() => {});
+      return { response: null, blockedRedirect: true };
+    }
+    await response.body?.cancel().catch(() => {});
+    if (!isAllowedTarget(nextUrl) || redirects === 5) {
+      return { response: null, blockedRedirect: true };
+    }
+    currentUrl = nextUrl;
+  }
+
+  return { response: null, blockedRedirect: true };
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -37,6 +192,20 @@ export default {
 
     // ── CORS preflight ────────────────────────────────────────────────────────
     if (request.method === "OPTIONS") {
+      const origin = request.headers.get("Origin") || "";
+      const requestedMethod = request.headers.get("Access-Control-Request-Method");
+      const requestedHeaders = (request.headers.get("Access-Control-Request-Headers") || "")
+        .split(",")
+        .map((header) => header.trim().toLowerCase())
+        .filter(Boolean);
+      const allowedHeaders = new Set(["content-type", "authorization", "accept", "range"]);
+      if (
+        (origin && !ALLOWED_ORIGINS.includes(origin)) ||
+        (requestedMethod && requestedMethod.toUpperCase() !== "GET") ||
+        requestedHeaders.some((header) => !allowedHeaders.has(header))
+      ) {
+        return new Response(null, { status: 403, headers: { Vary: "Origin" } });
+      }
       return new Response(null, { status: 204, headers: corsHeaders(request) });
     }
 
@@ -64,6 +233,13 @@ export default {
     }
 
     // ── Route: / — general CORS proxy via ?url= ───────────────────────────────
+    if (request.method !== "GET") {
+      return new Response(JSON.stringify({ error: "Method not allowed" }), {
+        status: 405,
+        headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+      });
+    }
+
     const targetUrl = url.searchParams.get("url");
     if (!targetUrl) {
       return new Response(JSON.stringify({ error: "Missing ?url= parameter" }), {
@@ -78,6 +254,13 @@ export default {
     } catch {
       return new Response(JSON.stringify({ error: "Invalid URL" }), {
         status: 400,
+        headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+      });
+    }
+
+    if (!isAllowedGeneralTarget(parsedTarget)) {
+      return new Response(JSON.stringify({ error: "Target URL not allowed" }), {
+        status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders(request) },
       });
     }
@@ -114,13 +297,25 @@ export default {
     const upstreamStartedAt = Date.now();
     try {
       const proxyRequest = new Request(targetUrl, {
-        method: request.method === "HEAD" ? "GET" : request.method,
+        method: "GET",
         headers: proxyHeaders,
-        body: ["POST", "PUT", "PATCH"].includes(request.method) ? request.body : undefined,
-        redirect: "follow",
+        redirect: "manual",
       });
 
-      const response = await fetch(proxyRequest, { cf: { cacheTtl: 30, cacheEverything: false } });
+      const { response, blockedRedirect } = await fetchWithAllowedRedirects(
+        proxyRequest,
+        isAllowedGeneralTarget,
+        { cf: { cacheTtl: 30, cacheEverything: false } }
+      );
+      if (!response) {
+        if (blockedRedirect) {
+          return new Response(JSON.stringify({ error: "Redirect target not allowed" }), {
+            status: 403,
+            headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+          });
+        }
+        throw new Error("Proxy request failed");
+      }
       const upstreamLocation = response.headers.get("location");
       let locationHostPath = null;
       if (upstreamLocation) {
@@ -213,8 +408,17 @@ export class AnimeSaltHomepageCache extends WorkerEntrypoint {
 
     const startedAt = Date.now();
     const targetHostPath = "animesalt.cx/";
+    const freshCachedResponse = await getLastGoodHomepage(
+      this.env,
+      request,
+      "fresh-cache-check",
+      HOMEPAGE_FRESH_MS,
+      true
+    );
+    if (freshCachedResponse) return freshCachedResponse;
+
     try {
-      const upstream = await fetch(new Request(ANIMESALT_HOMEPAGE_URL, {
+      const homepageRequest = new Request(ANIMESALT_HOMEPAGE_URL, {
         method: "GET",
         headers: {
           "User-Agent": BROWSER_UA,
@@ -223,8 +427,21 @@ export class AnimeSaltHomepageCache extends WorkerEntrypoint {
           "Cache-Control": "no-cache",
           Pragma: "no-cache",
         },
-        redirect: "follow",
-      }));
+        redirect: "manual",
+      });
+      const { response: upstream, blockedRedirect } = await fetchWithAllowedRedirects(
+        homepageRequest,
+        isAllowedGeneralTarget
+      );
+      if (!upstream) {
+        if (blockedRedirect) {
+          console.warn("[general-proxy]", JSON.stringify({
+            event: "homepage-redirect-blocked",
+            target: targetHostPath,
+          }));
+        }
+        return await getLastGoodHomepage(this.env, request, "redirect-not-allowed") || homepageUnavailableResponse(request);
+      }
 
       const contentType = upstream.headers.get("content-type");
       const location = upstream.headers.get("location");
@@ -252,6 +469,8 @@ export class AnimeSaltHomepageCache extends WorkerEntrypoint {
         if (upstream.status === 403 && (contentType || "").toLowerCase().includes("text/html")) {
           await logHomepage403Classification(upstream, targetHostPath);
         }
+        const staleResponse = await getLastGoodHomepage(this.env, request, `upstream-http-${upstream.status}`);
+        if (staleResponse) return staleResponse;
         if (isTransientHomepageStatus(upstream.status)) {
           console.warn("[general-proxy]", JSON.stringify({
             event: "homepage-cache-fallback",
@@ -261,7 +480,7 @@ export class AnimeSaltHomepageCache extends WorkerEntrypoint {
           }));
           return homepageUnavailableResponse(request);
         }
-        return homepagePassThroughResponse(upstream, request);
+        return homepageUnavailableResponse(request);
       }
 
       if (!(contentType || "").toLowerCase().includes("text/html")) {
@@ -272,7 +491,7 @@ export class AnimeSaltHomepageCache extends WorkerEntrypoint {
           contentType,
           reason: "not-html",
         }));
-        return homepageUnavailableResponse(request);
+        return await getLastGoodHomepage(this.env, request, "invalid-content-type") || homepageUnavailableResponse(request);
       }
 
       const html = await upstream.clone().text();
@@ -287,8 +506,10 @@ export class AnimeSaltHomepageCache extends WorkerEntrypoint {
           entryCount: validation.entryCount,
           reason: validation.reason,
         }));
-        return homepageUnavailableResponse(request);
+        return await getLastGoodHomepage(this.env, request, "invalid-homepage-html") || homepageUnavailableResponse(request);
       }
+
+      await storeLastGoodHomepage(this.env, html, contentType, validation.entryCount);
 
       const headers = homepageResponseHeaders(upstream.headers, request);
       headers.set("Cache-Control", HOMEPAGE_CACHE_CONTROL);
@@ -316,8 +537,124 @@ export class AnimeSaltHomepageCache extends WorkerEntrypoint {
         elapsedMs: Date.now() - startedAt,
         responseStatus: 503,
       }));
-      return homepageUnavailableResponse(request);
+      return await getLastGoodHomepage(this.env, request, "upstream-fetch-exception") || homepageUnavailableResponse(request);
     }
+  }
+}
+
+async function storeLastGoodHomepage(env, html, contentType, entryCount) {
+  const kv = env?.[HOMEPAGE_KV_BINDING];
+  if (!kv) {
+    console.warn("[general-proxy]", JSON.stringify({
+      event: "homepage-kv-unavailable",
+      operation: "write",
+      binding: HOMEPAGE_KV_BINDING,
+    }));
+    return;
+  }
+
+  try {
+    await kv.put(HOMEPAGE_KV_KEY, JSON.stringify({
+      version: 1,
+      storedAt: Date.now(),
+      contentType,
+      html,
+    }), { expirationTtl: Math.floor(HOMEPAGE_MAX_STALE_MS / 1000) });
+    console.info("[general-proxy]", JSON.stringify({
+      event: "homepage-kv-write",
+      outcome: "success",
+      entryCount,
+      ttlSeconds: Math.floor(HOMEPAGE_MAX_STALE_MS / 1000),
+    }));
+  } catch (error) {
+    console.warn("[general-proxy]", JSON.stringify({
+      event: "homepage-kv-write",
+      outcome: "error",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    }));
+  }
+}
+
+async function getLastGoodHomepage(
+  env,
+  request,
+  reason,
+  maxAgeMs = HOMEPAGE_MAX_STALE_MS,
+  freshResponse = false
+) {
+  const kv = env?.[HOMEPAGE_KV_BINDING];
+  if (!kv) {
+    console.warn("[general-proxy]", JSON.stringify({
+      event: "homepage-kv-unavailable",
+      operation: "read",
+      binding: HOMEPAGE_KV_BINDING,
+      reason,
+    }));
+    return null;
+  }
+
+  try {
+    const value = await kv.get(HOMEPAGE_KV_KEY);
+    if (!value) {
+      console.info("[general-proxy]", JSON.stringify({ event: "homepage-kv-read", outcome: "miss", reason }));
+      return null;
+    }
+
+    let cached;
+    try {
+      cached = JSON.parse(value);
+    } catch {
+      console.warn("[general-proxy]", JSON.stringify({ event: "homepage-kv-read", outcome: "invalid-json", reason }));
+      return null;
+    }
+    const ageMs = Date.now() - cached?.storedAt;
+    if (
+      cached?.version !== 1 ||
+      typeof cached.html !== "string" ||
+      typeof cached.storedAt !== "number" ||
+      typeof cached.contentType !== "string" ||
+      !cached.contentType.toLowerCase().includes("text/html") ||
+      !Number.isFinite(ageMs) ||
+      ageMs < 0 ||
+      ageMs > maxAgeMs
+    ) {
+      const outcome = ageMs > maxAgeMs && maxAgeMs < HOMEPAGE_MAX_STALE_MS
+        ? "not-fresh"
+        : "invalid-or-expired";
+      console.info("[general-proxy]", JSON.stringify({ event: "homepage-kv-read", outcome, reason, ageMs }));
+      return null;
+    }
+
+    const validation = validateAnimeSaltHomepage(cached.html, new Headers({ "content-type": cached.contentType }));
+    if (!validation.valid) {
+      console.warn("[general-proxy]", JSON.stringify({
+        event: "homepage-kv-read",
+        outcome: "cached-html-rejected",
+        reason: validation.reason,
+      }));
+      return null;
+    }
+
+    const headers = homepageResponseHeaders(new Headers({ "content-type": cached.contentType }), request);
+    headers.set("Cache-Control", freshResponse ? HOMEPAGE_CACHE_CONTROL : "no-store");
+    headers.set("Cloudflare-CDN-Cache-Control", freshResponse ? HOMEPAGE_CACHE_CONTROL : "no-store");
+    headers.set("Vary", appendVary(headers.get("Vary"), "Origin"));
+    console.info("[general-proxy]", JSON.stringify({
+      event: "homepage-kv-read",
+      outcome: freshResponse ? "fresh-hit" : "stale-hit",
+      reason,
+      ageMs,
+      entryCount: validation.entryCount,
+    }));
+    return new Response(cached.html, { status: 200, headers });
+  } catch (error) {
+    console.warn("[general-proxy]", JSON.stringify({
+      event: "homepage-kv-read",
+      outcome: "error",
+      reason,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    }));
+    return null;
   }
 }
 
@@ -332,16 +669,6 @@ function homepageResponseHeaders(upstreamHeaders, request) {
   headers.delete("content-security-policy");
   headers.delete("content-security-policy-report-only");
   return headers;
-}
-
-function homepagePassThroughResponse(upstream, request) {
-  const headers = homepageResponseHeaders(upstream.headers, request);
-  headers.set("Cloudflare-CDN-Cache-Control", "no-store");
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers,
-  });
 }
 
 function homepageUnavailableResponse(request, status = 503) {
@@ -491,6 +818,15 @@ async function handleCatalog(url, request) {
     lastGoodResponse = await caches.default.match(cacheKey);
   } catch {
     // The restricted source route remains usable if the edge cache is unavailable.
+  }
+  if (lastGoodResponse && await isFreshCatalogCache(lastGoodResponse, kind)) {
+    console.info("[catalog-proxy-cache]", JSON.stringify({
+      kind,
+      page,
+      status: "fresh-hit",
+      itemCount: Number(lastGoodResponse.headers.get("x-catalog-feed-item-count")) || null,
+    }));
+    return serveFreshCatalog(lastGoodResponse, request);
   }
   const proxyHeaders = {
     "User-Agent": BROWSER_UA,
@@ -670,6 +1006,7 @@ async function handleCatalog(url, request) {
         cachedHeaders.delete("set-cookie");
         cachedHeaders.set("Cache-Control", "public, max-age=604800");
         cachedHeaders.set("x-catalog-feed-item-count", String(feedItemCount));
+        cachedHeaders.set("x-catalog-cached-at", String(Date.now()));
         await caches.default.put(cacheKey, new Response(upstream.clone().body, {
           status: 200,
           headers: cachedHeaders,
@@ -741,6 +1078,7 @@ function countValidCatalogFeedItems(feedText, kind) {
 function serveStaleCatalog(cachedResponse, request) {
   const headers = new Headers(cachedResponse.headers);
   for (const [key, value] of Object.entries(corsHeaders(request))) headers.set(key, value);
+  headers.delete("x-catalog-cached-at");
   headers.set("Cache-Control", "no-store");
   headers.set("X-Catalog-Cache", "stale");
   const exposedHeaders = new Set(
@@ -757,6 +1095,45 @@ function serveStaleCatalog(cachedResponse, request) {
     status: "stale-served",
     itemCount: Number(headers.get("x-catalog-feed-item-count")) || null,
   }));
+  return new Response(cachedResponse.body, { status: 200, headers });
+}
+
+async function isFreshCatalogCache(cachedResponse, kind) {
+  const cachedAt = Number(cachedResponse.headers.get("x-catalog-cached-at"));
+  const ageMs = Date.now() - cachedAt;
+  const contentType = cachedResponse.headers.get("content-type") || "";
+  if (
+    cachedResponse.status !== 200 ||
+    !Number.isFinite(cachedAt) ||
+    ageMs < 0 ||
+    ageMs > CATALOG_FRESH_MS ||
+    !/(?:rss\+xml|application\/xml|text\/xml)/i.test(contentType)
+  ) return false;
+
+  try {
+    const feedText = await cachedResponse.clone().text();
+    return /<rss\b/i.test(feedText) && countValidCatalogFeedItems(feedText, kind) > 0;
+  } catch {
+    return false;
+  }
+}
+
+function serveFreshCatalog(cachedResponse, request) {
+  const headers = new Headers(cachedResponse.headers);
+  for (const [key, value] of Object.entries(corsHeaders(request))) headers.set(key, value);
+  headers.delete("x-catalog-cached-at");
+  headers.set("Cache-Control", `public, max-age=${Math.floor(CATALOG_FRESH_MS / 1000)}`);
+  headers.set("X-Catalog-Cache", "fresh");
+  const exposedHeaders = new Set(
+    (headers.get("Access-Control-Expose-Headers") || "")
+      .split(",")
+      .map((header) => header.trim())
+      .filter(Boolean)
+  );
+  exposedHeaders.add("X-Catalog-Total-Pages");
+  exposedHeaders.add("X-Catalog-Page-Size");
+  exposedHeaders.add("X-Catalog-Cache");
+  headers.set("Access-Control-Expose-Headers", [...exposedHeaders].join(", "));
   return new Response(cachedResponse.body, { status: 200, headers });
 }
 
@@ -1486,13 +1863,15 @@ function jsonResponse(body, status, request) {
 
 function corsHeaders(request) {
   const origin = request.headers.get("Origin") || "";
-  // Always allow the requesting origin to prevent CORS failures across all deployment URLs and localhost
-  const allowedOrigin = origin || "*";
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
-    "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+  const headers = {
+    "Access-Control-Allow-Methods": "GET",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Range",
     "Access-Control-Expose-Headers": "Content-Length, Content-Range, Content-Type",
     "Access-Control-Max-Age": "86400",
   };
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers.Vary = "Origin";
+  }
+  return headers;
 }

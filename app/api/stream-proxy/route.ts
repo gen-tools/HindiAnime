@@ -29,7 +29,7 @@ const DEFAULT_HEADERS = {
 const rawCfProxy = (
   process.env.CF_PROXY_URL ||
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url="
+  "https://proxy.hindi-anime.com/?url="
 ).trim(); // trim trailing newlines/spaces common in .env files
 
 const CF_PROXY_URL = rawCfProxy.includes("?url=")
@@ -37,21 +37,20 @@ const CF_PROXY_URL = rawCfProxy.includes("?url=")
   : `${rawCfProxy.replace(/\/+$/, "")}/?url=`;
 
 /**
- * Base URL for the CF worker (e.g. "https://...workers.dev").
+ * Base URL for the Cloudflare Worker endpoint.
  * Robustly extracted using URL().origin so trailing /?url=, newlines,
  * or slash variants in the env var never produce a malformed proxy URL.
  */
 function getCfWorkerBase(): string {
   try {
     // The env var may be the full proxy URL like:
-    //   https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=
-    // or just the base:
-    //   https://wispy-cherry-6934.shahazaibseo038.workers.dev
+    //   https://proxy.hindi-anime.com/?url=
+    // or just the base hostname.
     const parsed = new URL(rawCfProxy.split("?")[0].replace(/\/+$/, ""));
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     // Absolute fallback
-    return "https://wispy-cherry-6934.shahazaibseo038.workers.dev";
+    return "https://proxy.hindi-anime.com";
   }
 }
 const CF_WORKER_BASE = getCfWorkerBase();

@@ -14,7 +14,7 @@ const ANIMESALT_ORIGIN = "https://animesalt.cx";
 function getWorkerBaseUrl(): string {
   return (
     process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-    "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+    "https://proxy.hindi-anime.com"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
 }
 
