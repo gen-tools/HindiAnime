@@ -4,13 +4,13 @@ import { SearchBar } from "@/components/search/SearchBar";
 import { SearchFilters } from "@/components/search/SearchFilters";
 import { EmptySearchState, NoResultsState } from "@/components/search/SearchStates";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
+import { BrowserSearchResults } from "@/components/search/BrowserSearchResults";
 import { Pagination } from "@/components/ui/Pagination";
 import {
   getCatalog,
   getCountryCatalog,
   getGenreCatalog,
   getLanguageCatalog,
-  isUsableImageUrl,
   mapSearchItemToAnime,
   searchGlobalAnime,
 } from "@/lib/api/client";
@@ -52,9 +52,7 @@ export default async function SearchPage({
 
   if (rawQ) {
     const globalSearch = await searchGlobalAnime(rawQ, page);
-    results = globalSearch.results
-      .map((result) => result.item)
-      .filter((item) => isUsableImageUrl(item.poster));
+    results = globalSearch.results.map((result) => result.item);
     totalPages = globalSearch.totalPages;
     if (genre) results = results.filter((a) => a.genres.includes(genre));
     if (language) results = results.filter((a) => a.languages.includes(language as never));
@@ -129,7 +127,16 @@ export default async function SearchPage({
       </div>
 
       <div className="mt-8">
-        {results.length > 0 ? (
+        {rawQ ? (
+          <BrowserSearchResults
+            key={`${rawQ}:${page}:${genre ?? ""}:${language ?? ""}:${country ?? ""}:${type ?? ""}`}
+            query={rawQ}
+            page={page}
+            initialItems={results}
+            initialTotalPages={totalPages}
+            filters={{ genre, language, country, type }}
+          />
+        ) : results.length > 0 ? (
           <>
             <AnimeGrid items={results} />
             <Pagination page={page} totalPages={totalPages} buildHref={buildHref} />

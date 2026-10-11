@@ -1,11 +1,12 @@
 "use client";
 
-import { Search, Loader2, TrendingUp } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
+import { searchAnimeInBrowser } from "@/lib/api/browser-source";
 
 interface Suggestion {
   slug: string;
@@ -13,7 +14,7 @@ interface Suggestion {
   poster: string;
   year: number;
   type: string;
-  score: number;
+  score?: number;
 }
 
 export function SearchBar({
@@ -40,6 +41,10 @@ export function SearchBar({
 
   const debouncedValue = useDebounce(value, 260);
 
+  useEffect(() => {
+    setValue(defaultValue);
+  }, [defaultValue]);
+
   // Fetch suggestions whenever debounced value changes
   useEffect(() => {
     const q = debouncedValue.trim();
@@ -57,16 +62,21 @@ export function SearchBar({
     const controller = new AbortController();
     abortRef.current = controller;
 
+    setSuggestions([]);
+    setOpen(false);
+    setActiveIndex(-1);
     setLoading(true);
     const loadSuggestions = async () => {
       try {
-        const response = await fetch(`/api/suggestions?q=${encodeURIComponent(q)}`, {
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error(`Suggestions request failed (${response.status})`);
-        const data = await response.json();
+        const data = await searchAnimeInBrowser(q, 1, controller.signal);
         if (controller.signal.aborted || abortRef.current !== controller) return;
-        setSuggestions(data.results ?? []);
+        setSuggestions(data.items.slice(0, 8).map((item) => ({
+          slug: item.slug,
+          title: item.title,
+          poster: item.poster,
+          year: item.year,
+          type: item.type,
+        })));
         setOpen(true);
         setActiveIndex(-1);
       } catch (error) {
@@ -251,16 +261,12 @@ export function SearchBar({
                     <p className="truncate text-sm font-medium text-text-primary">{item.title}</p>
                     <p className="text-xs text-text-muted">
                       {item.year} · {item.type}
-                      {item.score < 0.85 && (
+                      {typeof item.score === "number" && item.score < 0.85 && (
                         <span className="ml-1.5 text-green-bright/60">~similar</span>
                       )}
                     </p>
                   </div>
 
-                  {/* Trending icon for top suggestions */}
-                  {idx < 3 && item.score > 0.8 && (
-                    <TrendingUp className="h-3.5 w-3.5 shrink-0 text-green-bright/50" />
-                  )}
                 </button>
               </li>
             );

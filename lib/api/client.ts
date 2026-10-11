@@ -294,8 +294,15 @@ export function resolveMovieInfoData(
  */
 export function mapSearchItemToAnime(
   item: AnimeSearchResult,
-  type: Anime["type"] = "TV"
+  requestedType?: Anime["type"]
 ): Anime {
+  let sourceSection = "";
+  try {
+    sourceSection = new URL(item.anime_id).pathname.split("/").filter(Boolean)[0] || "";
+  } catch {
+    sourceSection = "";
+  }
+  const type = requestedType || (sourceSection === "movies" ? "Movie" : "TV");
   const cleanSlug =
     cleanAnimeSlug(item.anime_id) ||
     item.title.toLowerCase().replace(/\s+/g, "-");
@@ -1523,15 +1530,6 @@ export async function searchGlobalAnime(
     // Sort by relevance descending
     scored.sort((a, b) => b.score - a.score);
 
-    // Enrich with any local mock items that match
-    const localMatches = fuzzySearch(cleanQ, anime, 0.6);
-    for (const match of localMatches) {
-      if (!seenSlugs.has(match.item.slug)) {
-        seenSlugs.add(match.item.slug);
-        scored.push(match);
-      }
-    }
-
     const totalPages = Math.max(
       searchResp?.results?.totalPages ?? 1,
       aliasResp?.results?.totalPages ?? 1,
@@ -1544,9 +1542,9 @@ export async function searchGlobalAnime(
     };
   }
 
-  // 2. Fallback: fuzzy search against known catalog/mock titles
+  // 2. Fallback: fuzzy search against the live catalog only.
   const catalog = await getGlobalCatalog();
-  const ranked = fuzzySearch(cleanQ, catalog.length > 0 ? catalog : anime, 0.4);
+  const ranked = fuzzySearch(cleanQ, catalog, 0.4);
   const currentPage = Math.max(1, page);
   const start = (currentPage - 1) * GLOBAL_SEARCH_PAGE_SIZE;
 
@@ -1726,36 +1724,24 @@ function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean
   ].some((items) => Array.isArray(items) && items.length > 0);
 }
 
-function mergeHomepageFeeds(
-  primary: HomepageApiResponse | null | undefined,
-  supplemental: HomepageApiResponse | null | undefined
-): HomepageApiResponse | null {
-  if (!hasHomepageItems(primary)) return hasHomepageItems(supplemental) ? supplemental! : null;
-  if (!hasHomepageItems(supplemental)) return primary!;
+export function parseHomepageSourceHtml(html: string): HomepageApiResponse | null {
+  const mostWatched_Series = parseHomepageCharts(html, "Most-Watched Series");
+  const mostWatched_Films = parseHomepageCharts(html, "Most-Watched Films");
+  const fresh_drops = parseHomepageArticles(html, "Fresh Drops", true) as HomepageFreshDropItem[];
+  const on_air_series = parseHomepageArticles(html, "On-Air Series") as AnimeListItem[];
+  const latest_animeMovies = parseHomepageArticles(html, "Latest Anime Movies") as AnimeListItem[];
 
-  const primarySections = primary!.data.results;
-  const supplementalSections = supplemental!.data.results;
-  const mergeSection = <T extends { anime_id: string }>(first: T[], second: T[]): T[] => {
-    const seen = new Set<string>();
-    return [...first, ...second].filter((item) => {
-      const slug = cleanAnimeSlug(item.anime_id);
-      if (!slug || seen.has(slug)) return false;
-      seen.add(slug);
-      return true;
-    });
-  };
+  if (
+    mostWatched_Series.length === 0 &&
+    mostWatched_Films.length === 0 &&
+    fresh_drops.length === 0
+  ) return null;
 
   return {
-    success: primary!.success && supplemental!.success,
+    success: true,
     data: {
-      success: primary!.data.success && supplemental!.data.success,
-      results: {
-        fresh_drops: mergeSection(primarySections.fresh_drops, supplementalSections.fresh_drops),
-        latest_animeMovies: mergeSection(primarySections.latest_animeMovies, supplementalSections.latest_animeMovies),
-        mostWatched_Films: mergeSection(primarySections.mostWatched_Films, supplementalSections.mostWatched_Films),
-        mostWatched_Series: mergeSection(primarySections.mostWatched_Series, supplementalSections.mostWatched_Series),
-        on_air_series: mergeSection(primarySections.on_air_series, supplementalSections.on_air_series),
-      },
+      success: true,
+      results: { mostWatched_Series, mostWatched_Films, fresh_drops, on_air_series, latest_animeMovies },
     },
   };
 }
@@ -1771,43 +1757,8 @@ export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | 
     // still retrieve the public AnimeSalt page that supplies these cards.
     const html = await fetchHtmlWithWorkerFallback("https://animesalt.cx/");
     if (!html) return null;
-    const mostWatched_Series = parseHomepageCharts(html, "Most-Watched Series");
-    const mostWatched_Films = parseHomepageCharts(html, "Most-Watched Films");
-    const fresh_drops = parseHomepageArticles(
-      html,
-      "Fresh Drops",
-      true
-    ) as HomepageFreshDropItem[];
-    const on_air_series = parseHomepageArticles(
-      html,
-      "On-Air Series"
-    ) as AnimeListItem[];
-    const latest_animeMovies = parseHomepageArticles(
-      html,
-      "Latest Anime Movies"
-    ) as AnimeListItem[];
-
-    if (
-      mostWatched_Series.length === 0 &&
-      mostWatched_Films.length === 0 &&
-      fresh_drops.length === 0
-    ) {
-      return null;
-    }
-
-    const feed: HomepageApiResponse = {
-      success: true,
-      data: {
-        success: true,
-        results: {
-          mostWatched_Series,
-          mostWatched_Films,
-          fresh_drops,
-          on_air_series,
-          latest_animeMovies,
-        },
-      },
-    };
+    const feed = parseHomepageSourceHtml(html);
+    if (!feed) return null;
 
     homepageFeedCache = { data: feed, timestamp: Date.now() };
     return feed;
@@ -1818,7 +1769,6 @@ export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | 
 }
 
 export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
-  let apiFeed: HomepageApiResponse | null = null;
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
@@ -1826,26 +1776,22 @@ export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
     if (res.ok) {
       const data = (await res.json()) as HomepageApiResponse;
       if (hasHomepageItems(data)) {
-        if (data.data.success !== false) {
+        if (data.data.success !== false && data.cached !== true) {
           homepageFeedCache = { data, timestamp: Date.now() };
           return data;
         }
-        apiFeed = data;
       }
     }
   } catch (err) {
     console.error("getHomepageFeed API error:", err);
   }
 
-  // Incomplete API snapshots can contain useful rows while omitting whole
-  // sections. Supplement missing sections from the existing direct scraper.
+  // Cached or unsuccessful API snapshots are not a reliable current ranking.
+  // Use the existing direct scrape and retain only a short-lived last-good feed.
   const scrapedFeed = await scrapeDirectHomepageFeed();
-  const mergedFeed = mergeHomepageFeeds(apiFeed, scrapedFeed);
-  if (hasHomepageItems(mergedFeed)) {
-    if (mergedFeed?.data.success !== false) {
-      homepageFeedCache = { data: mergedFeed!, timestamp: Date.now() };
-    }
-    return mergedFeed;
+  if (hasHomepageItems(scrapedFeed)) {
+    homepageFeedCache = { data: scrapedFeed!, timestamp: Date.now() };
+    return scrapedFeed;
   }
 
   // Fallback 2: Cached in-memory feed if available
@@ -3100,87 +3046,31 @@ export interface HomepageData {
   upcomingItems: Anime[];
 }
 
-/**
- * Resilient fallback homepage data derived from the local catalog and mock database.
- * Ensures the homepage hero, trending, popular, and episode sections NEVER collapse
- * or disappear if the external API or scraper is temporarily unavailable or blocked.
- */
+/** Static mock records are not evidence of current popularity or episode releases. */
 export function getFallbackHomepageData(): HomepageData {
-  const rankedAnime = [...anime].sort(
-    (a, b) => (a.trendingRank ?? 99) - (b.trendingRank ?? 99)
-  );
-
-  const heroItems = rankedAnime.slice(0, 6);
-  const trendingItems = rankedAnime.slice(0, 16);
-  const popularItems = rankedAnime
-    .filter((a) => a.type === "TV")
-    .sort((a, b) => (a.popularityRank ?? 99) - (b.popularityRank ?? 99));
-  const movieItems = rankedAnime.filter((a) => a.type === "Movie");
-  const seriesItems = rankedAnime.filter((a) => a.type === "TV");
-  const upcomingItems = rankedAnime.filter(
-    (a) => a.status === "Upcoming" || a.status === "Ongoing"
-  );
-
-  const latestEpisodes: Episode[] = rankedAnime.slice(0, 16).map((a, i) => {
-    const epNum = (i % 12) + 1;
-    return {
-      id: `ep-1-${epNum}`,
-      animeSlug: a.slug,
-      animeTitle: a.title,
-      animePoster: a.poster,
-      season: 1,
-      number: epNum,
-      title: `Episode ${epNum}`,
-      thumbnail: a.backdrop || a.poster,
-      durationMinutes: a.durationMinutes || 24,
-      languages: a.languages,
-      releasedAt: a.updatedAt || "",
-      isNew: true,
-    };
-  });
-
   return {
-    heroItems,
-    latestEpisodes,
-    trendingItems,
-    popularItems,
-    movieItems,
-    seriesItems,
-    upcomingItems,
+    heroItems: [],
+    latestEpisodes: [],
+    trendingItems: [],
+    popularItems: [],
+    movieItems: [],
+    seriesItems: [],
+    upcomingItems: [],
   };
 }
 
-/**
- * Maps the API's purpose-built homepage feed. It already contains the latest,
- * most-watched, movie, and on-air lists, so one request avoids duplicated
- * catalog calls and preserves the API's own ordering and ranks.
- *
- * If upstream is down, empty, or blocked, seamlessly falls back to the rich catalog.
- */
-export async function getHomepageData(): Promise<HomepageData> {
-  const fallback = getFallbackHomepageData();
-
-  let feed: HomepageApiResponse | null = null;
-  try {
-    feed = await getHomepageFeed();
-  } catch (err) {
-    console.error("getHomepageData: getHomepageFeed failed, using fallback:", err);
-  }
-
-  const sections = feed?.data?.results;
-
-  if (!sections || !hasHomepageItems(feed)) {
-    return fallback;
-  }
+export function mapHomepageFeedToData(feed: HomepageApiResponse): HomepageData {
+  const sections = feed.data?.results;
+  if (!sections) return getFallbackHomepageData();
 
   const latestEpisodes = deduplicateEpisodes(
     (sections.fresh_drops || []).map(mapFreshDropToEpisode)
   );
-  const latestMovies = uniqueBySlug(
+  const movieItems = uniqueBySlug(
     (sections.latest_animeMovies || []).map((item) => mapHomepageItem(item, "Movie"))
   );
-  const popularSeries = uniqueBySlug(
-    (sections.mostWatched_Series || []).map((item: HomepageRankedItem) =>
+  const popularItems = uniqueBySlug(
+    (sections.mostWatched_Series || []).map((item) =>
       mapHomepageItem(item, "TV", Number(item.rank) || undefined)
     )
   );
@@ -3194,42 +3084,61 @@ export async function getHomepageData(): Promise<HomepageData> {
       ),
     ].sort((a, b) => (a.trendingRank ?? Infinity) - (b.trendingRank ?? Infinity))
   );
-  const onAirSeries = uniqueBySlug(
+  const seriesItems = uniqueBySlug(
     (sections.on_air_series || []).map((item) => mapHomepageItem(item, "TV"))
   );
-  const recentlyUpdated = new Set(latestEpisodes.map((episode) => episode.animeSlug));
-  const upcomingItems = onAirSeries.filter((item) => !recentlyUpdated.has(item.slug));
+  const latestSlugs = new Set(latestEpisodes.map((episode) => episode.animeSlug));
 
-  const resolvedTrending = trendingItems.length > 0 ? trendingItems : fallback.trendingItems;
-  const resolvedPopular = popularSeries.length > 0 ? popularSeries : fallback.popularItems;
-  const resolvedMovies = latestMovies.length > 0 ? latestMovies : fallback.movieItems;
-  const resolvedSeries = onAirSeries.length > 0 ? onAirSeries : fallback.seriesItems;
-  const resolvedUpcoming = upcomingItems.length > 0 ? upcomingItems : fallback.upcomingItems;
-  const resolvedEpisodes = latestEpisodes.length > 0 ? latestEpisodes : fallback.latestEpisodes;
+  return {
+    heroItems: trendingItems.slice(0, 6),
+    latestEpisodes,
+    trendingItems,
+    popularItems,
+    movieItems,
+    seriesItems,
+    upcomingItems: seriesItems.filter((item) => !latestSlugs.has(item.slug)),
+  };
+}
+
+/**
+ * Maps the API's purpose-built homepage feed. It already contains the latest,
+ * most-watched, movie, and on-air lists, so one request avoids duplicated
+ * catalog calls and preserves the API's own ordering and ranks.
+ *
+ * If upstream is down, empty, or blocked, seamlessly falls back to the rich catalog.
+ */
+export async function getHomepageData(): Promise<HomepageData> {
+  let feed: HomepageApiResponse | null = null;
+  try {
+    feed = await getHomepageFeed();
+  } catch (err) {
+    console.error("getHomepageData: getHomepageFeed failed, using fallback:", err);
+  }
+
+  if (!feed || !hasHomepageItems(feed)) return getFallbackHomepageData();
+
+  const mapped = mapHomepageFeedToData(feed);
 
   // Hydrate rotating spotlight hero items with max 1.5s timeout so page speed stays ultra-fast
   let heroItems: Anime[] = [];
   try {
     heroItems = await Promise.race([
-      enrichAnimeSynopses(resolvedTrending.slice(0, 6)),
+      enrichAnimeSynopses(mapped.heroItems),
       new Promise<Anime[]>((_, reject) =>
         setTimeout(() => reject(new Error("enrich timeout")), 1500)
       ),
     ]);
   } catch {
-    heroItems = resolvedTrending.slice(0, 6);
-  }
-  if (!heroItems || heroItems.length === 0) {
-    heroItems = fallback.heroItems;
+    heroItems = mapped.heroItems;
   }
 
   return {
     heroItems,
-    latestEpisodes: resolvedEpisodes,
-    trendingItems: resolvedTrending,
-    popularItems: resolvedPopular,
-    movieItems: resolvedMovies,
-    seriesItems: resolvedSeries,
-    upcomingItems: resolvedUpcoming,
+    latestEpisodes: mapped.latestEpisodes,
+    trendingItems: mapped.trendingItems,
+    popularItems: mapped.popularItems,
+    movieItems: mapped.movieItems,
+    seriesItems: mapped.seriesItems,
+    upcomingItems: mapped.upcomingItems,
   };
 }
