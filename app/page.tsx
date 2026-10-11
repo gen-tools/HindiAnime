@@ -16,7 +16,7 @@ export const revalidate = 120;
 export const metadata: Metadata = createCanonicalMetadata("/");
 
 export default async function HomePage() {
-  const homepageData = await getHomepageData();
+  const homepageData = await getHomepageData({ diagnostics: true });
 
   return (
     <>

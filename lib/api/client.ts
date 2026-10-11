@@ -1711,6 +1711,58 @@ function parseHomepageArticles(
 
 let homepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
 
+type HomepageSectionCounts = {
+  freshDrops: number;
+  latestAnimeMovies: number;
+  mostWatchedFilms: number;
+  mostWatchedSeries: number;
+  onAirSeries: number;
+};
+
+function getHomepageSectionCounts(feed: HomepageApiResponse | null | undefined): HomepageSectionCounts {
+  const results = feed?.data?.results;
+  const count = (items: unknown) => Array.isArray(items) ? items.length : 0;
+  return {
+    freshDrops: count(results?.fresh_drops),
+    latestAnimeMovies: count(results?.latest_animeMovies),
+    mostWatchedFilms: count(results?.mostWatched_Films),
+    mostWatchedSeries: count(results?.mostWatched_Series),
+    onAirSeries: count(results?.on_air_series),
+  };
+}
+
+function logHomepageSsr(
+  enabled: boolean,
+  details: {
+    source: string;
+    attempt: string;
+    outcome: string;
+    status?: number | null;
+    contentType?: string | null;
+    cacheStatus?: string | null;
+    responseBytes?: number | null;
+    elapsedMs?: number | null;
+    errorCategory?: string | null;
+    sectionCounts?: HomepageSectionCounts;
+    finalCounts?: Record<string, number>;
+  }
+): void {
+  if (!enabled) return;
+  console.info(`[homepage-ssr] ${JSON.stringify({
+    source: details.source,
+    attempt: details.attempt,
+    outcome: details.outcome,
+    status: details.status ?? null,
+    contentType: details.contentType ?? null,
+    cacheStatus: details.cacheStatus ?? null,
+    responseBytes: details.responseBytes ?? null,
+    elapsedMs: details.elapsedMs ?? null,
+    errorCategory: details.errorCategory ?? null,
+    ...(details.sectionCounts ? { sectionCounts: details.sectionCounts } : {}),
+    ...(details.finalCounts ? { finalCounts: details.finalCounts } : {}),
+  })}`);
+}
+
 function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean {
   const sections = feed?.data?.results;
   if (!sections) return false;
@@ -1724,18 +1776,56 @@ function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean
   ].some((items) => Array.isArray(items) && items.length > 0);
 }
 
-export function parseHomepageSourceHtml(html: string): HomepageApiResponse | null {
+type HomepageFetchDiagnostic = {
+  status: number;
+  contentType: string | null;
+  responseBytes: number;
+};
+
+export function parseHomepageSourceHtml(
+  html: string,
+  diagnostics = false,
+  fetchDiagnostic?: HomepageFetchDiagnostic
+): HomepageApiResponse | null {
+  const parseStartedAt = Date.now();
   const mostWatched_Series = parseHomepageCharts(html, "Most-Watched Series");
   const mostWatched_Films = parseHomepageCharts(html, "Most-Watched Films");
   const fresh_drops = parseHomepageArticles(html, "Fresh Drops", true) as HomepageFreshDropItem[];
   const on_air_series = parseHomepageArticles(html, "On-Air Series") as AnimeListItem[];
   const latest_animeMovies = parseHomepageArticles(html, "Latest Anime Movies") as AnimeListItem[];
+  const sectionCounts: HomepageSectionCounts = {
+    freshDrops: fresh_drops.length,
+    latestAnimeMovies: latest_animeMovies.length,
+    mostWatchedFilms: mostWatched_Films.length,
+    mostWatchedSeries: mostWatched_Series.length,
+    onAirSeries: on_air_series.length,
+  };
 
   if (
     mostWatched_Series.length === 0 &&
     mostWatched_Films.length === 0 &&
     fresh_drops.length === 0
-  ) return null;
+  ) {
+    logHomepageSsr(diagnostics, {
+      source: "animesalt-homepage",
+      attempt: "parse",
+      outcome: "parse-failure",
+      ...fetchDiagnostic,
+      elapsedMs: Date.now() - parseStartedAt,
+      errorCategory: "no-recognized-homepage-sections",
+      sectionCounts,
+    });
+    return null;
+  }
+
+  logHomepageSsr(diagnostics, {
+    source: "animesalt-homepage",
+    attempt: "parse",
+    outcome: "success",
+    ...fetchDiagnostic,
+    elapsedMs: Date.now() - parseStartedAt,
+    sectionCounts,
+  });
 
   return {
     success: true,
@@ -1746,55 +1836,186 @@ export function parseHomepageSourceHtml(html: string): HomepageApiResponse | nul
   };
 }
 
-export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | null> {
+export async function scrapeDirectHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
+    logHomepageSsr(diagnostics, {
+      source: "homepage-memory-cache",
+      attempt: "lookup",
+      outcome: "hit",
+      elapsedMs: 0,
+      sectionCounts: getHomepageSectionCounts(homepageFeedCache.data),
+    });
     return homepageFeedCache.data;
   }
 
+  logHomepageSsr(diagnostics, {
+    source: "homepage-memory-cache",
+    attempt: "lookup",
+    outcome: "miss",
+    elapsedMs: 0,
+  });
+  const startedAt = Date.now();
   try {
     // Do not depend on the separate Vercel API deployment for the homepage.
     // It can be served a Vercel Security Checkpoint, while the Worker can
     // still retrieve the public AnimeSalt page that supplies these cards.
-    const html = await fetchHtmlWithWorkerFallback("https://animesalt.cx/");
-    if (!html) return null;
-    const feed = parseHomepageSourceHtml(html);
+    let fetchDiagnostic: HomepageFetchDiagnostic | undefined;
+    const html = await fetchHtmlWithWorkerFallback("https://animesalt.cx/", diagnostics, (details) => {
+      fetchDiagnostic = details;
+    });
+    if (!html) {
+      logHomepageSsr(diagnostics, {
+        source: "animesalt-homepage",
+        attempt: "fetch-chain",
+        outcome: "unavailable",
+        errorCategory: "all-fetch-attempts-failed",
+        elapsedMs: Date.now() - startedAt,
+        sectionCounts: { freshDrops: 0, latestAnimeMovies: 0, mostWatchedFilms: 0, mostWatchedSeries: 0, onAirSeries: 0 },
+      });
+      return null;
+    }
+    const feed = parseHomepageSourceHtml(html, diagnostics, fetchDiagnostic);
     if (!feed) return null;
 
     homepageFeedCache = { data: feed, timestamp: Date.now() };
     return feed;
   } catch (err) {
-    console.error("[Scraper] Error scraping direct homepage feed:", err);
+    if (!diagnostics) {
+      console.error("[Scraper] Error scraping direct homepage feed:", err);
+      return null;
+    }
+    const error = err instanceof Error ? err : new Error(String(err));
+    logHomepageSsr(diagnostics, {
+      source: "animesalt-homepage",
+      attempt: "scrape",
+      outcome: "error",
+      elapsedMs: Date.now() - startedAt,
+      errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "scrape-error",
+    });
     return null;
   }
 }
 
-export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
+export async function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
   // Reuse the last verified feed before repeating the API → Worker fallback
   // chain. This cache already expires on the same 60-second freshness window.
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
+    logHomepageSsr(diagnostics, {
+      source: "homepage-memory-cache",
+      attempt: "lookup",
+      outcome: "hit",
+      elapsedMs: 0,
+      sectionCounts: getHomepageSectionCounts(homepageFeedCache.data),
+    });
     return homepageFeedCache.data;
   }
 
+  logHomepageSsr(diagnostics, {
+    source: "homepage-memory-cache",
+    attempt: "lookup",
+    outcome: "miss",
+    elapsedMs: 0,
+  });
+  const apiStartedAt = Date.now();
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
     });
+    const contentType = res.headers.get("content-type");
+    const cacheStatus = res.headers.get("x-vercel-cache") ?? res.headers.get("cf-cache-status");
+    const responseBytesPromise = diagnostics
+      ? res.clone().arrayBuffer().then((body) => body.byteLength).catch(() => null)
+      : null;
+    const responseBytes = async () => responseBytesPromise ? await responseBytesPromise : null;
     if (res.ok) {
-      const data = (await res.json()) as HomepageApiResponse;
-      if (hasHomepageItems(data)) {
+      let data: HomepageApiResponse | null;
+      try {
+        data = await res.json() as HomepageApiResponse;
+      } catch {
+        logHomepageSsr(diagnostics, {
+          source: "catalog-api-homepage",
+          attempt: "fetch-and-parse",
+          outcome: "invalid-response",
+          status: res.status,
+          contentType,
+          cacheStatus,
+          responseBytes: await responseBytes(),
+          elapsedMs: Date.now() - apiStartedAt,
+          errorCategory: "invalid-json",
+        });
+        data = null;
+      }
+      if (data && hasHomepageItems(data)) {
         if (data.data.success !== false && data.cached !== true) {
           homepageFeedCache = { data, timestamp: Date.now() };
+          logHomepageSsr(diagnostics, {
+            source: "catalog-api-homepage",
+            attempt: "fetch-and-parse",
+            outcome: "success",
+            status: res.status,
+            contentType,
+            cacheStatus,
+            responseBytes: await responseBytes(),
+            elapsedMs: Date.now() - apiStartedAt,
+            sectionCounts: getHomepageSectionCounts(data),
+          });
           return data;
         }
+        logHomepageSsr(diagnostics, {
+          source: "catalog-api-homepage",
+          attempt: "fetch-and-parse",
+          outcome: "cached-data-rejected",
+          status: res.status,
+          contentType,
+          cacheStatus,
+          responseBytes: await responseBytes(),
+          elapsedMs: Date.now() - apiStartedAt,
+          errorCategory: data.cached === true ? "cached-api-data" : "unsuccessful-api-data",
+          sectionCounts: getHomepageSectionCounts(data),
+        });
+      } else if (data) {
+        const counts = getHomepageSectionCounts(data);
+        const empty = Object.values(counts).every((count) => count === 0);
+        logHomepageSsr(diagnostics, {
+          source: "catalog-api-homepage",
+          attempt: "fetch-and-parse",
+          outcome: data.cached === true || data.data?.success === false ? "cached-empty" : "invalid-response",
+          status: res.status,
+          contentType,
+          cacheStatus,
+          responseBytes: await responseBytes(),
+          elapsedMs: Date.now() - apiStartedAt,
+          errorCategory: empty ? "no-homepage-items" : "invalid-homepage-schema",
+          sectionCounts: counts,
+        });
       }
+    } else {
+      logHomepageSsr(diagnostics, {
+        source: "catalog-api-homepage",
+        attempt: "fetch",
+        outcome: "non-ok-status",
+        status: res.status,
+        contentType,
+        cacheStatus,
+        responseBytes: await responseBytes(),
+        elapsedMs: Date.now() - apiStartedAt,
+        errorCategory: "http-status",
+      });
     }
   } catch (err) {
-    console.error("getHomepageFeed API error:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
+    logHomepageSsr(diagnostics, {
+      source: "catalog-api-homepage",
+      attempt: "fetch",
+      outcome: "error",
+      elapsedMs: Date.now() - apiStartedAt,
+      errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "request-error",
+    });
   }
 
   // Cached or unsuccessful API snapshots are not a reliable current ranking.
   // Use the existing direct scrape and retain only a short-lived last-good feed.
-  const scrapedFeed = await scrapeDirectHomepageFeed();
+  const scrapedFeed = await scrapeDirectHomepageFeed(diagnostics);
   if (hasHomepageItems(scrapedFeed)) {
     homepageFeedCache = { data: scrapedFeed!, timestamp: Date.now() };
     return scrapedFeed;
@@ -1803,9 +2024,22 @@ export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
   // Fallback 2: Cached in-memory feed if available
   const cachedFeed = homepageFeedCache?.data;
   if (hasHomepageItems(cachedFeed)) {
+    logHomepageSsr(diagnostics, {
+      source: "homepage-memory-cache",
+      attempt: "stale-fallback",
+      outcome: "hit",
+      sectionCounts: getHomepageSectionCounts(cachedFeed),
+    });
     return cachedFeed ?? null;
   }
 
+  logHomepageSsr(diagnostics, {
+    source: "homepage-feed",
+    attempt: "fallback-chain",
+    outcome: "empty",
+    errorCategory: "no-valid-feed",
+    sectionCounts: { freshDrops: 0, latestAnimeMovies: 0, mostWatchedFilms: 0, mostWatchedSeries: 0, onAirSeries: 0 },
+  });
   return null;
 }
 
@@ -2350,9 +2584,48 @@ function isAnimeDetailHtml(html: string | null): html is string {
   return true;
 }
 
-async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> {
-  // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
-  if (url.includes("animesalt.cx")) {
+async function fetchHtmlWithWorkerFallback(
+  url: string,
+  diagnostics = false,
+  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
+): Promise<string | null> {
+  if (!diagnostics) {
+    // Preserve the existing behavior for every non-homepage scraper caller.
+    if (url.includes("animesalt.cx")) {
+      try {
+        const proxyUrl = buildWorkerProxyUrl(url);
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6000);
+        const pRes = await fetch(proxyUrl, {
+          headers: DEFAULT_SCRAPER_HEADERS,
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+        if (pRes.ok) {
+          const text = await pRes.text();
+          if (!is404Html(text)) return text;
+        }
+      } catch {
+        // proxy fetch error, fall back to direct
+      }
+    }
+
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(url, {
+        headers: DEFAULT_SCRAPER_HEADERS,
+        signal: controller.signal,
+      });
+      clearTimeout(t);
+      if (res.ok) {
+        const text = await res.text();
+        if (!is404Html(text)) return text;
+      }
+    } catch {
+      // direct fetch error
+    }
+
     try {
       const proxyUrl = buildWorkerProxyUrl(url);
       const controller = new AbortController();
@@ -2367,42 +2640,102 @@ async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> 
         if (!is404Html(text)) return text;
       }
     } catch {
-      // proxy fetch error, fall back to direct
+      // proxy fetch error
     }
+
+    return null;
   }
 
-  try {
+  const fetchAttempt = async (
+    source: "worker-primary" | "direct-animesalt" | "worker-retry",
+    requestUrl: string,
+    timeoutMs: number
+  ): Promise<string | null> => {
+    const startedAt = Date.now();
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch(url, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      signal: controller.signal,
-    });
-    clearTimeout(t);
-    if (res.ok) {
-      const text = await res.text();
-      if (!is404Html(text)) return text;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let status: number | null = null;
+    let contentType: string | null = null;
+    try {
+      const response = await fetch(requestUrl, {
+        headers: DEFAULT_SCRAPER_HEADERS,
+        signal: controller.signal,
+      });
+      status = response.status;
+      contentType = response.headers.get("content-type");
+      if (!response.ok) {
+        const responseBytes = diagnostics
+          ? await response.clone().arrayBuffer().then((body) => body.byteLength).catch(() => null)
+          : null;
+        logHomepageSsr(diagnostics, {
+          source,
+          attempt: "fetch",
+          outcome: "non-ok-status",
+          status,
+          contentType,
+          responseBytes,
+          elapsedMs: Date.now() - startedAt,
+          errorCategory: "http-status",
+        });
+        return null;
+      }
+
+      const html = await response.text();
+      const responseBytes = new TextEncoder().encode(html).byteLength;
+      if (is404Html(html)) {
+        logHomepageSsr(diagnostics, {
+          source,
+          attempt: "fetch",
+          outcome: "invalid-response",
+          status,
+          contentType,
+          responseBytes,
+          elapsedMs: Date.now() - startedAt,
+          errorCategory: "challenge-or-not-found-html",
+        });
+        return null;
+      }
+
+      const details = { status: response.status, contentType, responseBytes };
+      onSuccessfulFetch?.(details);
+      logHomepageSsr(diagnostics, {
+        source,
+        attempt: "fetch",
+        outcome: "success",
+        ...details,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return html;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      logHomepageSsr(diagnostics, {
+        source,
+        attempt: "fetch",
+        outcome: "error",
+        status,
+        contentType,
+        elapsedMs: Date.now() - startedAt,
+        errorCategory: controller.signal.aborted || error.name === "AbortError" || error.name === "TimeoutError"
+          ? "timeout"
+          : "request-error",
+      });
+      return null;
+    } finally {
+      clearTimeout(timer);
     }
-  } catch {
-    // direct fetch error
+  };
+
+  // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
+  if (url.includes("animesalt.cx")) {
+    const proxyHtml = await fetchAttempt("worker-primary", buildWorkerProxyUrl(url), 6000);
+    if (proxyHtml) return proxyHtml;
   }
 
-  try {
-    const proxyUrl = buildWorkerProxyUrl(url);
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 6000);
-    const pRes = await fetch(proxyUrl, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      signal: controller.signal,
-    });
-    clearTimeout(t);
-    if (pRes.ok) {
-      const text = await pRes.text();
-      if (!is404Html(text)) return text;
-    }
-  } catch {
-    // proxy fetch error
-  }
+  const directHtml = await fetchAttempt("direct-animesalt", url, 3500);
+  if (directHtml) return directHtml;
+
+  const proxyRetryHtml = await fetchAttempt("worker-retry", buildWorkerProxyUrl(url), 6000);
+  if (proxyRetryHtml) return proxyRetryHtml;
 
   return null;
 }
@@ -3113,19 +3446,53 @@ export function mapHomepageFeedToData(feed: HomepageApiResponse): HomepageData {
  *
  * If upstream is down, empty, or blocked, seamlessly falls back to the rich catalog.
  */
-export async function getHomepageData(): Promise<HomepageData> {
+export async function getHomepageData(options: { diagnostics?: boolean } = {}): Promise<HomepageData> {
+  const diagnostics = options.diagnostics === true;
   let feed: HomepageApiResponse | null = null;
   try {
-    feed = await getHomepageFeed();
+    feed = await getHomepageFeed(diagnostics);
   } catch (err) {
-    console.error("getHomepageData: getHomepageFeed failed, using fallback:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (diagnostics) {
+      logHomepageSsr(true, {
+        source: "homepage-data",
+        attempt: "feed-resolution",
+        outcome: "error",
+        errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "feed-error",
+      });
+    } else {
+      console.error("getHomepageData: getHomepageFeed failed, using fallback:", err);
+    }
   }
 
-  if (!feed || !hasHomepageItems(feed)) return getFallbackHomepageData();
+  if (!feed || !hasHomepageItems(feed)) {
+    const fallback = getFallbackHomepageData();
+    logHomepageSsr(diagnostics, {
+      source: "homepage-data",
+      attempt: "map",
+      outcome: "empty-fallback",
+      errorCategory: "no-feed-items",
+      finalCounts: getHomepageDataCounts(fallback),
+    });
+    return fallback;
+  }
 
-  const mapped = mapHomepageFeedToData(feed);
+  let mapped: HomepageData;
+  try {
+    mapped = mapHomepageFeedToData(feed);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    logHomepageSsr(diagnostics, {
+      source: "homepage-data",
+      attempt: "map",
+      outcome: "error",
+      errorCategory: `mapping-failure-${error.name}`,
+      sectionCounts: getHomepageSectionCounts(feed),
+    });
+    throw err;
+  }
 
-  return {
+  const result = {
     // Do not delay the initial Hero render on optional per-title synopsis APIs.
     heroItems: mapped.heroItems,
     latestEpisodes: mapped.latestEpisodes,
@@ -3134,5 +3501,25 @@ export async function getHomepageData(): Promise<HomepageData> {
     movieItems: mapped.movieItems,
     seriesItems: mapped.seriesItems,
     upcomingItems: mapped.upcomingItems,
+  };
+  logHomepageSsr(diagnostics, {
+    source: "homepage-data",
+    attempt: "map",
+    outcome: "success",
+    sectionCounts: getHomepageSectionCounts(feed),
+    finalCounts: getHomepageDataCounts(result),
+  });
+  return result;
+}
+
+function getHomepageDataCounts(data: HomepageData): Record<string, number> {
+  return {
+    heroItems: data.heroItems.length,
+    latestEpisodes: data.latestEpisodes.length,
+    trendingItems: data.trendingItems.length,
+    popularItems: data.popularItems.length,
+    movieItems: data.movieItems.length,
+    seriesItems: data.seriesItems.length,
+    upcomingItems: data.upcomingItems.length,
   };
 }
