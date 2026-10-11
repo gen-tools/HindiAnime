@@ -1,4 +1,3 @@
-import { DeferredHomeContinueWatching } from "@/components/home/DeferredHomeContinueWatching";
 import { BrowserHomepageSections } from "@/components/home/BrowserHomepageSections";
 import { LanguageSection } from "@/components/home/LanguageSection";
 import { GenreSection } from "@/components/home/GenreSection";
@@ -21,9 +20,6 @@ export default async function HomePage() {
 
   return (
     <>
-      {/* Continue Watching (renders only when user has active watch progress) */}
-      <DeferredHomeContinueWatching />
-
       <BrowserHomepageSections initialData={homepageData} />
 
       {/* 8. Other existing sections */}

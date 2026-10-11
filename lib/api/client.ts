@@ -1769,6 +1769,12 @@ export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | 
 }
 
 export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
+  // Reuse the last verified feed before repeating the API → Worker fallback
+  // chain. This cache already expires on the same 60-second freshness window.
+  if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
+    return homepageFeedCache.data;
+  }
+
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
@@ -3119,21 +3125,9 @@ export async function getHomepageData(): Promise<HomepageData> {
 
   const mapped = mapHomepageFeedToData(feed);
 
-  // Hydrate rotating spotlight hero items with max 1.5s timeout so page speed stays ultra-fast
-  let heroItems: Anime[] = [];
-  try {
-    heroItems = await Promise.race([
-      enrichAnimeSynopses(mapped.heroItems),
-      new Promise<Anime[]>((_, reject) =>
-        setTimeout(() => reject(new Error("enrich timeout")), 1500)
-      ),
-    ]);
-  } catch {
-    heroItems = mapped.heroItems;
-  }
-
   return {
-    heroItems,
+    // Do not delay the initial Hero render on optional per-title synopsis APIs.
+    heroItems: mapped.heroItems,
     latestEpisodes: mapped.latestEpisodes,
     trendingItems: mapped.trendingItems,
     popularItems: mapped.popularItems,

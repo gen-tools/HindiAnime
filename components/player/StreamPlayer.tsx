@@ -10,7 +10,7 @@ import {
   Server,
   Maximize,
   Minimize,
-  RectangleHorizontal,
+  PictureInPicture2,
 } from "lucide-react";
 import { StreamItem } from "@/types/api";
 import { cleanAnimeSlug, isValidEmbedUrl } from "@/lib/api/client";
@@ -175,12 +175,34 @@ export function StreamPlayer({
   const [state, setState] = useState<PlayerState>("loading");
   const [servers, setServers] = useState<ValidServer[]>([]);
   const [activeServer, setActiveServer] = useState<ValidServer | null>(null);
-  const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [pictureInPictureSupported, setPictureInPictureSupported] = useState(false);
+  const [isPictureInPicture, setIsPictureInPicture] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    setPictureInPictureSupported(document.pictureInPictureEnabled);
+  }, []);
+
+  useEffect(() => {
+    const video = playerFrameRef.current?.querySelector("video");
+    if (!video) {
+      setIsPictureInPicture(false);
+      return;
+    }
+
+    const onEnter = () => setIsPictureInPicture(true);
+    const onLeave = () => setIsPictureInPicture(false);
+    video.addEventListener("enterpictureinpicture", onEnter);
+    video.addEventListener("leavepictureinpicture", onLeave);
+    return () => {
+      video.removeEventListener("enterpictureinpicture", onEnter);
+      video.removeEventListener("leavepictureinpicture", onLeave);
+    };
+  }, [activeServer?.id, state]);
 
   const handleNextServer = useCallback(() => {
     if (servers.length <= 1) return;
@@ -234,6 +256,21 @@ export function StreamPlayer({
       if (!document.fullscreenElement) await el.requestFullscreen();
       else await document.exitFullscreen();
     } catch (err) { console.warn("Fullscreen toggle error:", err); }
+  }, []);
+
+  const togglePictureInPicture = useCallback(async () => {
+    const video = playerFrameRef.current?.querySelector("video");
+    if (!video || !document.pictureInPictureEnabled) return;
+
+    try {
+      if (document.pictureInPictureElement === video) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+    } catch (error) {
+      console.warn("Picture-in-picture toggle error:", error);
+    }
   }, []);
 
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -411,8 +448,7 @@ export function StreamPlayer({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 transition-all duration-200",
-        isTheater && "relative z-30 lg:-mx-16 xl:-mx-28"
+        "flex flex-col gap-3 transition-all duration-200"
       )}
     >
       <div
@@ -421,8 +457,6 @@ export function StreamPlayer({
           "relative w-full overflow-hidden bg-black transition-all",
           isFullscreen
             ? "fixed inset-0 z-50 !h-screen !w-screen !max-h-none !aspect-auto rounded-none border-0"
-            : isTheater
-            ? "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
             : "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
         )}
       >
@@ -525,7 +559,7 @@ export function StreamPlayer({
         )}
       </div>
 
-      {/* Control bar: Server select + Change Server + Theater & Fullscreen */}
+      {/* Control bar: Server select + Change Server + PiP & Fullscreen */}
       {servers.length > 0 && state !== "loading" && !isFullscreen && (
         <div className="flex flex-col gap-2.5 rounded-xl border border-border-line bg-surface p-3 sm:px-4 sm:py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -574,19 +608,18 @@ export function StreamPlayer({
               </button>
             </div>
 
-            {/* Theater & Fullscreen controls */}
+            {/* Picture-in-picture & Fullscreen controls */}
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsTheater((t) => !t)}
-                title={isTheater ? "Default view" : "Theater mode"}
-                aria-label={isTheater ? "Default view" : "Theater mode"}
-                className={cn(
-                  "hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white",
-                  isTheater && "border-green-bright bg-green-primary/20 text-green-light font-bold"
-                )}
+                type="button"
+                onClick={togglePictureInPicture}
+                disabled={!pictureInPictureSupported || state !== "ready" || activeServer?.type === "embed"}
+                title={isPictureInPicture ? "Exit picture-in-picture" : "Picture-in-picture"}
+                aria-label={isPictureInPicture ? "Exit picture-in-picture" : "Picture-in-picture"}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <RectangleHorizontal className="h-4 w-4" />
-                <span>{isTheater ? "Normal" : "Theater"}</span>
+                <PictureInPicture2 className="h-4 w-4" />
+                <span className="hidden sm:inline">PiP</span>
               </button>
               <button
                 onClick={toggleFullscreen}

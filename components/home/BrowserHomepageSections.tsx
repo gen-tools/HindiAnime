@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimeHero } from "@/components/anime/AnimeHero";
+import { DeferredHomeContinueWatching } from "@/components/home/DeferredHomeContinueWatching";
 import { TrendingSection } from "@/components/home/TrendingSection";
 import { PopularSection } from "@/components/home/PopularSection";
 import { LatestSection } from "@/components/home/LatestSection";
@@ -13,8 +14,13 @@ import type { HomepageData } from "@/lib/api/client";
 
 export function BrowserHomepageSections({ initialData }: { initialData: HomepageData }) {
   const [data, setData] = useState(initialData);
+  const hasInitialContent = initialData.trendingItems.length > 0 || initialData.latestEpisodes.length > 0;
 
   useEffect(() => {
+    // Server data is already rendered immediately. Use the browser Worker path
+    // only when server-side catalog retrieval produced no homepage content.
+    if (hasInitialContent) return;
+
     const controller = new AbortController();
     fetchHomepageDataInBrowser(controller.signal)
       .then((freshData) => setData(freshData))
@@ -24,7 +30,7 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
         }
       });
     return () => controller.abort();
-  }, []);
+  }, [hasInitialContent]);
 
   const displayHeroItems = data.heroItems.length > 0
     ? data.heroItems
@@ -33,6 +39,7 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
   return (
     <>
       <AnimeHero items={displayHeroItems} />
+      <DeferredHomeContinueWatching />
       <FadeIn><TrendingSection items={data.trendingItems} /></FadeIn>
       <FadeIn><PopularSection items={data.popularItems} /></FadeIn>
       <FadeIn><LatestSection episodes={data.latestEpisodes} /></FadeIn>
