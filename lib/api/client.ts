@@ -2522,7 +2522,7 @@ function parseEpisodesFromHtml(html: string): EpisodeItem[] {
   return episodes;
 }
 
-const SERVER_WORKER_HOST = "wispy-cherry-6934.sheztech.workers.dev";
+const SERVER_WORKER_HOST = "proxy.hindi-anime.com";
 const WORKER_SECRET_HEADER = "x-hindianime-proxy-secret";
 
 function getServerWorkerBaseUrl(): string {
