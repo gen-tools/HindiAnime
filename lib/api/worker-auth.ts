@@ -1,6 +1,6 @@
 import "server-only";
 
-const WORKER_HOST = "wispy-cherry-6934.sheztech.workers.dev";
+const WORKER_HOST = "proxy.hindi-anime.com";
 const SECRET_HEADER = "x-hindianime-proxy-secret";
 
 function getServerWorkerBaseUrl(): string {
