@@ -2458,6 +2458,7 @@ export interface ScrapedSeriesMeta {
 }
 
 const seriesScrapeCache = new Map<string, { data: ScrapedSeriesMeta; timestamp: number }>();
+const seriesScrapeInFlight = new Map<string, Promise<ScrapedSeriesMeta | null>>();
 
 function parseEpisodesFromHtml(html: string): EpisodeItem[] {
   const episodes: EpisodeItem[] = [];
@@ -2772,15 +2773,30 @@ async function fetchHtmlWithWorkerFallback(
   return null;
 }
 
-export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
+export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
   const cleanId = cleanAnimeSlug(slug) || slug;
-  if (!cleanId) return null;
+  if (!cleanId) return Promise.resolve(null);
 
   const cached = seriesScrapeCache.get(cleanId);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.data;
+    return Promise.resolve(cached.data);
   }
 
+  const pending = seriesScrapeInFlight.get(cleanId);
+  if (pending) return pending;
+
+  const request = scrapeDirectSeriesDataUnshared(cleanId);
+  seriesScrapeInFlight.set(cleanId, request);
+  const cleanup = () => {
+    if (seriesScrapeInFlight.get(cleanId) === request) {
+      seriesScrapeInFlight.delete(cleanId);
+    }
+  };
+  void request.then(cleanup, cleanup);
+  return request;
+}
+
+async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedSeriesMeta | null> {
   try {
     const decodedSlug = normalizeSlug(cleanId);
     let html: string | null = null;

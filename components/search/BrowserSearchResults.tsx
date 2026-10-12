@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { NoResultsState } from "@/components/search/SearchStates";
 import { Pagination } from "@/components/ui/Pagination";
@@ -31,8 +31,23 @@ export function BrowserSearchResults({
   const [items, setItems] = useState(initialItems);
   const [totalPages, setTotalPages] = useState(initialTotalPages);
   const [loading, setLoading] = useState(initialItems.length === 0);
+  const requestKey = JSON.stringify([
+    query,
+    page,
+    filters.genre ?? null,
+    filters.language ?? null,
+    filters.country ?? null,
+    filters.type ?? null,
+  ]);
+  const ssrRequestKeyRef = useRef<string | null>(initialItems.length > 0 ? requestKey : null);
 
   useEffect(() => {
+    // The server already searched and filtered this exact initial request.
+    // Keep this key through Strict Mode's effect replay, but clear it as soon
+    // as the request identity changes so later searches still run.
+    if (ssrRequestKeyRef.current === requestKey) return;
+    ssrRequestKeyRef.current = null;
+
     const controller = new AbortController();
     setLoading(true);
     searchAnimeInBrowser(query, page, controller.signal)
@@ -55,7 +70,7 @@ export function BrowserSearchResults({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [query, page, filters.genre, filters.language, filters.country, filters.type]);
+  }, [query, page, filters.genre, filters.language, filters.country, filters.type, requestKey]);
 
   function buildHref(nextPage: number) {
     const params = new URLSearchParams({ q: query });
