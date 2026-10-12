@@ -2408,6 +2408,10 @@ export async function getMovieInfo(
 export async function enrichAnimeSynopses(items: Anime[]): Promise<Anime[]> {
   return Promise.all(
     items.map(async (item) => {
+      // Catalog mapping may already provide a real synopsis from the existing
+      // exact-slug metadata. Avoid per-item detail and scraper requests then.
+      if (item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK) return item;
+
       try {
         const data =
           item.type === "Movie"
@@ -2650,28 +2654,6 @@ async function fetchHtmlWithWorkerFallback(
       // direct fetch error
     }
 
-    // The homepage request already uses the Worker's KV-backed route first.
-    // Repeating the same Worker request after the direct fallback adds an
-    // invocation without changing its cache key or request context.
-    if (url !== "https://animesalt.cx/") {
-      try {
-        const proxyUrl = buildServerWorkerProxyUrl(url);
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 6000);
-        const pRes = await fetch(proxyUrl, {
-          headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
-          signal: controller.signal,
-        });
-        clearTimeout(t);
-        if (pRes.ok) {
-          const text = await pRes.text();
-          if (!is404Html(text)) return text;
-        }
-      } catch {
-        // proxy fetch error
-      }
-    }
-
     return null;
   }
 
@@ -2764,11 +2746,6 @@ async function fetchHtmlWithWorkerFallback(
 
   const directHtml = await fetchAttempt("direct-animesalt", url, 3500);
   if (directHtml) return directHtml;
-
-  if (url !== "https://animesalt.cx/") {
-    const proxyRetryHtml = await fetchAttempt("worker-retry", buildServerWorkerProxyUrl(url), 6000);
-    if (proxyRetryHtml) return proxyRetryHtml;
-  }
 
   return null;
 }
