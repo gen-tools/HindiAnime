@@ -116,13 +116,9 @@ function abortPlaybackRequest(controller: AbortController | null, message: strin
 }
 
 // CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
-const CF_WORKER_BASE = (
-  process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://proxy.hindi-anime.com"
-)
-  .replace(/\/\?url=$/, "")
-  .replace(/\?url=$/, "")
-  .replace(/\/$/, "");
-const CF_GENERAL_PROXY_URL = `${CF_WORKER_BASE}/?url=`;
+// Browser-safe Worker routes use the protected custom domain. The unrestricted
+// /?url= proxy is server-only; browser HTML requests use our same-origin API.
+const CF_WORKER_BASE = "https://proxy.hindi-anime.com";
 const CF_STREAM_URL = `${CF_WORKER_BASE}/stream`;
 
 async function fetchAnimeSaltHtml(
@@ -138,7 +134,7 @@ async function fetchAnimeSaltHtml(
     : buildAnimeSaltEpisodeCandidates(cleanId, season, episode);
   for (const targetUrl of targetUrls) {
     try {
-      const response = await fetch(`${CF_GENERAL_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`, {
+      const response = await fetch(`/api/animesalt-proxy?url=${encodeURIComponent(targetUrl)}`, {
         cache: "no-store",
         signal,
       });
