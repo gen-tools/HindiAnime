@@ -13,13 +13,6 @@ type LoadState = "loading" | "ready" | "error";
 const ANIMESALT_ORIGIN = "https://animesalt.cx";
 const ALLOWED_HOSTS = new Set(["animesalt.cx", "www.animesalt.cx"]);
 
-function workerBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-    "https://proxy.hindi-anime.com"
-  ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
-}
-
 function cleanSlug(raw: string): string {
   try {
     const url = new URL(raw);
@@ -120,8 +113,7 @@ export function BrowserCatalogFallback({
     const load = async () => {
       setState("loading");
       setItems([]);
-      const base = workerBaseUrl();
-      const catalogUrl = new URL(`${base}/catalog`);
+      const catalogUrl = new URL("/api/catalog-proxy", window.location.origin);
       catalogUrl.searchParams.set("kind", kind);
       catalogUrl.searchParams.set("page", String(page));
 
@@ -153,7 +145,7 @@ export function BrowserCatalogFallback({
       const articlePage = page === 1
         ? `${ANIMESALT_ORIGIN}/${kind}/`
         : `${ANIMESALT_ORIGIN}/${kind}/page/${page}/`;
-      const proxyUrl = `${base}/?url=${encodeURIComponent(articlePage)}`;
+      const proxyUrl = `/api/animesalt-proxy?url=${encodeURIComponent(articlePage)}`;
       try {
         const posterResponse = await fetch(proxyUrl, {
           cache: "no-store",
