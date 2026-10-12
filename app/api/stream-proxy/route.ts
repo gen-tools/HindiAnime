@@ -29,9 +29,8 @@ const DEFAULT_HEADERS = {
 
 const rawCfProxy = (
   process.env.CF_PROXY_URL ||
-  process.env.NEXT_PUBLIC_CF_PROXY_URL ||
   "https://proxy.hindi-anime.com/?url="
-).trim(); // trim trailing newlines/spaces common in .env files
+).trim(); // Server-side Worker base; never fall back to a public NEXT_PUBLIC host.
 
 /**
  * Base URL for the Cloudflare Worker endpoint.
