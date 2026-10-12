@@ -11,15 +11,10 @@ import type { Anime } from "@/types/anime";
 
 const ANIMESALT_ORIGIN = "https://animesalt.cx";
 
-function getWorkerBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-    "https://proxy.hindi-anime.com"
-  ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
-}
-
 async function fetchAnimeSaltPage(target: string, signal?: AbortSignal): Promise<string> {
-  const proxyUrl = `${getWorkerBaseUrl()}/?url=${encodeURIComponent(target)}`;
+  // Keep browser fallbacks on our same-origin API; never expose the general
+  // Worker URL proxy to client-side requests.
+  const proxyUrl = `/api/animesalt-proxy?url=${encodeURIComponent(target)}`;
   const response = await fetch(proxyUrl, { cache: "no-store", signal });
   const contentType = response.headers.get("content-type")?.toLowerCase() || "";
   if (!response.ok || !contentType.includes("text/html")) {
