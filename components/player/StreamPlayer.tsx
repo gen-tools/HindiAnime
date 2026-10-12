@@ -391,12 +391,8 @@ export function StreamPlayer({
       if (!isCurrentRequest()) return;
       const parsed = parseServers((data?.results ?? []) as import("@/types/api").StreamItem[]);
       if (parsed.length === 0) {
-        if (!isRetry) {
-          retryTimerRef.current = setTimeout(() => {
-            if (isCurrentRequest()) void fetchStreams(true);
-          }, 1500);
-          return;
-        }
+        // An explicit empty result is not a transient transport failure.
+        // Do not repeat the same API and Worker source-resolution chain.
         setState("unavailable");
       } else {
         const currentEmbed = activeServerRef.current?.embed;

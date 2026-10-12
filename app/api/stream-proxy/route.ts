@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle, isValidEmbedUrl } from "@/lib/api/client";
+import { buildServerWorkerProxyUrl, getServerWorkerHeaders } from "@/lib/api/worker-auth";
 import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
 
@@ -31,10 +32,6 @@ const rawCfProxy = (
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
   "https://proxy.hindi-anime.com/?url="
 ).trim(); // trim trailing newlines/spaces common in .env files
-
-const CF_PROXY_URL = rawCfProxy.includes("?url=")
-  ? rawCfProxy
-  : `${rawCfProxy.replace(/\/+$/, "")}/?url=`;
 
 /**
  * Base URL for the Cloudflare Worker endpoint.
@@ -261,11 +258,10 @@ async function fetchTokoSources(
   // Omit stream=0 to use the backend's existing progressive SSE response.
 
   const directUrl = `${TOKO_API_URL}/api/v3/toko/stream?${params.toString()}`;
-  const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(directUrl)}`;
 
   let data: { rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null = null;
 
-  const fetchSources = async (url: string) => {
+  const fetchSources = async (url: string, throughWorker = false) => {
     const controller = new AbortController();
     const abortFromRequest = () => controller.abort();
     if (requestSignal?.aborted) controller.abort();
@@ -275,9 +271,16 @@ async function fetchTokoSources(
       const res = await fetch(url, {
         signal: controller.signal,
         cache: "no-store",
-        headers: DEFAULT_HEADERS,
+        headers: throughWorker ? getServerWorkerHeaders(DEFAULT_HEADERS) : DEFAULT_HEADERS,
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        if (throughWorker) {
+          console.error("[toko-worker] Worker returned a non-OK response; Toko sources were unavailable.", {
+            status: res.status,
+          });
+        }
+        return null;
+      }
       return await readTokoResponse(res, onSource);
     } finally {
       clearTimeout(timer);
@@ -298,7 +301,8 @@ async function fetchTokoSources(
   // 2. Try proxy fetch if direct fetch failed
   if (!data && !requestSignal?.aborted) {
     try {
-      data = await fetchSources(proxyUrl);
+      const proxyUrl = buildServerWorkerProxyUrl(directUrl);
+      data = await fetchSources(proxyUrl, true);
     } catch {
       // proxy error
     }
@@ -514,7 +518,14 @@ async function fetchAnimeSaltSources(
 
   // Retrieve AnimeSalt through the general Worker proxy.
   for (const targetUrl of browserResult ? [browserResult.targetUrl] : candidates) {
-    const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`;
+    let proxyUrl: string | null = null;
+    if (!browserResult) {
+      try {
+        proxyUrl = `${buildServerWorkerProxyUrl(targetUrl)}&diag1=1`;
+      } catch {
+        return [];
+      }
+    }
     // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
     const fetchUrls: Array<string | null> = browserResult ? [null] : [proxyUrl];
 
@@ -542,11 +553,11 @@ async function fetchAnimeSaltSources(
           const res = await fetch(urlToFetch!, {
             signal: controller.signal,
             cache: "no-store",
-            headers: {
+            headers: getServerWorkerHeaders({
               ...DEFAULT_HEADERS,
               Accept: "text/html",
               Origin: "https://hindianime-seven.vercel.app",
-            },
+            }),
           });
           clearTimeout(timer);
           httpStatus = res.status;
@@ -694,10 +705,10 @@ async function isKnownUnavailableMyStream(embedUrl: string): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3_000);
   try {
-    const response = await fetch(`${CF_PROXY_URL}${encodeURIComponent(embedUrl)}`, {
+    const response = await fetch(buildServerWorkerProxyUrl(embedUrl), {
       signal: controller.signal,
       cache: "no-store",
-      headers: { ...DEFAULT_HEADERS, Accept: "text/html" },
+      headers: getServerWorkerHeaders({ ...DEFAULT_HEADERS, Accept: "text/html" }),
     });
     if (!response.ok || !response.headers.get("content-type")?.toLowerCase().includes("text/html")) {
       return false;

@@ -694,8 +694,8 @@ export async function scrapeAnimeSaltCatalog(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 6000);
       try {
-        const response = await fetch(buildWorkerCatalogUrl(kind, page), {
-          headers: DEFAULT_SCRAPER_HEADERS,
+        const response = await fetch(buildServerWorkerCatalogUrl(kind, page), {
+          headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
           signal: controller.signal,
           cache: "no-store",
         });
@@ -729,8 +729,8 @@ export async function scrapeAnimeSaltCatalog(
         const imageController = new AbortController();
         const imageTimer = setTimeout(() => imageController.abort(), 6000);
         try {
-          const imageResponse = await fetch(buildWorkerProxyUrl(url), {
-            headers: DEFAULT_SCRAPER_HEADERS,
+          const imageResponse = await fetch(buildServerWorkerProxyUrl(url), {
+            headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
             signal: imageController.signal,
             cache: "no-store",
           });
@@ -2522,28 +2522,51 @@ function parseEpisodesFromHtml(html: string): EpisodeItem[] {
   return episodes;
 }
 
-export function buildWorkerProxyUrl(targetUrl: string): string {
-  const base = (
-    process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-    process.env.CF_PROXY_URL ||
-    "https://proxy.hindi-anime.com"
-  ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
-  return `${base}/?url=${encodeURIComponent(targetUrl)}`;
+const SERVER_WORKER_HOST = "wispy-cherry-6934.sheztech.workers.dev";
+const WORKER_SECRET_HEADER = "x-hindianime-proxy-secret";
+
+function getServerWorkerBaseUrl(): string {
+  if (typeof window !== "undefined") throw new Error("Authenticated Worker requests are server-only.");
+  const rawUrl = process.env.CF_PROXY_URL?.trim();
+  if (!rawUrl) {
+    console.error("[worker-auth] CF_PROXY_URL is missing; protected Worker request was not sent.");
+    throw new Error("CF_PROXY_URL is required for authenticated Worker requests.");
+  }
+  try {
+    const url = new URL(rawUrl);
+    const validQuery = url.search === "" ||
+      (url.searchParams.size === 1 && url.searchParams.has("url") && url.searchParams.get("url") === "");
+    if (url.protocol !== "https:" || url.hostname !== SERVER_WORKER_HOST || url.username || url.password ||
+      url.pathname !== "/" || !validQuery || url.hash) throw new Error("invalid Worker URL");
+    return url.origin;
+  } catch {
+    console.error("[worker-auth] CF_PROXY_URL must target the configured HTTPS Worker; protected Worker request was not sent.");
+    throw new Error("CF_PROXY_URL is not configured for the authenticated Worker.");
+  }
 }
 
-function buildWorkerCatalogUrl(kind: "series" | "movies", page: number): string {
-  const base = (
-    process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-    process.env.CF_PROXY_URL ||
-    "https://proxy.hindi-anime.com"
-  ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
-  const url = new URL(`${base}/catalog`);
+function buildServerWorkerProxyUrl(targetUrl: string): string {
+  return `${getServerWorkerBaseUrl()}/?url=${encodeURIComponent(targetUrl)}`;
+}
+
+function buildServerWorkerCatalogUrl(kind: "series" | "movies", page: number): string {
+  const url = new URL(`${getServerWorkerBaseUrl()}/catalog`);
   url.searchParams.set("kind", kind);
   url.searchParams.set("page", String(page));
   return url.toString();
 }
 
-const WORKER_PROXY_URL = buildWorkerProxyUrl("");
+function getServerWorkerHeaders(headers?: HeadersInit): Headers {
+  if (typeof window !== "undefined") throw new Error("Authenticated Worker requests are server-only.");
+  const secret = process.env.CF_PROXY_SHARED_SECRET;
+  if (!secret) {
+    console.error("[worker-auth] CF_PROXY_SHARED_SECRET is missing; protected Worker request was not sent.");
+    throw new Error("CF_PROXY_SHARED_SECRET is required for authenticated Worker requests.");
+  }
+  const result = new Headers(headers);
+  result.set(WORKER_SECRET_HEADER, secret);
+  return result;
+}
 
 function is404Html(text: string): boolean {
   if (!text || text.length < 500) return true;
@@ -2593,11 +2616,11 @@ async function fetchHtmlWithWorkerFallback(
     // Preserve the existing behavior for every non-homepage scraper caller.
     if (url.includes("animesalt.cx")) {
       try {
-        const proxyUrl = buildWorkerProxyUrl(url);
+        const proxyUrl = buildServerWorkerProxyUrl(url);
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 6000);
         const pRes = await fetch(proxyUrl, {
-          headers: DEFAULT_SCRAPER_HEADERS,
+          headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
           signal: controller.signal,
         });
         clearTimeout(t);
@@ -2626,21 +2649,26 @@ async function fetchHtmlWithWorkerFallback(
       // direct fetch error
     }
 
-    try {
-      const proxyUrl = buildWorkerProxyUrl(url);
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 6000);
-      const pRes = await fetch(proxyUrl, {
-        headers: DEFAULT_SCRAPER_HEADERS,
-        signal: controller.signal,
-      });
-      clearTimeout(t);
-      if (pRes.ok) {
-        const text = await pRes.text();
-        if (!is404Html(text)) return text;
+    // The homepage request already uses the Worker's KV-backed route first.
+    // Repeating the same Worker request after the direct fallback adds an
+    // invocation without changing its cache key or request context.
+    if (url !== "https://animesalt.cx/") {
+      try {
+        const proxyUrl = buildServerWorkerProxyUrl(url);
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6000);
+        const pRes = await fetch(proxyUrl, {
+          headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+        if (pRes.ok) {
+          const text = await pRes.text();
+          if (!is404Html(text)) return text;
+        }
+      } catch {
+        // proxy fetch error
       }
-    } catch {
-      // proxy fetch error
     }
 
     return null;
@@ -2658,7 +2686,9 @@ async function fetchHtmlWithWorkerFallback(
     let contentType: string | null = null;
     try {
       const response = await fetch(requestUrl, {
-        headers: DEFAULT_SCRAPER_HEADERS,
+        headers: source === "direct-animesalt"
+          ? DEFAULT_SCRAPER_HEADERS
+          : getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
         signal: controller.signal,
       });
       status = response.status;
@@ -2727,15 +2757,17 @@ async function fetchHtmlWithWorkerFallback(
 
   // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
   if (url.includes("animesalt.cx")) {
-    const proxyHtml = await fetchAttempt("worker-primary", buildWorkerProxyUrl(url), 6000);
+    const proxyHtml = await fetchAttempt("worker-primary", buildServerWorkerProxyUrl(url), 6000);
     if (proxyHtml) return proxyHtml;
   }
 
   const directHtml = await fetchAttempt("direct-animesalt", url, 3500);
   if (directHtml) return directHtml;
 
-  const proxyRetryHtml = await fetchAttempt("worker-retry", buildWorkerProxyUrl(url), 6000);
-  if (proxyRetryHtml) return proxyRetryHtml;
+  if (url !== "https://animesalt.cx/") {
+    const proxyRetryHtml = await fetchAttempt("worker-retry", buildServerWorkerProxyUrl(url), 6000);
+    if (proxyRetryHtml) return proxyRetryHtml;
+  }
 
   return null;
 }

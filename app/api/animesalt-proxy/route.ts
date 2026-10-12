@@ -1,5 +1,7 @@
 ﻿import { NextResponse } from "next/server";
 
+import { buildServerWorkerProxyUrl, getServerWorkerHeaders } from "@/lib/api/worker-auth";
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -19,15 +21,6 @@ function isAllowedHost(hostname: string): boolean {
     (h) => hostname === h || hostname.endsWith(`.${h}`)
   );
 }
-
-const CF_PROXY_RAW =
-  process.env.CF_PROXY_URL ||
-  process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-  "https://proxy.hindi-anime.com/?url=";
-
-const CF_PROXY = CF_PROXY_RAW.includes("?url=")
-  ? CF_PROXY_RAW
-  : `${CF_PROXY_RAW.replace(/\/+$/, "")}/?url=`;
 
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -83,11 +76,11 @@ export async function GET(request: Request) {
   // 2. Cloudflare Worker fallback (handles 522 / IP bans)
   if (!upstreamResponse?.ok) {
     try {
-      const proxyUrl = `${CF_PROXY}${encodeURIComponent(decodedUrl)}`;
+      const proxyUrl = buildServerWorkerProxyUrl(decodedUrl);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12000);
       upstreamResponse = await fetch(proxyUrl, {
-        headers: BROWSER_HEADERS,
+        headers: getServerWorkerHeaders(BROWSER_HEADERS),
         cache: "no-store",
         signal: controller.signal,
       });
