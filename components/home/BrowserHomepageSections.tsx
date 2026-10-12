@@ -9,8 +9,7 @@ import { LatestSection } from "@/components/home/LatestSection";
 import { AllAnimeSection } from "@/components/home/AllAnimeSection";
 import { MovieSection } from "@/components/home/MovieSection";
 import { FadeIn } from "@/components/ui/FadeIn";
-import { fetchHomepageDataInBrowser } from "@/lib/api/browser-source";
-import type { HomepageData } from "@/lib/api/client";
+import { getHomepageFeed, mapHomepageFeedToData, type HomepageData } from "@/lib/api/client";
 
 export function BrowserHomepageSections({ initialData }: { initialData: HomepageData }) {
   const [data, setData] = useState(initialData);
@@ -18,25 +17,27 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
   const [isLoading, setIsLoading] = useState(!hasInitialContent);
 
   useEffect(() => {
-    // Server data is already rendered immediately. Use the browser Worker path
-    // only when server-side catalog retrieval produced no homepage content.
+    // Server data is already rendered immediately. Retry through the catalog
+    // API only when server-side retrieval produced no homepage content.
     if (hasInitialContent) {
       setIsLoading(false);
       return;
     }
 
-    const controller = new AbortController();
-    fetchHomepageDataInBrowser(controller.signal)
-      .then((freshData) => setData(freshData))
+    let active = true;
+    getHomepageFeed()
+      .then((feed) => {
+        if (active && feed) setData(mapHomepageFeedToData(feed));
+      })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name !== "AbortError") {
-          console.warn("[Homepage] Live source refresh failed; retaining current data.", error.message);
+          console.warn("[Homepage] Catalog API refresh failed; retaining current data.", error.message);
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setIsLoading(false);
+        if (active) setIsLoading(false);
       });
-    return () => controller.abort();
+    return () => { active = false; };
   }, [hasInitialContent]);
 
   const displayHeroItems = data.heroItems.length > 0

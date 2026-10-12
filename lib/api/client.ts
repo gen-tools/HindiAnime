@@ -1323,7 +1323,7 @@ export async function getCountryCatalog(
 export async function getCatalog(
   kind: "series" | "movies",
   page = 1,
-  options: { allowHomepageFallback?: boolean } = {}
+  options: { allowHomepageFallback?: boolean; signal?: AbortSignal } = {}
 ): Promise<AnimeCatalogResponse | null> {
   // 1. Try upstream JSON API first
   try {
@@ -1332,31 +1332,11 @@ export async function getCatalog(
     // can recover as soon as the source/API is available again.
     const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
       cache: "no-store",
+      signal: options.signal,
     });
     if (res.ok) {
       const data = (await res.json()) as AnimeCatalogResponse;
       if (data?.results?.results && Array.isArray(data.results.results) && data.results.results.length > 0) {
-        if (data.results.results.some((item) => !isUsableImageUrl(item.poster))) {
-          const posterPage = await scrapeAnimeSaltCatalog(kind, page);
-          if (posterPage?.results.length) {
-            const postersBySlug = new Map(
-              posterPage.results
-                .filter((item) => isUsableImageUrl(item.poster))
-                .map((item) => [cleanAnimeSlug(item.anime_id), item.poster as string])
-            );
-            return {
-              ...data,
-              results: {
-                ...data.results,
-                results: data.results.results.map((item) => {
-                  if (isUsableImageUrl(item.poster)) return item;
-                  const poster = postersBySlug.get(cleanAnimeSlug(item.anime_id));
-                  return poster ? { ...item, poster } : item;
-                }),
-              },
-            };
-          }
-        }
         return data;
       }
     }
@@ -1364,24 +1344,7 @@ export async function getCatalog(
     console.error(`getCatalog ${kind} API error:`, err);
   }
 
-  // 2. Fallback: restricted Worker feed for the requested AnimeSalt catalog page.
-  try {
-    const scraped = await scrapeAnimeSaltCatalog(kind, page);
-    if (scraped && scraped.results.length > 0) {
-      return {
-        success: true,
-        results: {
-          currentPage: scraped.currentPage,
-          totalPages: scraped.totalPages,
-          results: scraped.results,
-        },
-      };
-    }
-  } catch (scrapedErr) {
-    console.error(`getCatalog ${kind} catalog scraper error:`, scrapedErr);
-  }
-
-  // 3. Last resort: homepage feed data (page 1 only, limited set)
+  // Last resort: the catalog API's own homepage feed (page 1 only, limited set).
   if (page === 1 && options.allowHomepageFallback !== false) {
     try {
       const feed = await getHomepageFeed();
@@ -1572,8 +1535,7 @@ export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null
     console.error("getLatestEpisodes API error:", err);
   }
 
-  // Fallback: The upstream /api/newadded endpoint can fail (e.g. 500 server error).
-  // The primary homepage endpoint (/api) or direct scraper provides `fresh_drops` with the latest episodes.
+  // Fallback to the catalog API's homepage endpoint when /api/newadded is unavailable.
   try {
     const feed = await getHomepageFeed();
     const drops = feed?.data?.results?.fresh_drops;
@@ -1588,125 +1550,6 @@ export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null
   }
 
   return null;
-}
-
-// ─── Direct Upstream Scraper for Homepage Feed ──────────────────────────────
-
-function extractImgSrc(htmlSnippet: string): string | null {
-  const m =
-    htmlSnippet.match(/data-src=["']([^"']+)["']/) ||
-    htmlSnippet.match(/src=["']([^"']+)["']/);
-  let src = m ? m[1] : null;
-  if (src && src.startsWith("//")) src = "https:" + src;
-  return src && !src.startsWith("data:") ? src : null;
-}
-
-function extractTitle(htmlSnippet: string, fallbackSlug: string = ""): string {
-  const chartTitle = htmlSnippet.match(/<div class="chart-title"[^>]*>([\s\S]*?)<\/div>/i)?.[1];
-  if (chartTitle) return decodeHtmlEntities(chartTitle.trim());
-  const entryTitle = htmlSnippet.match(/<h2[^>]*class=["']entry-title["'][^>]*>([\s\S]*?)<\/h2>/i)?.[1];
-  if (entryTitle) return decodeHtmlEntities(entryTitle.trim());
-  const altTitle =
-    htmlSnippet.match(/alt="Image\s*([^"]*)"/i)?.[1] ||
-    htmlSnippet.match(/alt='Image\s*([^']*)'/i)?.[1];
-  if (altTitle) return decodeHtmlEntities(altTitle.trim());
-  if (fallbackSlug) {
-    return fallbackSlug
-      .split("-")
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(" ");
-  }
-  return "";
-}
-
-function parseHomepageCharts(html: string, sectionName: string): HomepageRankedItem[] {
-  const idx = html.indexOf(sectionName);
-  if (idx === -1) return [];
-  const sectionHtml = html.substring(idx, idx + 40000);
-  const endIdx = sectionHtml.indexOf('class="section-title', 50);
-  const chunk = endIdx > 0 ? sectionHtml.substring(0, endIdx) : sectionHtml;
-
-  const items: HomepageRankedItem[] = [];
-  const itemRegex =
-    /<div class="chart-item">([\s\S]*?)(?=<div class="chart-item">|<\/div>\s*<\/div>\s*<\/div>|$)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = itemRegex.exec(chunk)) !== null) {
-    const itemHtml = match[1];
-    const rank =
-      itemHtml.match(/<div class="chart-number">(\d+)<\/div>/)?.[1] ||
-      String(items.length + 1);
-    const link = itemHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
-    const poster = extractImgSrc(itemHtml);
-    const title = extractTitle(itemHtml);
-    if (link && poster) {
-      items.push({
-        rank,
-        anime_id: link,
-        title: title || "Anime",
-        poster,
-      });
-    }
-  }
-  return items;
-}
-
-function parseHomepageArticles(
-  html: string,
-  sectionName: string,
-  isFreshDrop: boolean = false
-): (HomepageFreshDropItem | AnimeListItem)[] {
-  const idx = html.indexOf(sectionName);
-  if (idx === -1) return [];
-  const sectionHtml = html.substring(idx, idx + 40000);
-  const endIdx = sectionHtml.indexOf('class="section-title', 50);
-  const chunk = endIdx > 0 ? sectionHtml.substring(0, endIdx) : sectionHtml;
-
-  const items: (HomepageFreshDropItem | AnimeListItem)[] = [];
-  const artRegex = /<article[^>]*class=["']post[^"']*["']>([\s\S]*?)<\/article>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = artRegex.exec(chunk)) !== null) {
-    const artHtml = match[1];
-    const poster = extractImgSrc(artHtml);
-    const link = artHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
-    const slug = cleanAnimeSlug(link);
-    const title = extractTitle(artHtml, slug);
-    const seasonMatch = artHtml
-      .match(/<span[^>]*class=["']post-ql["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
-      ?.trim();
-    const yearMatch = artHtml
-      .match(/<span[^>]*class=["']year["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
-      ?.trim();
-
-    let season = "1";
-    if (seasonMatch) {
-      const sNum = seasonMatch.match(/\d+/);
-      if (sNum) season = sNum[0];
-    }
-    let episode = "1";
-    if (yearMatch) {
-      const epNum = yearMatch.match(/EP:\s*(\d+(?:-\d+)?)/i) || yearMatch.match(/\d+/);
-      if (epNum) episode = epNum[1] || epNum[0];
-    }
-
-    if (link && poster) {
-      if (isFreshDrop) {
-        items.push({
-          anime_id: link,
-          title,
-          poster,
-          season,
-          episode,
-        } as HomepageFreshDropItem);
-      } else {
-        items.push({
-          anime_id: link,
-          title,
-          poster,
-        } as AnimeListItem);
-      }
-    }
-  }
-  return items;
 }
 
 let homepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
@@ -1782,123 +1625,9 @@ type HomepageFetchDiagnostic = {
   responseBytes: number;
 };
 
-export function parseHomepageSourceHtml(
-  html: string,
-  diagnostics = false,
-  fetchDiagnostic?: HomepageFetchDiagnostic
-): HomepageApiResponse | null {
-  const parseStartedAt = Date.now();
-  const mostWatched_Series = parseHomepageCharts(html, "Most-Watched Series");
-  const mostWatched_Films = parseHomepageCharts(html, "Most-Watched Films");
-  const fresh_drops = parseHomepageArticles(html, "Fresh Drops", true) as HomepageFreshDropItem[];
-  const on_air_series = parseHomepageArticles(html, "On-Air Series") as AnimeListItem[];
-  const latest_animeMovies = parseHomepageArticles(html, "Latest Anime Movies") as AnimeListItem[];
-  const sectionCounts: HomepageSectionCounts = {
-    freshDrops: fresh_drops.length,
-    latestAnimeMovies: latest_animeMovies.length,
-    mostWatchedFilms: mostWatched_Films.length,
-    mostWatchedSeries: mostWatched_Series.length,
-    onAirSeries: on_air_series.length,
-  };
-
-  if (
-    mostWatched_Series.length === 0 &&
-    mostWatched_Films.length === 0 &&
-    fresh_drops.length === 0
-  ) {
-    logHomepageSsr(diagnostics, {
-      source: "animesalt-homepage",
-      attempt: "parse",
-      outcome: "parse-failure",
-      ...fetchDiagnostic,
-      elapsedMs: Date.now() - parseStartedAt,
-      errorCategory: "no-recognized-homepage-sections",
-      sectionCounts,
-    });
-    return null;
-  }
-
-  logHomepageSsr(diagnostics, {
-    source: "animesalt-homepage",
-    attempt: "parse",
-    outcome: "success",
-    ...fetchDiagnostic,
-    elapsedMs: Date.now() - parseStartedAt,
-    sectionCounts,
-  });
-
-  return {
-    success: true,
-    data: {
-      success: true,
-      results: { mostWatched_Series, mostWatched_Films, fresh_drops, on_air_series, latest_animeMovies },
-    },
-  };
-}
-
-export async function scrapeDirectHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
-  if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
-    logHomepageSsr(diagnostics, {
-      source: "homepage-memory-cache",
-      attempt: "lookup",
-      outcome: "hit",
-      elapsedMs: 0,
-      sectionCounts: getHomepageSectionCounts(homepageFeedCache.data),
-    });
-    return homepageFeedCache.data;
-  }
-
-  logHomepageSsr(diagnostics, {
-    source: "homepage-memory-cache",
-    attempt: "lookup",
-    outcome: "miss",
-    elapsedMs: 0,
-  });
-  const startedAt = Date.now();
-  try {
-    // Do not depend on the separate Vercel API deployment for the homepage.
-    // It can be served a Vercel Security Checkpoint, while the Worker can
-    // still retrieve the public AnimeSalt page that supplies these cards.
-    let fetchDiagnostic: HomepageFetchDiagnostic | undefined;
-    const html = await fetchHtmlWithWorkerFallback("https://animesalt.cx/", diagnostics, (details) => {
-      fetchDiagnostic = details;
-    });
-    if (!html) {
-      logHomepageSsr(diagnostics, {
-        source: "animesalt-homepage",
-        attempt: "fetch-chain",
-        outcome: "unavailable",
-        errorCategory: "all-fetch-attempts-failed",
-        elapsedMs: Date.now() - startedAt,
-        sectionCounts: { freshDrops: 0, latestAnimeMovies: 0, mostWatchedFilms: 0, mostWatchedSeries: 0, onAirSeries: 0 },
-      });
-      return null;
-    }
-    const feed = parseHomepageSourceHtml(html, diagnostics, fetchDiagnostic);
-    if (!feed) return null;
-
-    homepageFeedCache = { data: feed, timestamp: Date.now() };
-    return feed;
-  } catch (err) {
-    if (!diagnostics) {
-      console.error("[Scraper] Error scraping direct homepage feed:", err);
-      return null;
-    }
-    const error = err instanceof Error ? err : new Error(String(err));
-    logHomepageSsr(diagnostics, {
-      source: "animesalt-homepage",
-      attempt: "scrape",
-      outcome: "error",
-      elapsedMs: Date.now() - startedAt,
-      errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "scrape-error",
-    });
-    return null;
-  }
-}
-
 export async function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
-  // Reuse the last verified feed before repeating the API → Worker fallback
-  // chain. This cache already expires on the same 60-second freshness window.
+  // Reuse the last verified API feed before another API request. This cache
+  // expires on the same 60-second freshness window.
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
     logHomepageSsr(diagnostics, {
       source: "homepage-memory-cache",
@@ -1946,7 +1675,7 @@ export async function getHomepageFeed(diagnostics = false): Promise<HomepageApiR
         data = null;
       }
       if (data && hasHomepageItems(data)) {
-        if (data.data.success !== false && data.cached !== true) {
+        if (data.data.success !== false) {
           homepageFeedCache = { data, timestamp: Date.now() };
           logHomepageSsr(diagnostics, {
             source: "catalog-api-homepage",
@@ -2013,14 +1742,7 @@ export async function getHomepageFeed(diagnostics = false): Promise<HomepageApiR
     });
   }
 
-  // Cached or unsuccessful API snapshots are not a reliable current ranking.
-  // Use the existing direct scrape and retain only a short-lived last-good feed.
-  const scrapedFeed = await scrapeDirectHomepageFeed(diagnostics);
-  if (hasHomepageItems(scrapedFeed)) {
-    homepageFeedCache = { data: scrapedFeed!, timestamp: Date.now() };
-    return scrapedFeed;
-  }
-
+  // Retain valid API data on temporary failures; do not bypass the API with a Worker scrape.
   // Fallback 2: Cached in-memory feed if available
   const cachedFeed = homepageFeedCache?.data;
   if (hasHomepageItems(cachedFeed)) {

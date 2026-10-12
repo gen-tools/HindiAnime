@@ -2,104 +2,12 @@
 
 import { useEffect, useState } from "react";
 import type { Anime } from "@/types/anime";
-import type { AnimeSearchResult } from "@/types/api";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
-import { cleanAnimeSlug, isUsableImageUrl, mapSearchItemToAnime } from "@/lib/api/client";
+import { getCatalog, mapSearchItemToAnime } from "@/lib/api/client";
 
 type CatalogKind = "series" | "movies";
 type LoadState = "loading" | "ready" | "error";
-
-const ANIMESALT_ORIGIN = "https://animesalt.cx";
-const ALLOWED_HOSTS = new Set(["animesalt.cx", "www.animesalt.cx"]);
-
-function workerBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-    "https://proxy.hindi-anime.com"
-  ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
-}
-
-function cleanSlug(raw: string): string {
-  try {
-    const url = new URL(raw);
-    return url.pathname.split("/").filter(Boolean).at(-1) || "";
-  } catch {
-    return raw.replace(/^\/+|\/+$/g, "");
-  }
-}
-
-function usableImageUrl(value?: string | null): value is string {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    return (url.protocol === "https:" || url.protocol === "http:") && Boolean(url.hostname);
-  } catch {
-    return false;
-  }
-}
-
-function parseFeed(xmlText: string, kind: CatalogKind): AnimeSearchResult[] {
-  const document = new DOMParser().parseFromString(xmlText, "application/xml");
-  if (document.querySelector("parsererror")) throw new Error("Invalid catalog feed");
-
-  const seen = new Set<string>();
-  return Array.from(document.querySelectorAll("item")).flatMap((item) => {
-    const title = item.querySelector("title")?.textContent?.trim() || "";
-    const rawLink = item.querySelector("link")?.textContent?.trim() || "";
-    try {
-      const link = new URL(rawLink);
-      const segments = link.pathname.split("/").filter(Boolean);
-      if (
-        !title ||
-        link.protocol !== "https:" ||
-        !ALLOWED_HOSTS.has(link.hostname) ||
-        segments.length !== 2 ||
-        segments[0] !== kind
-      ) return [];
-
-      const slug = segments[1];
-      if (seen.has(slug)) return [];
-      seen.add(slug);
-      return [{ title, anime_id: link.toString(), poster: null }];
-    } catch {
-      return [];
-    }
-  });
-}
-
-function extractPosters(html: string, kind: CatalogKind): Map<string, string> {
-  const document = new DOMParser().parseFromString(html, "text/html");
-  const posters = new Map<string, string>();
-
-  for (const article of Array.from(document.querySelectorAll("article.post"))) {
-    const href = article.querySelector("a.lnk-blk")?.getAttribute("href");
-    const image = article.querySelector("img");
-    const rawPoster = image?.getAttribute("data-src") ||
-      image?.getAttribute("data-lazy-src") ||
-      image?.getAttribute("data-original") ||
-      image?.getAttribute("src");
-    if (!href || !rawPoster) continue;
-
-    try {
-      const detail = new URL(href, ANIMESALT_ORIGIN);
-      const segments = detail.pathname.split("/").filter(Boolean);
-      if (
-        detail.protocol !== "https:" ||
-        !ALLOWED_HOSTS.has(detail.hostname) ||
-        segments.length !== 2 ||
-        segments[0] !== kind
-      ) continue;
-
-      const poster = new URL(rawPoster, ANIMESALT_ORIGIN).toString();
-      if (usableImageUrl(poster)) posters.set(segments[1], poster);
-    } catch {
-      // Invalid article and image URLs are ignored; catalog entries remain usable.
-    }
-  }
-
-  return posters;
-}
 
 export function BrowserCatalogFallback({
   kind,
@@ -120,56 +28,18 @@ export function BrowserCatalogFallback({
     const load = async () => {
       setState("loading");
       setItems([]);
-      const base = workerBaseUrl();
-      const catalogUrl = new URL(`${base}/catalog`);
-      catalogUrl.searchParams.set("kind", kind);
-      catalogUrl.searchParams.set("page", String(page));
-
-      const response = await fetch(catalogUrl, {
-        cache: "no-store",
+      const response = await getCatalog(kind, page, {
+        allowHomepageFallback: false,
         signal: controller.signal,
       });
-      const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-      if (!response.ok || !/(?:rss\+xml|application\/xml|text\/xml)/.test(contentType)) {
-        throw new Error(`Catalog Worker returned HTTP ${response.status}`);
-      }
-
-      const rawItems = parseFeed(await response.text(), kind);
+      const rawItems = response?.results?.results ?? [];
       if (rawItems.length === 0) throw new Error("Catalog feed had no valid entries");
-
-      const reportedPages = Number(response.headers.get("x-catalog-total-pages"));
-      const nextTotalPages = Number.isSafeInteger(reportedPages) && reportedPages >= page
-        ? reportedPages
-        : null;
       if (!active) return;
       setItems(rawItems.map((item) =>
         mapSearchItemToAnime(item, kind === "movies" ? "Movie" : "TV")
       ));
-      setTotalPages(nextTotalPages);
+      setTotalPages(response?.results?.totalPages ?? null);
       setState("ready");
-
-      // Poster lookup is a separate best-effort request. Catalog titles and
-      // pagination remain visible even if the article HTML cannot be fetched.
-      const articlePage = page === 1
-        ? `${ANIMESALT_ORIGIN}/${kind}/`
-        : `${ANIMESALT_ORIGIN}/${kind}/page/${page}/`;
-      const proxyUrl = `${base}/?url=${encodeURIComponent(articlePage)}`;
-      try {
-        const posterResponse = await fetch(proxyUrl, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!posterResponse.ok || !posterResponse.headers.get("content-type")?.toLowerCase().includes("text/html")) return;
-        const posterMap = extractPosters(await posterResponse.text(), kind);
-        if (!active) return;
-        setItems((current) => current.map((item) => {
-          if (isUsableImageUrl(item.poster)) return item;
-          const poster = posterMap.get(cleanAnimeSlug(item.slug));
-          return poster ? { ...item, poster, backdrop: poster } : item;
-        }));
-      } catch {
-        // Keep valid feed entries if optional poster enrichment fails.
-      }
     };
 
     load().catch(() => {

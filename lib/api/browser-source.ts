@@ -1,11 +1,8 @@
 "use client";
 
 import {
-  mapHomepageFeedToData,
   mapSearchItemToAnime,
   parseAnimeSaltArticles,
-  parseHomepageSourceHtml,
-  type HomepageData,
 } from "@/lib/api/client";
 import type { Anime } from "@/types/anime";
 
@@ -26,17 +23,6 @@ async function fetchAnimeSaltPage(target: string, signal?: AbortSignal): Promise
     throw new Error(`AnimeSalt Worker returned HTTP ${response.status}`);
   }
   return response.text();
-}
-
-export async function fetchHomepageDataInBrowser(signal?: AbortSignal): Promise<HomepageData> {
-  const html = await fetchAnimeSaltPage(`${ANIMESALT_ORIGIN}/`, signal);
-  const feed = parseHomepageSourceHtml(html);
-  if (!feed) throw new Error("AnimeSalt homepage did not contain recognized sections");
-  const data = mapHomepageFeedToData(feed);
-  if (data.trendingItems.length === 0 && data.latestEpisodes.length === 0) {
-    throw new Error("AnimeSalt homepage contained no ranked titles or episodes");
-  }
-  return data;
 }
 
 export async function searchAnimeInBrowser(
