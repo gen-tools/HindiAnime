@@ -32,7 +32,7 @@ export async function GET(request: Request): Promise<Response> {
   if (
     hasUnexpectedParameter ||
     (kind !== "series" && kind !== "movies") ||
-    !/^[1-9]\\d{0,3}$/.test(pageText) ||
+    !/^[1-9]\d{0,3}$/.test(pageText) ||
     !Number.isSafeInteger(page) ||
     page > 1000
   ) {
@@ -58,7 +58,7 @@ export async function GET(request: Request): Promise<Response> {
     }
 
     const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-    if (!/(?:rss\\+xml|application\\/xml|text\\/xml)/.test(contentType)) {
+    if (!/(?:rss\+xml|application\/xml|text\/xml)/.test(contentType)) {
       return errorResponse("Catalog source returned an unexpected response", 502);
     }
 
@@ -66,8 +66,8 @@ export async function GET(request: Request): Promise<Response> {
     if (
       feed.length === 0 ||
       new TextEncoder().encode(feed).byteLength > MAX_FEED_BYTES ||
-      !/<rss\\b/i.test(feed) ||
-      !/<item(?:\\s|>)/i.test(feed)
+      !/<rss\b/i.test(feed) ||
+      !/<item(?:\s|>)/i.test(feed)
     ) {
       return errorResponse("Catalog source returned an invalid feed", 502);
     }
