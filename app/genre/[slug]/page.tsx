@@ -68,7 +68,7 @@ export default async function GenrePage({
   if (language) items = items.filter((a) => a.languages.includes(language as never));
   if (country) items = items.filter((a) => matchesCountry(a, country));
   if (type) items = items.filter((a) => a.type === type);
-  if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
+  if (year) items = items.filter((a) => String(a.year) === year);
 
   if (sort === "rating") items = [...items].sort((a, b) => (b.rating || 0) - (a.rating || 0));
   if (sort === "recent") items = [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -81,6 +81,22 @@ export default async function GenrePage({
     next.delete("genre");
     next.set("page", String(p));
     return `/genre/${slug}?${next.toString()}`;
+  }
+
+  function buildGenreHref(nextGenre: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("page");
+    const query = next.toString();
+    return `/genre/${nextGenre}${query ? `?${query}` : ""}`;
+  }
+
+  function buildLanguageHref(nextLanguage: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("language");
+    next.delete("page");
+    next.set("genre", slug);
+    const query = next.toString();
+    return `/language/${nextLanguage}${query ? `?${query}` : ""}`;
   }
 
   const { palette } = posterPalette(slug);
@@ -102,7 +118,7 @@ export default async function GenrePage({
           return (
             <Link
               key={g.slug}
-              href={`/genre/${g.slug}`}
+              href={buildGenreHref(g.slug)}
               className={cn(
                 "rounded-full px-4 py-1.5 text-xs font-semibold whitespace-nowrap transition-all",
                 isActive
@@ -171,7 +187,7 @@ export default async function GenrePage({
           {languages.map((l) => (
             <Link
               key={l.code}
-              href={`/language/${l.code}`}
+              href={buildLanguageHref(l.code)}
               className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
             >
               {l.label} Dubbed

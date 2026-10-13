@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { buildServerWorkerProxyUrl, getServerWorkerHeaders } from "@/lib/api/worker-auth";
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -83,11 +85,11 @@ export async function GET(request: Request) {
   // 2. Cloudflare Worker fallback (handles 522 / IP bans)
   if (!upstreamResponse?.ok) {
     try {
-      const proxyUrl = `${CF_PROXY}${encodeURIComponent(decodedUrl)}`;
+      const proxyUrl = buildServerWorkerProxyUrl(decodedUrl);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12000);
       upstreamResponse = await fetch(proxyUrl, {
-        headers: BROWSER_HEADERS,
+        headers: getServerWorkerHeaders(BROWSER_HEADERS),
         cache: "no-store",
         signal: controller.signal,
       });

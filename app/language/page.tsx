@@ -13,6 +13,7 @@ import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Badge } from "@/components/ui/Badge";
 import { Globe, Headphones, Subtitles, ArrowRight, Sparkles, Flame } from "lucide-react";
 import type { LanguageCode } from "@/types/language";
+import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/language", {
   title: "Browse Anime by Language | Hindi, Tamil & Telugu Dubbed",
@@ -164,7 +165,15 @@ export default async function LanguagesDirectoryPage() {
                         key={item.id}
                         className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-border-line"
                       >
-                        <PosterArt seed={item.poster} title={item.title} fillContainer showOverlay={false} showSprocket={false} />
+                      <PosterArt
+                        seed={item.poster}
+                        title={item.title}
+                        fillContainer
+                        sizes="40px"
+                        loading="lazy"
+                        showOverlay={false}
+                        showSprocket={false}
+                      />
                       </div>
                     ))}
                     <div className="ml-auto flex items-center gap-1 text-xs font-semibold text-green-light group-hover:translate-x-1 transition-transform">
@@ -200,7 +209,7 @@ export default async function LanguagesDirectoryPage() {
         <AnimeGrid items={hindiAnime} />
       </section>
 
-      {/* Featured Regional Dubs (Tamil, Telugu, Bengali) */}
+      {/* Featured Regional Dubs */}
       <section className="mt-16">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2">

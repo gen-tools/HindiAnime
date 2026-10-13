@@ -1,9 +1,12 @@
-export type LanguageCode =
+export type SupportedLanguageCode =
   | "hindi"
   | "tamil"
   | "telugu"
   | "english"
-  | "japanese"
+  | "japanese";
+
+export type LanguageCode =
+  | SupportedLanguageCode
   | "korean"
   | "malayalam"
   | "kannada"
@@ -11,7 +14,7 @@ export type LanguageCode =
   | "marathi";
 
 export interface Language {
-  code: LanguageCode;
+  code: SupportedLanguageCode;
   label: string;
   shortLabel: string;
 }

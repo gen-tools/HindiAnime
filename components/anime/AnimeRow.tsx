@@ -8,14 +8,14 @@ import { AnimeCard } from "./AnimeCard";
 
 export function AnimeRow({
   title,
-  items,
+  items = [],
   viewAllHref,
   ranked = false,
   className,
   containerClassName,
 }: {
   title: string;
-  items: Anime[];
+  items?: Anime[];
   viewAllHref?: string;
   ranked?: boolean;
   className?: string;
@@ -55,7 +55,7 @@ export function AnimeRow({
     });
   }
 
-  if (items.length === 0) return null;
+  if (!items || items.length === 0) return null;
 
   return (
     <section className={className ?? "py-7 md:py-9"}>
@@ -101,14 +101,14 @@ export function AnimeRow({
           </div>
         </div>
 
-        {/* Single Horizontal Row / Carousel */}
+        {/* Carousel with Side Floating Buttons */}
         <div className="group/row relative">
           {canScrollLeft && (
             <button
               type="button"
               onClick={() => scroll("left")}
               className="focus-ring absolute -left-3.5 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-border-line bg-background/90 p-2.5 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:border-green-primary hover:bg-green-primary hover:text-black md:flex"
-              aria-label="Previous items"
+              aria-label={`Previous ${title}`}
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
@@ -125,6 +125,7 @@ export function AnimeRow({
                 item={item}
                 rank={ranked ? i + 1 : undefined}
                 className="w-[150px] shrink-0 sm:w-[168px] md:w-[180px]"
+                imageSizes="(max-width: 639px) 150px, (max-width: 767px) 168px, 180px"
               />
             ))}
           </div>
@@ -134,7 +135,7 @@ export function AnimeRow({
               type="button"
               onClick={() => scroll("right")}
               className="focus-ring absolute -right-3.5 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-border-line bg-background/90 p-2.5 text-white shadow-2xl backdrop-blur-md transition-all hover:scale-110 hover:border-green-primary hover:bg-green-primary hover:text-black md:flex"
-              aria-label="Next items"
+              aria-label={`Next ${title}`}
             >
               <ChevronRight className="h-5 w-5" />
             </button>

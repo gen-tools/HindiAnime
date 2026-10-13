@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { Sparkles, Globe2, Layers } from "lucide-react";
+import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/about", {
   title: "About",
@@ -11,7 +12,7 @@ const pillars = [
   {
     icon: Globe2,
     title: "Multi-language by design",
-    body: "Every title on Hindi Anime is built around language availability first — audio and subtitles across ten languages, shown clearly before you press play.",
+    body: "Every title on Hindi Anime is built around language availability first — audio and subtitles across seven supported languages, shown clearly before you press play.",
   },
   {
     icon: Layers,

@@ -95,6 +95,8 @@ export interface AnimeInfoData {
    */
   language?: string;
   quality?: string;
+  /** Structured AniList media format, e.g. MOVIE, TV, or OVA. */
+  format?: string;
   runningTime?: string;
   genres: string[];
   year: string;
@@ -118,6 +120,8 @@ export interface MovieInfoData {
   about?: ApiTextValue;
   content?: ApiTextValue;
   languages?: string[];
+  /** Structured AniList media format, e.g. MOVIE, TV, or OVA. */
+  format?: string;
   run_time?: string;
   runningTime?: string;
   genres?: string[];

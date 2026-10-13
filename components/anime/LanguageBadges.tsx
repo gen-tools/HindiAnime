@@ -1,4 +1,4 @@
-import { getLanguageLabel } from "@/lib/mock/languages";
+import { getLanguageLabel, languages as supportedLanguages } from "@/lib/mock/languages";
 import { cn } from "@/lib/utils";
 import type { LanguageCode } from "@/types/language";
 
@@ -11,8 +11,11 @@ export function LanguageBadges({
   max?: number;
   className?: string;
 }) {
-  const visible = languages.slice(0, max);
-  const remaining = languages.length - visible.length;
+  const discoverable = languages.filter((language) =>
+    supportedLanguages.some((supported) => supported.code === language)
+  );
+  const visible = discoverable.slice(0, max);
+  const remaining = discoverable.length - visible.length;
 
   return (
     <div className={cn("flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-text-muted", className)}>

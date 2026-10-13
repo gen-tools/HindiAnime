@@ -16,6 +16,10 @@ const bebas = Bebas_Neue({
   display: "swap",
 });
 
+import { CANONICAL_SITE_ORIGIN } from "@/lib/seo";
+
+const SITE_URL = CANONICAL_SITE_ORIGIN;
+
 export const metadata: Metadata = {
   metadataBase: new URL(CANONICAL_SITE_ORIGIN),
   alternates: { canonical: getCanonicalUrl("/") },
@@ -61,6 +65,7 @@ export const metadata: Metadata = {
       "Watch Hindi dubbed anime, Tamil dubbed anime, and Telugu dubbed anime online. Explore popular series, movies, latest episodes and genres on Hindi Anime.",
     images: [DEFAULT_OG_IMAGE],
   },
+  // Public pages are indexable by default; individual API/proxy routes set their own noindex
   robots: {
     index: true,
     follow: true,

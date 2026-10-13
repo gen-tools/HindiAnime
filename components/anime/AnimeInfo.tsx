@@ -8,6 +8,7 @@ import { formatDuration } from "@/lib/utils";
 import Link from "next/link";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
 import { FavoriteButton } from "./FavoriteButton";
+import { buildWatchHref } from "@/lib/watch-routing";
 
 export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeId?: string }) {
   const isMovie = item.type === "Movie" || firstEpisodeId === "movie";
@@ -51,7 +52,9 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
               {formatDuration(item.durationMinutes)}
             </span>
           )}
-          {item.episodeCount > 0 && <span className="text-text-secondary">{item.episodeCount} Episodes</span>}
+          {item.type !== "Movie" && item.episodeCount > 0 && (
+            <span className="text-text-secondary">{item.episodeCount} Episodes</span>
+          )}
         </div>
 
         {item.genres && item.genres.length > 0 && (

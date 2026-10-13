@@ -10,10 +10,11 @@ import {
   Server,
   Maximize,
   Minimize,
-  RectangleHorizontal,
+  PictureInPicture2,
 } from "lucide-react";
 import { StreamItem } from "@/types/api";
-import { isValidEmbedUrl } from "@/lib/api/client";
+import { cleanAnimeSlug, isValidEmbedUrl } from "@/lib/api/client";
+import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -53,10 +54,30 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
     // Our own /api/ proxy URLs and Cloudflare Worker proxy URLs are safe by
     // construction — skip the external URL validator (which rejects root-path URLs).
-    const isOwnProxy =
-      streamUrl.startsWith("/api/") ||
-      streamUrl.includes(".workers.dev");
-    if (!isOwnProxy && !isValidEmbedUrl(streamUrl)) continue;
+    let isWorkerProxy = false;
+    try {
+      const streamHost = new URL(streamUrl).hostname.toLowerCase();
+      isWorkerProxy = streamHost === "proxy.hindi-anime.com" || streamHost.endsWith(".workers.dev");
+    } catch {
+      // Relative application API URLs are handled separately below.
+    }
+    const isOwnProxy = streamUrl.startsWith("/api/") || isWorkerProxy;
+    const isAllowedRubyServer4 = (() => {
+      if (
+        item.server !== "Server 4" ||
+        item.type !== "embed" ||
+        item.audioLanguage?.toLowerCase() !== "hi" ||
+        !item.label?.includes("Hindi Dub (Toko Alt)")
+      ) return false;
+      try {
+        const url = new URL(streamUrl);
+        return url.protocol === "https:" && url.hostname.toLowerCase() === "rubystm.com" &&
+          /^\/e\/[a-z0-9]+\.html$/i.test(url.pathname);
+      } catch {
+        return false;
+      }
+    })();
+    if (!isOwnProxy && !isAllowedRubyServer4 && !isValidEmbedUrl(streamUrl)) continue;
 
     seen.add(dedupeKey);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
@@ -80,6 +101,20 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   return servers;
 }
 
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "name" in error &&
+      error.name === "AbortError"
+  );
+}
+
+function abortPlaybackRequest(controller: AbortController | null, message: string) {
+  if (!controller || controller.signal.aborted) return;
+  controller.abort(new DOMException(message, "AbortError"));
+}
+
 // CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
 const CF_WORKER_BASE = (
   process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://wispy-cherry-6934.sheztech.workers.dev"
@@ -87,7 +122,38 @@ const CF_WORKER_BASE = (
   .replace(/\/\?url=$/, "")
   .replace(/\?url=$/, "")
   .replace(/\/$/, "");
+const CF_GENERAL_PROXY_URL = `${CF_WORKER_BASE}/?url=`;
 const CF_STREAM_URL = `${CF_WORKER_BASE}/stream`;
+
+async function fetchAnimeSaltHtml(
+  slug: string,
+  season: number,
+  episode: number,
+  signal: AbortSignal,
+  isMovie: boolean
+): Promise<{ targetUrl: string; html: string } | null> {
+  const cleanId = cleanAnimeSlug(slug) || slug;
+  const targetUrls = isMovie
+    ? [buildAnimeSaltMovieUrl(cleanId)]
+    : buildAnimeSaltEpisodeCandidates(cleanId, season, episode);
+  for (const targetUrl of targetUrls) {
+    try {
+      const response = await fetch(`${CF_GENERAL_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) continue;
+      const html = await response.text();
+      if (html.length <= 512 * 1024 && isValidAnimeSaltHtml(html)) {
+        return { targetUrl, html };
+      }
+    } catch {
+      if (signal.aborted) return null;
+      // Try the next existing AnimeSalt episode URL candidate.
+    }
+  }
+  return null;
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -96,22 +162,52 @@ export function StreamPlayer({
   season,
   episode,
   episodeTitle,
+  isMovie = false,
 }: {
   animeSlug: string;
   season: number;
   episode: number;
   episodeTitle: string;
+  isMovie?: boolean;
   languages?: string[];
 }) {
+  const playbackIdentity = `${animeSlug}:s${season}:e${episode}`;
+  const playbackIdentityRef = useRef(playbackIdentity);
+  playbackIdentityRef.current = playbackIdentity;
+  const requestGenerationRef = useRef(0);
+  const requestControllerRef = useRef<AbortController | null>(null);
+
   const [state, setState] = useState<PlayerState>("loading");
   const [servers, setServers] = useState<ValidServer[]>([]);
   const [activeServer, setActiveServer] = useState<ValidServer | null>(null);
-  const [isTheater, setIsTheater] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [pictureInPictureSupported, setPictureInPictureSupported] = useState(false);
+  const [isPictureInPicture, setIsPictureInPicture] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    setPictureInPictureSupported(document.pictureInPictureEnabled);
+  }, []);
+
+  useEffect(() => {
+    const video = playerFrameRef.current?.querySelector("video");
+    if (!video) {
+      setIsPictureInPicture(false);
+      return;
+    }
+
+    const onEnter = () => setIsPictureInPicture(true);
+    const onLeave = () => setIsPictureInPicture(false);
+    video.addEventListener("enterpictureinpicture", onEnter);
+    video.addEventListener("leavepictureinpicture", onLeave);
+    return () => {
+      video.removeEventListener("enterpictureinpicture", onEnter);
+      video.removeEventListener("leavepictureinpicture", onLeave);
+    };
+  }, [activeServer?.id, state]);
 
   const handleNextServer = useCallback(() => {
     if (servers.length <= 1) return;
@@ -167,9 +263,34 @@ export function StreamPlayer({
     } catch (err) { console.warn("Fullscreen toggle error:", err); }
   }, []);
 
+  const togglePictureInPicture = useCallback(async () => {
+    const video = playerFrameRef.current?.querySelector("video");
+    if (!video || !document.pictureInPictureEnabled) return;
+
+    try {
+      if (document.pictureInPictureElement === video) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+    } catch (error) {
+      console.warn("Picture-in-picture toggle error:", error);
+    }
+  }, []);
+
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchStreams = useCallback(async (isRetry = false) => {
+    abortPlaybackRequest(requestControllerRef.current, "Playback request superseded");
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+    const requestGeneration = ++requestGenerationRef.current;
+    const requestIdentity = playbackIdentity;
+    const isCurrentRequest = () =>
+      !controller.signal.aborted &&
+      requestGenerationRef.current === requestGeneration &&
+      playbackIdentityRef.current === requestIdentity;
+
     if (!isRetry) {
       setState("loading");
       setServers([]);
@@ -177,10 +298,6 @@ export function StreamPlayer({
     }
 
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
-
-    // Query our own /api/stream-proxy first for instant, identical servers on both localhost and production.
-    // Fall back to the Cloudflare Worker stream endpoint if /api/stream-proxy fails.
-    const endpoints = [`/api/stream-proxy${qs}`, `${CF_STREAM_URL}${qs}`];
 
     try {
       let data: { results?: unknown[] } | null = null;
@@ -202,10 +319,41 @@ export function StreamPlayer({
               data = json;
               break;
             }
+            pending += decoder.decode(value, { stream: !done });
+            const lines = pending.split("\n");
+            pending = lines.pop() || "";
+            for (const line of lines) consumeLine(line);
+            if (done) break;
           }
-        } catch { /* try next endpoint */ }
+          if (pending.trim()) consumeLine(pending);
+          if (latestResults.length > 0) {
+            data = { results: latestResults };
+          }
+        }
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) return;
+        /* try the existing Worker stream fallback below */
       }
 
+      if (!isCurrentRequest()) return;
+      if (!data) {
+        try {
+          const res = await fetch(`${CF_STREAM_URL}${qs}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!isCurrentRequest()) return;
+          if (res.ok) {
+            const json = await res.json();
+            if (Array.isArray(json?.results) && json.results.length > 0) data = json;
+          }
+        } catch (error) {
+          if (isAbortError(error) || controller.signal.aborted) return;
+          /* try next endpoint */
+        }
+      }
+
+      if (!isCurrentRequest()) return;
       const parsed = parseServers((data?.results ?? []) as import("@/types/api").StreamItem[]);
       if (parsed.length === 0) {
         if (!isRetry && !clientError) {
@@ -214,25 +362,39 @@ export function StreamPlayer({
         }
         setState("unavailable");
       } else {
+        const currentEmbed = activeServerRef.current?.embed;
+        const stillAvailable = currentEmbed
+          ? parsed.find((server) => server.embed === currentEmbed)
+          : undefined;
         setServers(parsed);
-        setActiveServer(parsed[0]);
+        setActiveServer(stillAvailable || parsed[0]);
         setState("ready");
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) return;
+      if (!isCurrentRequest()) return;
       if (!isRetry) {
-        retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
+        retryTimerRef.current = setTimeout(() => {
+          if (isCurrentRequest()) void fetchStreams(true);
+        }, 1500);
         return;
       }
       setState("error");
+    } finally {
+      if (requestControllerRef.current === controller) requestControllerRef.current = null;
     }
-  }, [animeSlug, season, episode]);
+  }, [animeSlug, season, episode, playbackIdentity, isMovie]);
 
 
   useEffect(() => {
-    const t = window.setTimeout(() => fetchStreams(false), 0);
+    const t = window.setTimeout(() => { void fetchStreams(false); }, 0);
     return () => {
       window.clearTimeout(t);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      requestGenerationRef.current += 1;
+      const controller = requestControllerRef.current;
+      requestControllerRef.current = null;
+      abortPlaybackRequest(controller, "Playback request cleaned up");
     };
   }, [fetchStreams]);
 
@@ -277,8 +439,7 @@ export function StreamPlayer({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 transition-all duration-200",
-        isTheater && "relative z-30 lg:-mx-16 xl:-mx-28"
+        "flex flex-col gap-3 transition-all duration-200"
       )}
     >
       <div
@@ -287,8 +448,6 @@ export function StreamPlayer({
           "relative w-full overflow-hidden bg-black transition-all",
           isFullscreen
             ? "fixed inset-0 z-50 !h-screen !w-screen !max-h-none !aspect-auto rounded-none border-0"
-            : isTheater
-            ? "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
             : "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
         )}
       >
@@ -331,6 +490,7 @@ export function StreamPlayer({
                 embed={activeServer.embed}
                 title={episodeTitle}
                 reloadKey={reloadKey}
+                restrictNavigation={activeServer.label.toLowerCase().includes("mystream")}
               />
             )}
 
@@ -390,7 +550,7 @@ export function StreamPlayer({
         )}
       </div>
 
-      {/* Control bar: Server select + Change Server + Theater & Fullscreen */}
+      {/* Control bar: Server select + Change Server + PiP & Fullscreen */}
       {servers.length > 0 && state !== "loading" && !isFullscreen && (
         <div className="flex flex-col gap-2.5 rounded-xl border border-border-line bg-surface p-3 sm:px-4 sm:py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -422,7 +582,7 @@ export function StreamPlayer({
                   type="button"
                   onClick={handleNextServer}
                   title="Switch to next server if video is blank or not working"
-                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95 cursor-pointer"
+                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
                 >
                   <Server className="h-3.5 w-3.5 text-green-bright" />
                   <span>Change Server</span>
@@ -432,26 +592,25 @@ export function StreamPlayer({
                 type="button"
                 onClick={() => setReloadKey((k) => k + 1)}
                 title="Reload current player"
-                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-all hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:scale-95 cursor-pointer"
+                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-green-bright" />
                 <span>Reload</span>
               </button>
             </div>
 
-            {/* Theater & Fullscreen controls */}
+            {/* Picture-in-picture & Fullscreen controls */}
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsTheater((t) => !t)}
-                title={isTheater ? "Default view" : "Theater mode"}
-                aria-label={isTheater ? "Default view" : "Theater mode"}
-                className={cn(
-                  "hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white",
-                  isTheater && "border-green-bright bg-green-primary/20 text-green-light font-bold"
-                )}
+                type="button"
+                onClick={togglePictureInPicture}
+                disabled={!pictureInPictureSupported || state !== "ready" || activeServer?.type === "embed"}
+                title={isPictureInPicture ? "Exit picture-in-picture" : "Picture-in-picture"}
+                aria-label={isPictureInPicture ? "Exit picture-in-picture" : "Picture-in-picture"}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <RectangleHorizontal className="h-4 w-4" />
-                <span>{isTheater ? "Normal" : "Theater"}</span>
+                <PictureInPicture2 className="h-4 w-4" />
+                <span className="hidden sm:inline">PiP</span>
               </button>
               <button
                 onClick={toggleFullscreen}
@@ -570,9 +729,9 @@ function ErrorState({
 
 // ─── EmbedFrame ──────────────────────────────────────────────────────────────
 //
-// Embed providers (toonstream, AnimeSalt, etc.) are loaded without a `sandbox`
-// attribute so they cannot detect us as an ad-blocker/sandbox environment.
-// Popup ads are blocked at the JS level via the `window.open` override below.
+// Keep provider embeds permissive except MyStream, which opts into a sandbox
+// that blocks popups and top-frame navigation while allowing scripts, media
+// presentation, and fullscreen. Other provider embeds remain unchanged.
 // We intentionally do NOT gate player health on the iframe `onload` event:
 // cross-origin embeds initialize their video via deferred subresource/script
 // loads whose completion the parent frame cannot observe, and a short
@@ -583,19 +742,14 @@ function EmbedFrame({
   embed,
   title,
   reloadKey,
+  restrictNavigation = false,
 }: {
   embed: string;
   title: string;
   reloadKey: number;
+  restrictNavigation?: boolean;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  // Block popup ads launched from the parent scope while the embed is mounted
-  useEffect(() => {
-    const orig = window.open;
-    window.open = () => null;
-    return () => { window.open = orig; };
-  }, []);
 
   // Cache-bust only on manual reload so a stale embed is re-fetched; the
   // initial render always uses the original `embed` URL untouched.
@@ -613,6 +767,7 @@ function EmbedFrame({
       src={srcUrl}
       title={title}
       className="absolute inset-0 h-full w-full border-0"
+      sandbox={restrictNavigation ? "allow-scripts allow-same-origin allow-presentation" : undefined}
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
       allowFullScreen
       // @ts-expect-error legacy browser attributes

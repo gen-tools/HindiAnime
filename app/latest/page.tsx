@@ -87,7 +87,7 @@ export default async function LatestPage({
         <div className="relative z-10 max-w-2xl">
           <div className="inline-flex items-center gap-2 rounded-full border border-green-primary/30 bg-green-primary/10 px-3 py-1 text-xs font-semibold text-green-light">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>Updated Daily</span>
+            <span>Latest Updates</span>
           </div>
           <h1 className="font-display mt-3 text-3xl font-extrabold text-text-primary md:text-4xl">
             Latest Releases
@@ -162,7 +162,7 @@ export default async function LatestPage({
             <h2 className="font-display text-lg font-bold text-text-primary">
               Recent Broadcast Drops
             </h2>
-            <span className="text-xs text-text-muted">Broadcasted within the last 48 hours</span>
+            <span className="text-xs text-text-muted">Episode updates listed by the source</span>
           </div>
 
           {filteredEpisodes.length > 0 ? (

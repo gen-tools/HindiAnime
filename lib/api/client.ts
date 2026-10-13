@@ -34,11 +34,6 @@ const KNOWN_LANGUAGES: Record<string, LanguageCode> = {
   japanese: "japanese",
   tamil: "tamil",
   telugu: "telugu",
-  bengali: "bengali",
-  malayalam: "malayalam",
-  kannada: "kannada",
-  marathi: "marathi",
-  korean: "korean",
 };
 
 export function parseLanguages(langStr?: string): LanguageCode[] {
@@ -54,7 +49,7 @@ export function parseLanguages(langStr?: string): LanguageCode[] {
       matched.push(KNOWN_LANGUAGES[l]);
     }
   }
-  return matched.length > 0 ? matched : ["hindi"];
+  return matched;
 }
 
 export function parseDurationMinutes(durationStr?: string): number {
@@ -300,8 +295,15 @@ export function resolveMovieInfoData(
  */
 export function mapSearchItemToAnime(
   item: AnimeSearchResult,
-  type: Anime["type"] = "TV"
+  requestedType?: Anime["type"]
 ): Anime {
+  let sourceSection = "";
+  try {
+    sourceSection = new URL(item.anime_id).pathname.split("/").filter(Boolean)[0] || "";
+  } catch {
+    sourceSection = "";
+  }
+  const type = requestedType || (sourceSection === "movies" ? "Movie" : "TV");
   const cleanSlug =
     cleanAnimeSlug(item.anime_id) ||
     item.title.toLowerCase().replace(/\s+/g, "-");
@@ -482,7 +484,10 @@ export function mapApiInfoToAnime(
   const synopsis = getApiSynopsis(data);
 
   // Quality field ("" or "Movie") — determine type
-  const type = data.quality?.toUpperCase().includes("MOVIE") ? "Movie" : "TV";
+  const type =
+    data.format?.toUpperCase() === "MOVIE" || data.quality?.toUpperCase().includes("MOVIE")
+      ? "Movie"
+      : "TV";
 
   return {
     id: cleanSlug,
@@ -617,8 +622,43 @@ const catalogPageCache = new Map<string, { data: CatalogPageResult; timestamp: n
 
 export function parseAnimeSaltArticles(
   html: string,
-  page: number
+  page: number,
+  pagination?: { totalPages?: number; pageSize?: number }
 ): CatalogPageResult | null {
+  if (/<rss\b/i.test(html)) {
+    const decodeFeedText = (value: string) =>
+      decodeHtmlEntities(value).replace(/&#(x[\da-f]+|\d+);/gi, (entity, code: string) => {
+        const point = code[0].toLowerCase() === "x"
+          ? Number.parseInt(code.slice(1), 16)
+          : Number.parseInt(code, 10);
+        return Number.isSafeInteger(point) && point > 0 && point <= 0x10ffff
+          ? String.fromCodePoint(point)
+          : entity;
+      });
+    const results: AnimeSearchResult[] = [];
+    const items = html.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi);
+    for (const item of items) {
+      const itemHtml = item[1];
+      const rawTitle = itemHtml.match(/<title(?:\s[^>]*)?>([\s\S]*?)<\/title>/i)?.[1] || "";
+      const rawLink = itemHtml.match(/<link(?:\s[^>]*)?>([\s\S]*?)<\/link>/i)?.[1] || "";
+      const title = decodeFeedText(rawTitle.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim());
+      const link = decodeFeedText(rawLink.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim());
+      const slug = cleanAnimeSlug(link);
+      if (!title || !slug || !/^https?:\/\//i.test(link)) continue;
+      results.push({ title, anime_id: link, poster: null });
+    }
+
+    if (results.length === 0) return null;
+    const reportedTotalPages = pagination?.totalPages;
+    const reportedPageSize = pagination?.pageSize;
+    const totalPages = Number.isSafeInteger(reportedTotalPages) && reportedTotalPages! > 0
+      ? reportedTotalPages!
+      : Number.isSafeInteger(reportedPageSize) && reportedPageSize! > 0 && results.length < reportedPageSize!
+        ? page
+        : page + 1;
+    return { results, totalPages, currentPage: page };
+  }
+
   const results: AnimeSearchResult[] = [];
   const artRegex = /<article[^>]*class=["'][^"']*post[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi;
   let match: RegExpExecArray | null;
@@ -678,9 +718,79 @@ export async function scrapeAnimeSaltCatalog(
         ? `https://animesalt.cx/${kind}/`
         : `https://animesalt.cx/${kind}/page/${page}/`;
 
-    const html = await fetchHtmlWithWorkerFallback(url);
+    let html: string | null = null;
+    let pagination: { totalPages?: number; pageSize?: number } | undefined;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      try {
+        const response = await fetch(buildServerWorkerCatalogUrl(kind, page), {
+          headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+        if (response.ok && /(?:text\/html|application\/(?:rss\+xml|xml)|text\/xml)/.test(contentType)) {
+          const candidate = await response.text();
+          if (!is404Html(candidate) && (/<rss\b/i.test(candidate) || /<article\b/i.test(candidate))) {
+            html = candidate;
+          }
+          if (html) {
+            const totalPagesHeader = Number(response.headers.get("x-catalog-total-pages"));
+            const pageSizeHeader = Number(response.headers.get("x-catalog-page-size"));
+            pagination = {
+              totalPages: Number.isSafeInteger(totalPagesHeader) && totalPagesHeader > 0 ? totalPagesHeader : undefined,
+              pageSize: Number.isSafeInteger(pageSizeHeader) && pageSizeHeader > 0 ? pageSizeHeader : undefined,
+            };
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // Preserve the existing general-proxy/direct fallback if the restricted route is unavailable.
+    }
+
+    if (!html) html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
-    const result = parseAnimeSaltArticles(html, page);
+    let result = parseAnimeSaltArticles(html, page, pagination);
+    if (result?.results.some((item) => !isUsableImageUrl(item.poster))) {
+      try {
+        const imageController = new AbortController();
+        const imageTimer = setTimeout(() => imageController.abort(), 6000);
+        try {
+          const imageResponse = await fetch(buildServerWorkerProxyUrl(url), {
+            headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
+            signal: imageController.signal,
+            cache: "no-store",
+          });
+          const imageContentType = imageResponse.headers.get("content-type")?.toLowerCase() || "";
+          if (imageResponse.ok && imageContentType.includes("text/html")) {
+            const articleHtml = await imageResponse.text();
+            const articleResults = parseAnimeSaltArticles(articleHtml, page);
+            if (articleResults?.results.length) {
+              const postersBySlug = new Map(
+                articleResults.results
+                  .filter((item) => isUsableImageUrl(item.poster))
+                  .map((item) => [cleanAnimeSlug(item.anime_id), item.poster])
+              );
+              result = {
+                ...result,
+                results: result.results.map((item) => {
+                  if (isUsableImageUrl(item.poster)) return item;
+                  const poster = postersBySlug.get(cleanAnimeSlug(item.anime_id));
+                  return poster ? { ...item, poster } : item;
+                }),
+              };
+            }
+          }
+        } finally {
+          clearTimeout(imageTimer);
+        }
+      } catch {
+        // Keep the valid RSS catalog entries if poster enrichment is unavailable.
+      }
+    }
     if (result) {
       catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
     }
@@ -1242,12 +1352,17 @@ export async function getCountryCatalog(
 
 export async function getCatalog(
   kind: "series" | "movies",
-  page = 1
+  page = 1,
+  options: { allowHomepageFallback?: boolean; signal?: AbortSignal } = {}
 ): Promise<AnimeCatalogResponse | null> {
   // 1. Try upstream JSON API first
   try {
+    // The catalog API uses its existing persistent last-good cache when Redis
+    // is configured. Avoid caching an upstream failure in Next.js so a retry
+    // can recover as soon as the source/API is available again.
     const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
-      next: { revalidate: 60 },
+      cache: "no-store",
+      signal: options.signal,
     });
     if (res.ok) {
       const data = (await res.json()) as AnimeCatalogResponse;
@@ -1259,25 +1374,8 @@ export async function getCatalog(
     console.error(`getCatalog ${kind} API error:`, err);
   }
 
-  // 2. Fallback: Direct scraper from animesalt.cx catalog pages (2,500+ titles, paginated)
-  try {
-    const scraped = await scrapeAnimeSaltCatalog(kind, page);
-    if (scraped && scraped.results.length > 0) {
-      return {
-        success: true,
-        results: {
-          currentPage: scraped.currentPage,
-          totalPages: scraped.totalPages,
-          results: scraped.results,
-        },
-      };
-    }
-  } catch (scrapedErr) {
-    console.error(`getCatalog ${kind} catalog scraper error:`, scrapedErr);
-  }
-
-  // 3. Last resort: homepage feed data (page 1 only, limited set)
-  if (page === 1) {
+  // Last resort: the catalog API's own homepage feed (page 1 only, limited set).
+  if (page === 1 && options.allowHomepageFallback !== false) {
     try {
       const feed = await getHomepageFeed();
       const sections = feed?.data?.results;
@@ -1374,15 +1472,6 @@ export async function searchGlobalAnime(
 
     // Sort by relevance descending
     scored.sort((a, b) => b.score - a.score);
-
-    // Enrich with any local mock items that match
-    const localMatches = fuzzySearch(cleanQ, anime, 0.6);
-    for (const match of localMatches) {
-      if (!seenSlugs.has(match.item.slug)) {
-        seenSlugs.add(match.item.slug);
-        scored.push(match);
-      }
-    }
 
     const totalPages = Math.max(
       searchResp?.results?.totalPages ?? 1,
@@ -1488,8 +1577,7 @@ export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null
     console.error("getLatestEpisodes API error:", err);
   }
 
-  // Fallback: The upstream /api/newadded endpoint can fail (e.g. 500 server error).
-  // The primary homepage endpoint (/api) or direct scraper provides `fresh_drops` with the latest episodes.
+  // Fallback to the catalog API's homepage endpoint when /api/newadded is unavailable.
   try {
     const feed = await getHomepageFeed();
     const drops = feed?.data?.results?.fresh_drops;
@@ -1506,127 +1594,60 @@ export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null
   return null;
 }
 
-// ─── Direct Upstream Scraper for Homepage Feed ──────────────────────────────
-
-function extractImgSrc(htmlSnippet: string): string | null {
-  const m =
-    htmlSnippet.match(/data-src=["']([^"']+)["']/) ||
-    htmlSnippet.match(/src=["']([^"']+)["']/);
-  let src = m ? m[1] : null;
-  if (src && src.startsWith("//")) src = "https:" + src;
-  return src && !src.startsWith("data:") ? src : null;
-}
-
-function extractTitle(htmlSnippet: string, fallbackSlug: string = ""): string {
-  const chartTitle = htmlSnippet.match(/<div class="chart-title"[^>]*>([\s\S]*?)<\/div>/i)?.[1];
-  if (chartTitle) return decodeHtmlEntities(chartTitle.trim());
-  const entryTitle = htmlSnippet.match(/<h2[^>]*class=["']entry-title["'][^>]*>([\s\S]*?)<\/h2>/i)?.[1];
-  if (entryTitle) return decodeHtmlEntities(entryTitle.trim());
-  const altTitle =
-    htmlSnippet.match(/alt="Image\s*([^"]*)"/i)?.[1] ||
-    htmlSnippet.match(/alt='Image\s*([^']*)'/i)?.[1];
-  if (altTitle) return decodeHtmlEntities(altTitle.trim());
-  if (fallbackSlug) {
-    return fallbackSlug
-      .split("-")
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(" ");
-  }
-  return "";
-}
-
-function parseHomepageCharts(html: string, sectionName: string): HomepageRankedItem[] {
-  const idx = html.indexOf(sectionName);
-  if (idx === -1) return [];
-  const sectionHtml = html.substring(idx, idx + 40000);
-  const endIdx = sectionHtml.indexOf('class="section-title', 50);
-  const chunk = endIdx > 0 ? sectionHtml.substring(0, endIdx) : sectionHtml;
-
-  const items: HomepageRankedItem[] = [];
-  const itemRegex =
-    /<div class="chart-item">([\s\S]*?)(?=<div class="chart-item">|<\/div>\s*<\/div>\s*<\/div>|$)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = itemRegex.exec(chunk)) !== null) {
-    const itemHtml = match[1];
-    const rank =
-      itemHtml.match(/<div class="chart-number">(\d+)<\/div>/)?.[1] ||
-      String(items.length + 1);
-    const link = itemHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
-    const poster = extractImgSrc(itemHtml);
-    const title = extractTitle(itemHtml);
-    if (link && poster) {
-      items.push({
-        rank,
-        anime_id: link,
-        title: title || "Anime",
-        poster,
-      });
-    }
-  }
-  return items;
-}
-
-function parseHomepageArticles(
-  html: string,
-  sectionName: string,
-  isFreshDrop: boolean = false
-): (HomepageFreshDropItem | AnimeListItem)[] {
-  const idx = html.indexOf(sectionName);
-  if (idx === -1) return [];
-  const sectionHtml = html.substring(idx, idx + 40000);
-  const endIdx = sectionHtml.indexOf('class="section-title', 50);
-  const chunk = endIdx > 0 ? sectionHtml.substring(0, endIdx) : sectionHtml;
-
-  const items: (HomepageFreshDropItem | AnimeListItem)[] = [];
-  const artRegex = /<article[^>]*class=["']post[^"']*["']>([\s\S]*?)<\/article>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = artRegex.exec(chunk)) !== null) {
-    const artHtml = match[1];
-    const poster = extractImgSrc(artHtml);
-    const link = artHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
-    const slug = cleanAnimeSlug(link);
-    const title = extractTitle(artHtml, slug);
-    const seasonMatch = artHtml
-      .match(/<span[^>]*class=["']post-ql["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
-      ?.trim();
-    const yearMatch = artHtml
-      .match(/<span[^>]*class=["']year["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
-      ?.trim();
-
-    let season = "1";
-    if (seasonMatch) {
-      const sNum = seasonMatch.match(/\d+/);
-      if (sNum) season = sNum[0];
-    }
-    let episode = "1";
-    if (yearMatch) {
-      const epNum = yearMatch.match(/EP:\s*(\d+(?:-\d+)?)/i) || yearMatch.match(/\d+/);
-      if (epNum) episode = epNum[1] || epNum[0];
-    }
-
-    if (link && poster) {
-      if (isFreshDrop) {
-        items.push({
-          anime_id: link,
-          title,
-          poster,
-          season,
-          episode,
-        } as HomepageFreshDropItem);
-      } else {
-        items.push({
-          anime_id: link,
-          title,
-          poster,
-        } as AnimeListItem);
-      }
-    }
-  }
-  return items;
-}
-
 let homepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
 let homepageFeedInFlight: Promise<HomepageApiResponse | null> | null = null;
+
+type HomepageSectionCounts = {
+  freshDrops: number;
+  latestAnimeMovies: number;
+  mostWatchedFilms: number;
+  mostWatchedSeries: number;
+  onAirSeries: number;
+};
+
+function getHomepageSectionCounts(feed: HomepageApiResponse | null | undefined): HomepageSectionCounts {
+  const results = feed?.data?.results;
+  const count = (items: unknown) => Array.isArray(items) ? items.length : 0;
+  return {
+    freshDrops: count(results?.fresh_drops),
+    latestAnimeMovies: count(results?.latest_animeMovies),
+    mostWatchedFilms: count(results?.mostWatched_Films),
+    mostWatchedSeries: count(results?.mostWatched_Series),
+    onAirSeries: count(results?.on_air_series),
+  };
+}
+
+function logHomepageSsr(
+  enabled: boolean,
+  details: {
+    source: string;
+    attempt: string;
+    outcome: string;
+    status?: number | null;
+    contentType?: string | null;
+    cacheStatus?: string | null;
+    responseBytes?: number | null;
+    elapsedMs?: number | null;
+    errorCategory?: string | null;
+    sectionCounts?: HomepageSectionCounts;
+    finalCounts?: Record<string, number>;
+  }
+): void {
+  if (!enabled) return;
+  console.info(`[homepage-ssr] ${JSON.stringify({
+    source: details.source,
+    attempt: details.attempt,
+    outcome: details.outcome,
+    status: details.status ?? null,
+    contentType: details.contentType ?? null,
+    cacheStatus: details.cacheStatus ?? null,
+    responseBytes: details.responseBytes ?? null,
+    elapsedMs: details.elapsedMs ?? null,
+    errorCategory: details.errorCategory ?? null,
+    ...(details.sectionCounts ? { sectionCounts: details.sectionCounts } : {}),
+    ...(details.finalCounts ? { finalCounts: details.finalCounts } : {}),
+  })}`);
+}
 
 function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean {
   const sections = feed?.data?.results;
@@ -1641,8 +1662,23 @@ function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean
   ].some((items) => Array.isArray(items) && items.length > 0);
 }
 
-export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | null> {
+type HomepageFetchDiagnostic = {
+  status: number;
+  contentType: string | null;
+  responseBytes: number;
+};
+
+export async function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
+  // Reuse the last verified API feed before another API request. This cache
+  // expires on the same 60-second freshness window.
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
+    logHomepageSsr(diagnostics, {
+      source: "homepage-memory-cache",
+      attempt: "lookup",
+      outcome: "hit",
+      elapsedMs: 0,
+      sectionCounts: getHomepageSectionCounts(homepageFeedCache.data),
+    });
     return homepageFeedCache.data;
   }
 
@@ -1719,32 +1755,118 @@ async function getHomepageFeedUnshared(): Promise<HomepageApiResponse | null> {
     const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
     });
+    const contentType = res.headers.get("content-type");
+    const cacheStatus = res.headers.get("x-vercel-cache") ?? res.headers.get("cf-cache-status");
+    const responseBytesPromise = diagnostics
+      ? res.clone().arrayBuffer().then((body) => body.byteLength).catch(() => null)
+      : null;
+    const responseBytes = async () => responseBytesPromise ? await responseBytesPromise : null;
     if (res.ok) {
-      const data = (await res.json()) as HomepageApiResponse;
-      // A previous failed scrape can be cached by the legacy API as an object
-      // containing five empty arrays. Treat that as a failure and continue to
-      // the direct source instead of rendering a blank homepage.
-      if (hasHomepageItems(data)) {
-        homepageFeedCache = { data, timestamp: Date.now() };
-        return data;
+      let data: HomepageApiResponse | null;
+      try {
+        data = await res.json() as HomepageApiResponse;
+      } catch {
+        logHomepageSsr(diagnostics, {
+          source: "catalog-api-homepage",
+          attempt: "fetch-and-parse",
+          outcome: "invalid-response",
+          status: res.status,
+          contentType,
+          cacheStatus,
+          responseBytes: await responseBytes(),
+          elapsedMs: Date.now() - apiStartedAt,
+          errorCategory: "invalid-json",
+        });
+        data = null;
       }
+      if (data && hasHomepageItems(data)) {
+        if (data.data.success !== false) {
+          homepageFeedCache = { data, timestamp: Date.now() };
+          logHomepageSsr(diagnostics, {
+            source: "catalog-api-homepage",
+            attempt: "fetch-and-parse",
+            outcome: "success",
+            status: res.status,
+            contentType,
+            cacheStatus,
+            responseBytes: await responseBytes(),
+            elapsedMs: Date.now() - apiStartedAt,
+            sectionCounts: getHomepageSectionCounts(data),
+          });
+          return data;
+        }
+        logHomepageSsr(diagnostics, {
+          source: "catalog-api-homepage",
+          attempt: "fetch-and-parse",
+          outcome: "cached-data-rejected",
+          status: res.status,
+          contentType,
+          cacheStatus,
+          responseBytes: await responseBytes(),
+          elapsedMs: Date.now() - apiStartedAt,
+          errorCategory: data.cached === true ? "cached-api-data" : "unsuccessful-api-data",
+          sectionCounts: getHomepageSectionCounts(data),
+        });
+      } else if (data) {
+        const counts = getHomepageSectionCounts(data);
+        const empty = Object.values(counts).every((count) => count === 0);
+        logHomepageSsr(diagnostics, {
+          source: "catalog-api-homepage",
+          attempt: "fetch-and-parse",
+          outcome: data.cached === true || data.data?.success === false ? "cached-empty" : "invalid-response",
+          status: res.status,
+          contentType,
+          cacheStatus,
+          responseBytes: await responseBytes(),
+          elapsedMs: Date.now() - apiStartedAt,
+          errorCategory: empty ? "no-homepage-items" : "invalid-homepage-schema",
+          sectionCounts: counts,
+        });
+      }
+    } else {
+      logHomepageSsr(diagnostics, {
+        source: "catalog-api-homepage",
+        attempt: "fetch",
+        outcome: "non-ok-status",
+        status: res.status,
+        contentType,
+        cacheStatus,
+        responseBytes: await responseBytes(),
+        elapsedMs: Date.now() - apiStartedAt,
+        errorCategory: "http-status",
+      });
     }
   } catch (err) {
-    console.error("getHomepageFeed API error:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
+    logHomepageSsr(diagnostics, {
+      source: "catalog-api-homepage",
+      attempt: "fetch",
+      outcome: "error",
+      elapsedMs: Date.now() - apiStartedAt,
+      errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "request-error",
+    });
   }
 
-  // Fallback 1: Direct upstream scraper from animesalt.cx
-  const scrapedFeed = await scrapeDirectHomepageFeed();
-  if (hasHomepageItems(scrapedFeed)) {
-    return scrapedFeed;
-  }
-
+  // Retain valid API data on temporary failures; do not bypass the API with a Worker scrape.
   // Fallback 2: Cached in-memory feed if available
   const cachedFeed = homepageFeedCache?.data;
   if (hasHomepageItems(cachedFeed)) {
+    logHomepageSsr(diagnostics, {
+      source: "homepage-memory-cache",
+      attempt: "stale-fallback",
+      outcome: "hit",
+      sectionCounts: getHomepageSectionCounts(cachedFeed),
+    });
     return cachedFeed ?? null;
   }
 
+  logHomepageSsr(diagnostics, {
+    source: "homepage-feed",
+    attempt: "fallback-chain",
+    outcome: "empty",
+    errorCategory: "no-valid-feed",
+    sectionCounts: { freshDrops: 0, latestAnimeMovies: 0, mostWatchedFilms: 0, mostWatchedSeries: 0, onAirSeries: 0 },
+  });
   return null;
 }
 
@@ -1986,6 +2108,7 @@ export async function fetchAniListMeta(
     return {
       title: resolvedTitle,
       anime_id: slugOrTitle,
+      format: m.format,
       poster,
       backdrop,
       overview,
@@ -2083,6 +2206,7 @@ export async function getMovieInfo(
         results: {
           title: aniMeta.title,
           anime_id: cleanId,
+          format: aniMeta.format,
           poster: aniMeta.poster,
           backdrop: aniMeta.backdrop,
           overview: aniMeta.overview,
@@ -2116,6 +2240,10 @@ export async function getMovieInfo(
 export async function enrichAnimeSynopses(items: Anime[]): Promise<Anime[]> {
   return Promise.all(
     items.map(async (item) => {
+      // Catalog mapping may already provide a real synopsis from the existing
+      // exact-slug metadata. Avoid per-item detail and scraper requests then.
+      if (item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK) return item;
+
       try {
         const data =
           item.type === "Movie"
@@ -2240,7 +2368,28 @@ export function buildWorkerProxyUrl(targetUrl: string): string {
   return `${base}/?url=${encodeURIComponent(targetUrl)}`;
 }
 
-const WORKER_PROXY_URL = buildWorkerProxyUrl("");
+function buildServerWorkerProxyUrl(targetUrl: string): string {
+  return `${getServerWorkerBaseUrl()}/?url=${encodeURIComponent(targetUrl)}`;
+}
+
+function buildServerWorkerCatalogUrl(kind: "series" | "movies", page: number): string {
+  const url = new URL(`${getServerWorkerBaseUrl()}/catalog`);
+  url.searchParams.set("kind", kind);
+  url.searchParams.set("page", String(page));
+  return url.toString();
+}
+
+function getServerWorkerHeaders(headers?: HeadersInit): Headers {
+  if (typeof window !== "undefined") throw new Error("Authenticated Worker requests are server-only.");
+  const secret = process.env.CF_PROXY_SHARED_SECRET;
+  if (!secret) {
+    console.error("[worker-auth] CF_PROXY_SHARED_SECRET is missing; protected Worker request was not sent.");
+    throw new Error("CF_PROXY_SHARED_SECRET is required for authenticated Worker requests.");
+  }
+  const result = new Headers(headers);
+  result.set(WORKER_SECRET_HEADER, secret);
+  return result;
+}
 
 function is404Html(text: string): boolean {
   if (!text || text.length < 500) return true;
@@ -2281,41 +2430,136 @@ function isAnimeDetailHtml(html: string | null): html is string {
   return true;
 }
 
-async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> {
-  // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
-  if (url.includes("animesalt.cx")) {
+async function fetchHtmlWithWorkerFallback(
+  url: string,
+  diagnostics = false,
+  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
+): Promise<string | null> {
+  if (!diagnostics) {
+    // Preserve the existing behavior for every non-homepage scraper caller.
+    if (url.includes("animesalt.cx")) {
+      try {
+        const proxyUrl = buildServerWorkerProxyUrl(url);
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6000);
+        const pRes = await fetch(proxyUrl, {
+          headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+        if (pRes.ok) {
+          const text = await pRes.text();
+          if (!is404Html(text)) return text;
+        }
+      } catch {
+        // proxy fetch error, fall back to direct
+      }
+    }
+
     try {
-      const proxyUrl = buildWorkerProxyUrl(url);
       const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 6000);
-      const pRes = await fetch(proxyUrl, {
+      const t = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(url, {
         headers: DEFAULT_SCRAPER_HEADERS,
         signal: controller.signal,
       });
       clearTimeout(t);
-      if (pRes.ok) {
-        const text = await pRes.text();
+      if (res.ok) {
+        const text = await res.text();
         if (!is404Html(text)) return text;
       }
     } catch {
-      // proxy fetch error, fall back to direct
+      // direct fetch error
     }
+
+    return null;
   }
 
-  try {
+  const fetchAttempt = async (
+    source: "worker-primary" | "direct-animesalt" | "worker-retry",
+    requestUrl: string,
+    timeoutMs: number
+  ): Promise<string | null> => {
+    const startedAt = Date.now();
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch(url, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      signal: controller.signal,
-    });
-    clearTimeout(t);
-    if (res.ok) {
-      const text = await res.text();
-      if (!is404Html(text)) return text;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let status: number | null = null;
+    let contentType: string | null = null;
+    try {
+      const response = await fetch(requestUrl, {
+        headers: source === "direct-animesalt"
+          ? DEFAULT_SCRAPER_HEADERS
+          : getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
+        signal: controller.signal,
+      });
+      status = response.status;
+      contentType = response.headers.get("content-type");
+      if (!response.ok) {
+        const responseBytes = diagnostics
+          ? await response.clone().arrayBuffer().then((body) => body.byteLength).catch(() => null)
+          : null;
+        logHomepageSsr(diagnostics, {
+          source,
+          attempt: "fetch",
+          outcome: "non-ok-status",
+          status,
+          contentType,
+          responseBytes,
+          elapsedMs: Date.now() - startedAt,
+          errorCategory: "http-status",
+        });
+        return null;
+      }
+
+      const html = await response.text();
+      const responseBytes = new TextEncoder().encode(html).byteLength;
+      if (is404Html(html)) {
+        logHomepageSsr(diagnostics, {
+          source,
+          attempt: "fetch",
+          outcome: "invalid-response",
+          status,
+          contentType,
+          responseBytes,
+          elapsedMs: Date.now() - startedAt,
+          errorCategory: "challenge-or-not-found-html",
+        });
+        return null;
+      }
+
+      const details = { status: response.status, contentType, responseBytes };
+      onSuccessfulFetch?.(details);
+      logHomepageSsr(diagnostics, {
+        source,
+        attempt: "fetch",
+        outcome: "success",
+        ...details,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return html;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      logHomepageSsr(diagnostics, {
+        source,
+        attempt: "fetch",
+        outcome: "error",
+        status,
+        contentType,
+        elapsedMs: Date.now() - startedAt,
+        errorCategory: controller.signal.aborted || error.name === "AbortError" || error.name === "TimeoutError"
+          ? "timeout"
+          : "request-error",
+      });
+      return null;
+    } finally {
+      clearTimeout(timer);
     }
-  } catch {
-    // direct fetch error
+  };
+
+  // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
+  if (url.includes("animesalt.cx")) {
+    const proxyHtml = await fetchAttempt("worker-primary", buildServerWorkerProxyUrl(url), 6000);
+    if (proxyHtml) return proxyHtml;
   }
 
   return null;
@@ -2983,87 +3227,31 @@ export interface HomepageData {
   upcomingItems: Anime[];
 }
 
-/**
- * Resilient fallback homepage data derived from the local catalog and mock database.
- * Ensures the homepage hero, trending, popular, and episode sections NEVER collapse
- * or disappear if the external API or scraper is temporarily unavailable or blocked.
- */
+/** Static mock records are not evidence of current popularity or episode releases. */
 export function getFallbackHomepageData(): HomepageData {
-  const rankedAnime = [...anime].sort(
-    (a, b) => (a.trendingRank ?? 99) - (b.trendingRank ?? 99)
-  );
-
-  const heroItems = rankedAnime.slice(0, 6);
-  const trendingItems = rankedAnime.slice(0, 16);
-  const popularItems = rankedAnime
-    .filter((a) => a.type === "TV")
-    .sort((a, b) => (a.popularityRank ?? 99) - (b.popularityRank ?? 99));
-  const movieItems = rankedAnime.filter((a) => a.type === "Movie");
-  const seriesItems = rankedAnime.filter((a) => a.type === "TV");
-  const upcomingItems = rankedAnime.filter(
-    (a) => a.status === "Upcoming" || a.status === "Ongoing"
-  );
-
-  const latestEpisodes: Episode[] = rankedAnime.slice(0, 16).map((a, i) => {
-    const epNum = (i % 12) + 1;
-    return {
-      id: `ep-1-${epNum}`,
-      animeSlug: a.slug,
-      animeTitle: a.title,
-      animePoster: a.poster,
-      season: 1,
-      number: epNum,
-      title: `Episode ${epNum}`,
-      thumbnail: a.backdrop || a.poster,
-      durationMinutes: a.durationMinutes || 24,
-      languages: a.languages,
-      releasedAt: a.updatedAt || "",
-      isNew: true,
-    };
-  });
-
   return {
-    heroItems,
-    latestEpisodes,
-    trendingItems,
-    popularItems,
-    movieItems,
-    seriesItems,
-    upcomingItems,
+    heroItems: [],
+    latestEpisodes: [],
+    trendingItems: [],
+    popularItems: [],
+    movieItems: [],
+    seriesItems: [],
+    upcomingItems: [],
   };
 }
 
-/**
- * Maps the API's purpose-built homepage feed. It already contains the latest,
- * most-watched, movie, and on-air lists, so one request avoids duplicated
- * catalog calls and preserves the API's own ordering and ranks.
- *
- * If upstream is down, empty, or blocked, seamlessly falls back to the rich catalog.
- */
-export async function getHomepageData(): Promise<HomepageData> {
-  const fallback = getFallbackHomepageData();
-
-  let feed: HomepageApiResponse | null = null;
-  try {
-    feed = await getHomepageFeed();
-  } catch (err) {
-    console.error("getHomepageData: getHomepageFeed failed, using fallback:", err);
-  }
-
-  const sections = feed?.data?.results;
-
-  if (!sections || !hasHomepageItems(feed)) {
-    return fallback;
-  }
+export function mapHomepageFeedToData(feed: HomepageApiResponse): HomepageData {
+  const sections = feed.data?.results;
+  if (!sections) return getFallbackHomepageData();
 
   const latestEpisodes = deduplicateEpisodes(
     (sections.fresh_drops || []).map(mapFreshDropToEpisode)
   );
-  const latestMovies = uniqueBySlug(
+  const movieItems = uniqueBySlug(
     (sections.latest_animeMovies || []).map((item) => mapHomepageItem(item, "Movie"))
   );
-  const popularSeries = uniqueBySlug(
-    (sections.mostWatched_Series || []).map((item: HomepageRankedItem) =>
+  const popularItems = uniqueBySlug(
+    (sections.mostWatched_Series || []).map((item) =>
       mapHomepageItem(item, "TV", Number(item.rank) || undefined)
     )
   );
@@ -3077,7 +3265,7 @@ export async function getHomepageData(): Promise<HomepageData> {
       ),
     ].sort((a, b) => (a.trendingRank ?? Infinity) - (b.trendingRank ?? Infinity))
   );
-  const onAirSeries = uniqueBySlug(
+  const seriesItems = uniqueBySlug(
     (sections.on_air_series || []).map((item) => mapHomepageItem(item, "TV"))
   );
   const recentlyUpdated = new Set(latestEpisodes.map((episode) => episode.animeSlug));
@@ -3095,12 +3283,97 @@ export async function getHomepageData(): Promise<HomepageData> {
   const heroItems = resolvedTrending.slice(0, 6);
 
   return {
-    heroItems,
-    latestEpisodes: resolvedEpisodes,
-    trendingItems: resolvedTrending,
-    popularItems: resolvedPopular,
-    movieItems: resolvedMovies,
-    seriesItems: resolvedSeries,
-    upcomingItems: resolvedUpcoming,
+    heroItems: trendingItems.slice(0, 6),
+    latestEpisodes,
+    trendingItems,
+    popularItems,
+    movieItems,
+    seriesItems,
+    upcomingItems: seriesItems.filter((item) => !latestSlugs.has(item.slug)),
+  };
+}
+
+/**
+ * Maps the API's purpose-built homepage feed. It already contains the latest,
+ * most-watched, movie, and on-air lists, so one request avoids duplicated
+ * catalog calls and preserves the API's own ordering and ranks.
+ *
+ * If upstream is down, empty, or blocked, seamlessly falls back to the rich catalog.
+ */
+export async function getHomepageData(options: { diagnostics?: boolean } = {}): Promise<HomepageData> {
+  const diagnostics = options.diagnostics === true;
+  let feed: HomepageApiResponse | null = null;
+  try {
+    feed = await getHomepageFeed(diagnostics);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (diagnostics) {
+      logHomepageSsr(true, {
+        source: "homepage-data",
+        attempt: "feed-resolution",
+        outcome: "error",
+        errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "feed-error",
+      });
+    } else {
+      console.error("getHomepageData: getHomepageFeed failed, using fallback:", err);
+    }
+  }
+
+  if (!feed || !hasHomepageItems(feed)) {
+    const fallback = getFallbackHomepageData();
+    logHomepageSsr(diagnostics, {
+      source: "homepage-data",
+      attempt: "map",
+      outcome: "empty-fallback",
+      errorCategory: "no-feed-items",
+      finalCounts: getHomepageDataCounts(fallback),
+    });
+    return fallback;
+  }
+
+  let mapped: HomepageData;
+  try {
+    mapped = mapHomepageFeedToData(feed);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    logHomepageSsr(diagnostics, {
+      source: "homepage-data",
+      attempt: "map",
+      outcome: "error",
+      errorCategory: `mapping-failure-${error.name}`,
+      sectionCounts: getHomepageSectionCounts(feed),
+    });
+    throw err;
+  }
+
+  const result = {
+    // Do not delay the initial Hero render on optional per-title synopsis APIs.
+    heroItems: mapped.heroItems,
+    latestEpisodes: mapped.latestEpisodes,
+    trendingItems: mapped.trendingItems,
+    popularItems: mapped.popularItems,
+    movieItems: mapped.movieItems,
+    seriesItems: mapped.seriesItems,
+    upcomingItems: mapped.upcomingItems,
+  };
+  logHomepageSsr(diagnostics, {
+    source: "homepage-data",
+    attempt: "map",
+    outcome: "success",
+    sectionCounts: getHomepageSectionCounts(feed),
+    finalCounts: getHomepageDataCounts(result),
+  });
+  return result;
+}
+
+function getHomepageDataCounts(data: HomepageData): Record<string, number> {
+  return {
+    heroItems: data.heroItems.length,
+    latestEpisodes: data.latestEpisodes.length,
+    trendingItems: data.trendingItems.length,
+    popularItems: data.popularItems.length,
+    movieItems: data.movieItems.length,
+    seriesItems: data.seriesItems.length,
+    upcomingItems: data.upcomingItems.length,
   };
 }

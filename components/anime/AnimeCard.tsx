@@ -12,11 +12,13 @@ export function AnimeCard({
   rank,
   className,
   imageLoading,
+  imageSizes,
 }: {
   item: Anime;
   rank?: number;
   className?: string;
   imageLoading?: "lazy" | "eager";
+  imageSizes?: string;
 }) {
   return (
     <Link
@@ -28,8 +30,14 @@ export function AnimeCard({
     >
       <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl border border-border-line bg-surface-card transition-colors duration-200 group-hover:border-green-primary/70">
         {/* Poster Image with subtle scale */}
-        <div className="h-full w-full transition-transform duration-500 ease-out group-hover:scale-105">
-          <PosterArt seed={item.poster} title={item.title} loading={imageLoading} className="h-full w-full object-cover" />
+        <div className="h-full w-full transition-transform duration-300 ease-out group-hover:scale-[1.03]">
+          <PosterArt
+            seed={item.poster}
+            title={item.title}
+            loading={imageLoading}
+            sizes={imageSizes || "(max-width: 640px) 45vw, (max-width: 768px) 30vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 180px"}
+            className="h-full w-full object-cover"
+          />
         </div>
 
         {/* Top Badges */}
@@ -46,7 +54,7 @@ export function AnimeCard({
         {/* Bottom metadata snippet */}
         <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-10 flex items-center justify-between text-[11px] font-medium text-white/90">
           <span>{item.year || (item.status === "Completed" ? "Full" : item.status || "")}</span>
-          {item.episodeCount && item.episodeCount > 1 ? (
+          {item.type !== "Movie" && item.episodeCount && item.episodeCount > 1 ? (
             <span className="text-[10px] text-text-secondary">{item.episodeCount} eps</span>
           ) : null}
         </div>

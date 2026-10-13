@@ -28,6 +28,7 @@ import {
   parseLanguages,
 } from "@/lib/api/client";
 import type { Anime } from "@/types/anime";
+import { createCanonicalMetadata } from "@/lib/seo";
 import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
@@ -313,7 +314,7 @@ export async function generateMetadata({
   const canonicalUrl = getCanonicalUrl(`/anime/${cleanSlug}`);
   const posterUrl = item.poster && item.poster.startsWith("http") ? item.poster : DEFAULT_OG_IMAGE;
 
-  return {
+  return createCanonicalMetadata(`/anime/${cleanSlug}`, {
     title: {
       absolute: seoTitle,
     },
@@ -389,6 +390,7 @@ export default async function AnimeDetailPage({
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
+  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
   // directData.isMovie is the most reliable signal — honor it first
   const isMovie =
@@ -548,7 +550,12 @@ export default async function AnimeDetailPage({
   }
 
   // Ensure slug and id are strictly preserved
-  item = { ...item, id: cleanSlug, slug: cleanSlug };
+  item = {
+    ...item,
+    id: cleanSlug,
+    slug: cleanSlug,
+    type: isMovie ? "Movie" : item.type,
+  };
 
   // Resolve actual genres from scraped, API, movie, or mock data
   const resolvedGenres =
@@ -624,7 +631,7 @@ export default async function AnimeDetailPage({
 
   // 3. Build season list
   const allSeasons = isMovie
-    ? [1]
+    ? []
     : Array.from(
         new Set([
           ...(availableSeasons.length ? availableSeasons : [1]),
@@ -635,7 +642,7 @@ export default async function AnimeDetailPage({
       ).sort((a, b) => a - b);
 
   const seasonList: SeasonItem[] = isMovie
-    ? [{ season: "1", text: "Movie" }]
+    ? []
     : allSeasons.map((s) => ({
         season: String(s),
         text: `Season ${s}`,

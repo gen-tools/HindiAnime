@@ -45,7 +45,7 @@ function MobileBottomNavInner() {
       role="navigation"
       aria-label="Navigation Dock"
     >
-      <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-1 rounded-2xl sm:rounded-full bg-surface-dark/95 backdrop-blur-2xl border border-border-line/90 shadow-[0_12px_40px_rgba(0,0,0,0.85)]">
+      <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-1 rounded-2xl sm:rounded-full bg-surface-dark/95 border border-border-line/90 shadow-[0_12px_40px_rgba(0,0,0,0.85)]">
         {/* 1. Home */}
         <Link
           href="/"

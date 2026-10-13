@@ -43,6 +43,7 @@ import {
   type PlaybackPreferences,
 } from "@/lib/storage/userDataService";
 import { PosterArt } from "@/components/anime/PosterArt";
+import { buildStoredWatchHref, isStoredMovieWatch } from "@/lib/watch-routing";
 import { cn } from "@/lib/utils";
 
 interface ProfileViewProps {
@@ -435,7 +436,9 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                         {item.animeTitle}
                       </h4>
                       <p className="mt-0.5 text-xs text-text-secondary line-clamp-1">
-                        Season {item.season} · Episode {item.episode}
+                        {isStoredMovieWatch(item)
+                          ? "Full Movie"
+                          : `Season ${item.season} · Episode ${item.episode}`}
                       </p>
                       <p className="mt-1 text-[11px] text-text-muted">
                         Watched {formatDate(item.updatedAt)}
@@ -444,7 +447,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
 
                     <div className="mt-3 flex items-center justify-between gap-2">
                       <Link
-                        href={`/watch/${item.animeSlug}/${item.episodeId}`}
+                        href={buildStoredWatchHref(item)}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-green-primary px-3 py-1.5 text-xs font-semibold text-white shadow-md transition-all hover:bg-green-bright hover:text-black active:scale-95"
                       >
                         <Play className="h-3.5 w-3.5 fill-current" />
@@ -576,13 +579,15 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     </div>
                     <div className="min-w-0">
                       <Link
-                        href={`/watch/${item.animeSlug}/${item.episodeId}`}
+                        href={buildStoredWatchHref(item)}
                         className="font-display font-semibold text-text-primary hover:text-green-light line-clamp-1 transition-colors"
                       >
                         {item.animeTitle}
                       </Link>
                       <p className="text-xs text-text-secondary line-clamp-1">
-                        Season {item.season} · Episode {item.episode} &mdash; {item.episodeTitle}
+                        {isStoredMovieWatch(item)
+                          ? "Full Movie"
+                          : `Season ${item.season} · Episode ${item.episode} — ${item.episodeTitle}`}
                       </p>
                     </div>
                   </div>
@@ -592,7 +597,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                       {formatDate(item.watchedAt)}
                     </span>
                     <Link
-                      href={`/watch/${item.animeSlug}/${item.episodeId}`}
+                      href={buildStoredWatchHref(item)}
                       className="inline-flex items-center gap-1 rounded-lg border border-border-line bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary hover:border-green-primary/50 hover:text-white"
                     >
                       <Play className="h-3 w-3" />

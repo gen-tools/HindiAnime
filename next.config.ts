@@ -27,10 +27,22 @@ const nextConfig: NextConfig = {
     contentDispositionType: "inline",
   },
 
+  async redirects() {
+    return [
+      {
+        // www → non-www permanent redirect
+        source: "/:path*",
+        has: [{ type: "host", value: "www.hindi-anime.com" }],
+        destination: "https://hindi-anime.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
+
   async headers() {
     return [
       {
-        // Global security headers for all routes
+        // Global security headers for all routes — NO X-Robots-Tag here (let meta robots handle it per page)
         source: "/:path*",
         headers: [
           {
@@ -48,6 +60,10 @@ const nextConfig: NextConfig = {
           {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(), geolocation=()",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
           },
           {
             key: "Content-Security-Policy",

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
@@ -291,6 +292,8 @@ export default async function WatchPage({
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
+  const mockAnime = getAnimeBySlug(cleanSlug);
+  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
   // isMovieRoute (episodeId === 'movie') is the strongest signal — always a movie.
   // directData.isMovie is next. Fallback: no episodes + movie metadata only.
@@ -342,7 +345,6 @@ export default async function WatchPage({
   const totalSeasonsCount =
     discoveredSeasons.length || directData?.seasons?.length || anime.seasons || 1;
 
-  const mockAnime = getAnimeBySlug(cleanSlug);
   const resolvedGenres =
     (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
     (animeData?.genres && animeData.genres.length > 0 ? animeData.genres : undefined) ||
@@ -388,13 +390,13 @@ export default async function WatchPage({
     ? Array.from({ length: infoSeasonCount }, (_, index) => index + 1)
     : [seasonNumber];
 
-  const availableSeasons = isMovie
-    ? [1]
-    : Array.from(new Set([...discoveredList, seasonNumber])).sort((a, b) => a - b);
+  const availableSeasons = Array.from(
+    new Set([...discoveredList, seasonNumber])
+  ).sort((a, b) => a - b);
 
   const seasonList: SeasonItem[] = availableSeasons.map((season) => ({
     season: String(season),
-    text: isMovie ? "Movie" : `Season ${season}`,
+    text: `Season ${season}`,
   }));
 
   // ── 2. Build episodes list for current season ──────────────────────────────
@@ -434,81 +436,60 @@ export default async function WatchPage({
             idx
           )
         )
-      );
-    }
+      )
+    );
   }
 
   // If still empty, synthesize the full episode list for the season
   if (episodes.length === 0) {
-    if (isMovie) {
-      episodes = [
-        {
-          id: episodeId,
-          animeSlug: anime.slug,
-          animeTitle: anime.title,
-          animePoster: anime.poster,
-          season: 1,
-          number: 1,
-          title: "Full Movie",
-          thumbnail: anime.poster,
-          durationMinutes: anime.durationMinutes || 110,
-          languages: anime.languages,
-          releasedAt: new Date().toISOString().split("T")[0],
-        },
-      ];
-    } else {
-      const totalCount = Math.max(anime.episodeCount || 12, episodeNumber);
-      episodes = Array.from({ length: totalCount }, (_, i) => {
-        const num = i + 1;
-        return {
-          id: `ep-${seasonNumber}-${num}`,
-          animeSlug: anime.slug,
-          animeTitle: anime.title,
-          animePoster: anime.poster,
-          season: seasonNumber,
-          number: num,
-          title: `Episode ${num}`,
-          thumbnail: anime.poster,
-          durationMinutes: 24,
-          languages: anime.languages,
-          releasedAt: new Date().toISOString().split("T")[0],
-        };
-      });
-    }
+    const totalCount = Math.max(anime.episodeCount || 12, episodeNumber);
+    episodes = Array.from({ length: totalCount }, (_, i) => {
+      const num = i + 1;
+      return {
+        id: `ep-${seasonNumber}-${num}`,
+        animeSlug: anime.slug,
+        animeTitle: anime.title,
+        animePoster: anime.poster,
+        season: seasonNumber,
+        number: num,
+        title: `Episode ${num}`,
+        thumbnail: anime.poster,
+        durationMinutes: 24,
+        languages: anime.languages,
+        releasedAt: new Date().toISOString().split("T")[0],
+      };
+    });
   }
 
   // ── 3. Find current active episode ─────────────────────────────────────────
-  let currentIndex = episodes.findIndex((e) => e.id === episodeId);
-  if (currentIndex === -1) {
-    currentIndex = episodes.findIndex((e) => e.number === episodeNumber);
-  }
-  if (currentIndex === -1 && episodes.length > 0) {
-    currentIndex = 0;
-  }
+  const requestedEpisodeId = `ep-${seasonNumber}-${episodeNumber}`;
+  const currentIndex = episodes.findIndex(
+    (e) =>
+      e.id === requestedEpisodeId &&
+      e.animeSlug === cleanSlug &&
+      e.season === seasonNumber &&
+      e.number === episodeNumber
+  );
 
-  let episode = episodes[currentIndex];
-  if (!episode) {
-    episode = episodes[0] || {
-      id: episodeId,
-      animeSlug: anime.slug,
+  const episode: Episode =
+    (currentIndex >= 0 ? episodes[currentIndex] : undefined) || {
+      id: requestedEpisodeId,
+      animeSlug: cleanSlug,
       animeTitle: anime.title,
       animePoster: anime.poster,
       season: seasonNumber,
       number: episodeNumber,
-      title: isMovie ? "Full Movie" : `Episode ${episodeNumber}`,
+      title: `Episode ${episodeNumber}`,
       thumbnail: anime.poster,
       durationMinutes: 24,
       languages: anime.languages,
       releasedAt: new Date().toISOString().split("T")[0],
     };
-  }
 
-  const prevEpisode = episodes[currentIndex - 1];
-  const nextEpisode = episodes[currentIndex + 1];
+  const prevEpisode = currentIndex > 0 ? episodes[currentIndex - 1] : undefined;
+  const nextEpisode = currentIndex >= 0 ? episodes[currentIndex + 1] : undefined;
 
-  const episodeTitle = isMovie
-    ? `${anime.title} — Full Movie`
-    : `EP ${episode.number} — ${episode.title}`;
+  const episodeTitle = `EP ${episode.number} — ${episode.title}`;
 
   // ── 4. Build "You Might Also Like" genre-based anime ───────────────────────
   const nonGenreTags = new Set([
@@ -637,6 +618,7 @@ export default async function WatchPage({
         animeSlug={anime.slug}
         animeTitle={anime.title}
         animePoster={anime.poster}
+        type={anime.type}
         season={episode.season}
         episode={episode.number}
         episodeId={episode.id}
@@ -646,6 +628,7 @@ export default async function WatchPage({
       />
 
       <StreamPlayer
+        key={`${anime.slug}:s${episode.season}:e${episode.number}`}
         animeSlug={anime.slug}
         season={episode.season}
         episode={episode.number}

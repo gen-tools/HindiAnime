@@ -5,18 +5,21 @@ import { SearchBar } from "@/components/search/SearchBar";
 import { SearchFilters } from "@/components/search/SearchFilters";
 import { EmptySearchState, NoResultsState } from "@/components/search/SearchStates";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
+import { BrowserSearchResults } from "@/components/search/BrowserSearchResults";
 import { Pagination } from "@/components/ui/Pagination";
 import {
   getCatalog,
   getCountryCatalog,
   getGenreCatalog,
   getLanguageCatalog,
-  isUsableImageUrl,
   mapSearchItemToAnime,
   searchGlobalAnime,
 } from "@/lib/api/client";
 import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
+import { createCanonicalMetadata } from "@/lib/seo";
+import { redirect } from "next/navigation";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 
 export const metadata: Metadata = createCanonicalMetadata("/search", {
   title: "Search",
@@ -30,22 +33,28 @@ export default async function SearchPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const params = await searchParams;
-  const rawQ = (params.q || params.s)?.trim() ?? "";
-  const genre = params.genre;
-  const language = params.language;
-  const country = params.country;
-  const type = params.type;
-  const sort = params.sort ?? "rating";
-  const page = Math.max(1, Number(params.page) || 1);
+  const filterParams = normalizeFilterParams(params, {
+    sortOptions: ["rating", "year", "title"],
+  });
+  if (hasFilterParamChanges(params, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/search${query ? `?${query}` : ""}`);
+  }
+
+  const rawQ = (filterParams.get("q") || filterParams.get("s"))?.trim() ?? "";
+  const genre = filterParams.get("genre") ?? undefined;
+  const language = filterParams.get("language") ?? undefined;
+  const country = filterParams.get("country") ?? undefined;
+  const type = filterParams.get("type") ?? undefined;
+  const sort = filterParams.get("sort") ?? "rating";
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
 
   let results: Anime[] = [];
   let totalPages = 1;
 
   if (rawQ) {
     const globalSearch = await searchGlobalAnime(rawQ, page);
-    results = globalSearch.results
-      .map((result) => result.item)
-      .filter((item) => isUsableImageUrl(item.poster));
+    results = globalSearch.results.map((result) => result.item);
     totalPages = globalSearch.totalPages;
     if (genre) results = results.filter((a) => a.genres.includes(genre));
     if (language) results = results.filter((a) => a.languages.includes(language as never));
@@ -95,7 +104,7 @@ export default async function SearchPage({
     if (language) next.set("language", language);
     if (country) next.set("country", country);
     if (type) next.set("type", type);
-    if (params.sort) next.set("sort", params.sort);
+    if (filterParams.get("sort")) next.set("sort", filterParams.get("sort")!);
     next.set("page", String(p));
     return `/search?${next.toString()}`;
   }
@@ -120,7 +129,16 @@ export default async function SearchPage({
       </div>
 
       <div className="mt-8">
-        {results.length > 0 ? (
+        {rawQ ? (
+          <BrowserSearchResults
+            key={`${rawQ}:${page}:${genre ?? ""}:${language ?? ""}:${country ?? ""}:${type ?? ""}`}
+            query={rawQ}
+            page={page}
+            initialItems={results}
+            initialTotalPages={totalPages}
+            filters={{ genre, language, country, type }}
+          />
+        ) : results.length > 0 ? (
           <>
             <AnimeGrid items={results} />
             <Pagination page={page} totalPages={totalPages} buildHref={buildHref} />

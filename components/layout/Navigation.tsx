@@ -27,7 +27,7 @@ export function Navigation() {
             key={item.href}
             href={item.href}
             className={cn(
-              "focus-ring relative px-3.5 py-2 text-sm font-medium transition-colors",
+              "focus-ring relative px-3.5 py-2 text-sm font-medium transition-[color,transform] duration-200 hover:-translate-y-px",
               isActive ? "text-white" : "text-text-secondary hover:text-white"
             )}
           >

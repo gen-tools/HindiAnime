@@ -72,7 +72,14 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { language } = await params;
   const lang = languages.find((l) => l.code === language);
-  if (!lang) return {};
+  if (!lang) {
+    return {
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
 
   const config = getLanguageConfig(lang.code, lang.label);
   const siteUrl = CANONICAL_SITE_ORIGIN;
@@ -80,14 +87,11 @@ export async function generateMetadata({
 
   const fullTitle = `${config.title} | Hindi Anime`;
 
-  return {
+  return createCanonicalMetadata(`/language/${lang.code}`, {
     title: {
       absolute: fullTitle,
     },
     description: config.description,
-    alternates: {
-      canonical: canonicalUrl,
-    },
     robots: {
       index: true,
       follow: true,
@@ -107,7 +111,7 @@ export async function generateMetadata({
       title: config.title,
       description: config.description,
     },
-  };
+  });
 }
 
 export default async function LanguagePage({
@@ -119,6 +123,30 @@ export default async function LanguagePage({
 }) {
   const { language } = await params;
   const sParams = await searchParams;
+
+  const queryLanguage = sParams.language?.toLowerCase().trim();
+  if (queryLanguage !== undefined) {
+    const nextParams = new URLSearchParams(sParams as Record<string, string>);
+    nextParams.delete("language");
+    nextParams.delete("page");
+    const qs = nextParams.toString();
+
+    if (!queryLanguage || queryLanguage === "all") {
+      redirect(`/language${qs ? `?${qs}` : ""}`);
+    }
+
+    const targetLang = languages.find((l) => l.code === queryLanguage);
+    if (targetLang) {
+      if (targetLang.code !== language) {
+        redirect(`/language/${targetLang.code}${qs ? `?${qs}` : ""}`);
+      } else {
+        redirect(`/language/${language}${qs ? `?${qs}` : ""}`);
+      }
+    } else {
+      redirect(`/language/${language}${qs ? `?${qs}` : ""}`);
+    }
+  }
+
   const lang = languages.find((l) => l.code === language);
   if (!lang) notFound();
 
@@ -148,7 +176,7 @@ export default async function LanguagePage({
   if (language) items = items.filter((a) => a.languages.includes(language as never));
   if (country) items = items.filter((a) => matchesCountry(a, country));
   if (type) items = items.filter((a) => a.type === type);
-  if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
+  if (year) items = items.filter((a) => String(a.year) === year);
 
   if (sort === "rating") items = [...items].sort((a, b) => (b.rating || 0) - (a.rating || 0));
   if (sort === "recent") items = [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -161,6 +189,21 @@ export default async function LanguagePage({
     next.delete("language");
     next.set("page", String(p));
     return `/language/${language}?${next.toString()}`;
+  }
+
+  function buildLanguageHref(nextLanguage: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("page");
+    const query = next.toString();
+    return `/language/${nextLanguage}${query ? `?${query}` : ""}`;
+  }
+
+  function buildGenreHref(nextGenre: string) {
+    const next = new URLSearchParams(filterParams);
+    next.delete("page");
+    next.set("language", language);
+    const query = next.toString();
+    return `/genre/${nextGenre}${query ? `?${query}` : ""}`;
   }
 
   return (
@@ -179,7 +222,7 @@ export default async function LanguagePage({
           return (
             <Link
               key={l.code}
-              href={`/language/${l.code}`}
+              href={buildLanguageHref(l.code)}
               className={cn(
                 "rounded-full px-4 py-1.5 text-xs font-semibold whitespace-nowrap transition-all",
                 isActive
@@ -253,7 +296,7 @@ export default async function LanguagePage({
           {genres.slice(0, 8).map((g) => (
             <Link
               key={g.slug}
-              href={`/genre/${g.slug}`}
+              href={buildGenreHref(g.slug)}
               className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
             >
               {g.label} Anime

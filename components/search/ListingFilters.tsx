@@ -5,11 +5,25 @@ import { Select } from "@/components/ui/Select";
 import { genres } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
 import { countries } from "@/lib/mock/countries";
+import { normalizeFilterParams } from "@/lib/search-filters";
 
 export function ListingFilters({ years }: { years: number[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const normalizedParams = normalizeFilterParams(searchParams.toString(), {
+    sortOptions: ["recent", "rating", "title"],
+  });
+
+  const pathSegments = pathname.split("/").filter(Boolean);
+  const isLanguagePage = pathSegments[0] === "language" && Boolean(pathSegments[1]);
+  const isGenrePage = pathSegments[0] === "genre" && Boolean(pathSegments[1]);
+  const activeLanguage = isLanguagePage
+    ? (normalizedParams.get("language") || pathSegments[1])
+    : (normalizedParams.get("language") ?? "");
+  const activeGenre = isGenrePage
+    ? pathSegments[1]
+    : (normalizedParams.get("genre") ?? "");
 
   const isGenreRoute = pathname.startsWith("/genre/");
   const routeGenreSlug = isGenreRoute ? pathname.split("/")[2] : "";
@@ -60,7 +74,9 @@ export function ListingFilters({ years }: { years: number[] }) {
   }
 
   function updateParam(key: string, value: string) {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = normalizeFilterParams(normalizedParams, {
+      sortOptions: ["recent", "rating", "title"],
+    });
     if (value) params.set(key, value);
     else params.delete(key);
     params.delete("page");
@@ -85,7 +101,7 @@ export function ListingFilters({ years }: { years: number[] }) {
 
       <Select
         aria-label="Filter by country"
-        value={searchParams.get("country") ?? ""}
+        value={normalizedParams.get("country") ?? ""}
         onChange={(e) => updateParam("country", e.target.value)}
       >
         <option value="">All Countries</option>
@@ -111,7 +127,7 @@ export function ListingFilters({ years }: { years: number[] }) {
 
       <Select
         aria-label="Filter by year"
-        value={searchParams.get("year") ?? ""}
+        value={normalizedParams.get("year") ?? ""}
         onChange={(e) => updateParam("year", e.target.value)}
       >
         <option value="">All Years</option>
@@ -124,7 +140,7 @@ export function ListingFilters({ years }: { years: number[] }) {
 
       <Select
         aria-label="Filter by type"
-        value={searchParams.get("type") ?? ""}
+        value={normalizedParams.get("type") ?? ""}
         onChange={(e) => updateParam("type", e.target.value)}
       >
         <option value="">All Types</option>
@@ -134,7 +150,7 @@ export function ListingFilters({ years }: { years: number[] }) {
 
       <Select
         aria-label="Sort results"
-        value={searchParams.get("sort") ?? "recent"}
+        value={normalizedParams.get("sort") ?? "recent"}
         onChange={(e) => updateParam("sort", e.target.value)}
       >
         <option value="recent">Most Recent</option>

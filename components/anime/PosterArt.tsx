@@ -16,6 +16,7 @@ interface PosterArtProps {
   imageClassName?: string;
   priority?: boolean;
   loading?: "lazy" | "eager";
+  sizes?: string;
   showOverlay?: boolean;
   showSprocket?: boolean;
 }
@@ -31,13 +32,13 @@ export function PosterArt({
   imageClassName,
   priority = false,
   loading,
+  sizes,
   showOverlay = true,
   showSprocket = true,
 }: PosterArtProps) {
   let imageSrc = seed && seed.startsWith("//") ? `https:${seed}` : seed;
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const imageFailed = failedImageSrc === imageSrc;
-
   const isExternalImage = Boolean(
     imageSrc &&
     !imageSrc.includes("AnimeSalticon") &&
@@ -76,11 +77,11 @@ export function PosterArt({
           fill
           priority={priority}
           loading={loading}
-          sizes={
+          sizes={sizes || (
             orientation === "landscape"
               ? "(max-width: 768px) 100vw, (max-width: 1280px) 80vw, 1200px"
-              : "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 250px"
-          }
+              : "(max-width: 640px) 45vw, (max-width: 768px) 30vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 180px"
+          )}
           className={cn(fit === "contain" ? "object-contain" : "object-cover", imageClassName)}
           // TMDB and local images are optimized by Next.js into AVIF/WebP.
           // Direct third-party scrape CDNs that might reject proxy fetches remain unoptimized.

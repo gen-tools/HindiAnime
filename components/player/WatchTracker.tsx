@@ -2,11 +2,13 @@
 
 import { useEffect } from "react";
 import { recordWatchProgress } from "@/lib/storage/userDataService";
+import type { AnimeType } from "@/types/anime";
 
 interface WatchTrackerProps {
   animeSlug: string;
   animeTitle: string;
   animePoster: string;
+  type?: AnimeType;
   season: number;
   episode: number;
   episodeId: string;
@@ -19,6 +21,7 @@ export function WatchTracker({
   animeSlug,
   animeTitle,
   animePoster,
+  type,
   season,
   episode,
   episodeId,
@@ -32,6 +35,7 @@ export function WatchTracker({
       animeSlug,
       animeTitle,
       animePoster,
+      type,
       season,
       episode,
       episodeId,
@@ -45,6 +49,7 @@ export function WatchTracker({
     animeSlug,
     animeTitle,
     animePoster,
+    type,
     season,
     episode,
     episodeId,

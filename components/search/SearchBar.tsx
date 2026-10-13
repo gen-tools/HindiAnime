@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Loader2, TrendingUp } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
@@ -14,7 +14,7 @@ interface Suggestion {
   poster: string;
   year: number;
   type: string;
-  score: number;
+  score?: number;
 }
 
 export function SearchBar({
@@ -41,12 +41,19 @@ export function SearchBar({
 
   const debouncedValue = useDebounce(value, 400);
 
+  useEffect(() => {
+    setValue(defaultValue);
+  }, [defaultValue]);
+
   // Fetch suggestions whenever debounced value changes
   useEffect(() => {
     const q = debouncedValue.trim();
     if (q.length < 2) {
+      abortRef.current?.abort();
+      abortRef.current = null;
       setSuggestions([]);
       setOpen(false);
+      setLoading(false);
       return;
     }
 
@@ -55,21 +62,38 @@ export function SearchBar({
     const controller = new AbortController();
     abortRef.current = controller;
 
+    setSuggestions([]);
+    setOpen(false);
+    setActiveIndex(-1);
     setLoading(true);
-    fetch(`/api/suggestions?q=${encodeURIComponent(q)}`, {
-      signal: controller.signal,
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (abortRef.current !== controller) return;
-        setSuggestions(data.results ?? []);
+    const loadSuggestions = async () => {
+      try {
+        const data = await searchAnimeInBrowser(q, 1, controller.signal);
+        if (controller.signal.aborted || abortRef.current !== controller) return;
+        setSuggestions(data.items.slice(0, 8).map((item) => ({
+          slug: item.slug,
+          title: item.title,
+          poster: item.poster,
+          year: item.year,
+          type: item.type,
+        })));
         setOpen(true);
         setActiveIndex(-1);
-      })
-      .catch(() => {})
-      .finally(() => {
+      } catch (error) {
+        if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
+        if (abortRef.current === controller) {
+          console.error("[SearchBar] Suggestions request failed:", error);
+        }
+      } finally {
         if (abortRef.current === controller) setLoading(false);
-      });
+      }
+    };
+
+    void loadSuggestions();
+    return () => {
+      controller.abort();
+      if (abortRef.current === controller) abortRef.current = null;
+    };
   }, [debouncedValue]);
 
   // Close dropdown on outside click
@@ -190,7 +214,7 @@ export function SearchBar({
         <ul
           role="listbox"
           aria-label="Search suggestions"
-          className="absolute left-0 right-0 z-50 max-h-80 overflow-y-auto rounded-b-2xl border border-t-0 border-border-line bg-surface shadow-xl"
+          className="search-suggestions-enter absolute left-0 right-0 z-50 max-h-80 overflow-y-auto rounded-b-2xl border border-t-0 border-border-line bg-surface shadow-xl"
         >
           {suggestions.map((item, idx) => {
             const isActive = idx === activeIndex;
@@ -238,16 +262,12 @@ export function SearchBar({
                     <p className="truncate text-sm font-medium text-text-primary">{item.title}</p>
                     <p className="text-xs text-text-muted">
                       {item.year} · {item.type}
-                      {item.score < 0.85 && (
+                      {typeof item.score === "number" && item.score < 0.85 && (
                         <span className="ml-1.5 text-green-bright/60">~similar</span>
                       )}
                     </p>
                   </div>
 
-                  {/* Trending icon for top suggestions */}
-                  {idx < 3 && item.score > 0.8 && (
-                    <TrendingUp className="h-3.5 w-3.5 shrink-0 text-green-bright/50" />
-                  )}
                 </button>
               </li>
             );

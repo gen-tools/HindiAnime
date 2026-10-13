@@ -4,12 +4,13 @@ import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { Play, Info, Sparkles, Clock } from "lucide-react";
 import { PosterArt } from "@/components/anime/PosterArt";
+import { BrowserCatalogFallback } from "@/components/catalog/BrowserCatalogFallback";
 import { RatingBadge } from "@/components/ui/RatingBadge";
 import { LanguageBadges } from "@/components/anime/LanguageBadges";
 import { ButtonLink } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Badge } from "@/components/ui/Badge";
-import { NoResultsState } from "@/components/search/SearchStates";
+import { CatalogUnavailableState, NoResultsState } from "@/components/search/SearchStates";
 import { Pagination } from "@/components/ui/Pagination";
 import {
   getCatalog,
@@ -33,8 +34,23 @@ export default async function MoviesPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const params = await searchParams;
-  const page = Math.max(1, Number(params.page) || 1);
-  const movieResponse = await getCatalog("movies", page);
+  const filterParams = normalizeFilterParams(params, {
+    omit: ["country", "type"],
+    sortOptions: ["rating", "year", "title"],
+  });
+  const validCategories = ["all", "hindi", "action", "romance", "top_rated"];
+  const categoryValue = params.category;
+  const invalidCategory = Boolean(categoryValue && !validCategories.includes(categoryValue));
+  if (invalidCategory) {
+    filterParams.delete("category");
+  }
+  if (invalidCategory || hasFilterParamChanges(params, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/movies${query ? `?${query}` : ""}`);
+  }
+
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
+  const movieResponse = await getCatalog("movies", page, { allowHomepageFallback: false });
   const totalPages = movieResponse?.results?.totalPages ?? 1;
   // Catalog cards need no follow-up detail scrape; keep movie listing to its
   // single catalog request and use metadata already present in each item.
@@ -44,10 +60,11 @@ export default async function MoviesPage({
   const featured = apiMovies[0];
   let results = [...apiMovies];
 
-  const category = params.category || "all";
-  const genre = params.genre;
-  const language = params.language;
-  const sort = params.sort || "rating";
+  const category = filterParams.get("category") || "all";
+  const genre = filterParams.get("genre");
+  const language = filterParams.get("language");
+  const sort = filterParams.get("sort") || "rating";
+  const year = filterParams.get("year");
 
   if (category === "hindi") {
     results = results.filter((m) => m.languages.includes("hindi"));
@@ -61,20 +78,20 @@ export default async function MoviesPage({
 
   if (genre) results = results.filter((m) => m.genres.includes(genre));
   if (language) results = results.filter((m) => m.languages.includes(language as never));
-  if (params.year) results = results.filter((m) => String(m.year) === params.year);
+  if (year) results = results.filter((m) => String(m.year) === year);
 
   if (sort === "rating") results = [...results].sort((a, b) => b.rating - a.rating);
   if (sort === "year") results = [...results].sort((a, b) => b.year - a.year);
   if (sort === "title") results = [...results].sort((a, b) => a.title.localeCompare(b.title));
 
   function buildHref(p: number) {
-    const next = new URLSearchParams(params as Record<string, string>);
+    const next = new URLSearchParams(filterParams);
     next.set("page", String(p));
     return `/movies?${next.toString()}`;
   }
 
   const showSpotlight =
-    featured && page === 1 && category === "all" && !genre && !language && !params.year;
+    featured && page === 1 && category === "all" && !genre && !language && !year;
 
   return (
     <div>
@@ -151,9 +168,11 @@ export default async function MoviesPage({
             <h2 className="font-display text-2xl font-bold text-text-primary">
               All Anime Movies
             </h2>
-            <p className="text-xs text-text-muted mt-0.5">
-              Page {page} of {totalPages} • Showing {results.length} full-length theatrical features &amp; specials
-            </p>
+            {apiMovies.length > 0 && (
+              <p className="text-xs text-text-muted mt-0.5">
+                Page {page} of {totalPages} • Showing {results.length} full-length theatrical features &amp; specials
+              </p>
+            )}
           </div>
 
           {/* Quick Category Chips */}
@@ -218,7 +237,12 @@ export default async function MoviesPage({
 
         {/* Filters */}
         <Suspense fallback={<div className="h-11" />}>
-          <MoviesFilterBar />
+      <MoviesFilterBar
+        category={category}
+        genre={genre ?? ""}
+        language={language ?? ""}
+        sort={sort}
+      />
         </Suspense>
 
         {/* Movies Grid */}
@@ -287,7 +311,16 @@ export default async function MoviesPage({
           </div>
           <Pagination page={page} totalPages={totalPages} buildHref={buildHref} />
         </>
-      ) : (
+        ) : apiMovies.length === 0 &&
+          category === "all" && !genre && !language && !year && !filterParams.has("sort") ? (
+          <BrowserCatalogFallback kind="movies" page={page} />
+        ) : apiMovies.length === 0 ? (
+          <div className="mt-8">
+            <CatalogUnavailableState
+              retryHref={`/movies${filterParams.size ? `?${filterParams.toString()}` : ""}`}
+            />
+          </div>
+        ) : (
           <div className="mt-8">
             <NoResultsState />
           </div>
@@ -297,10 +330,21 @@ export default async function MoviesPage({
   );
 }
 
-function MoviesFilterBar() {
+function MoviesFilterBar({
+  category,
+  genre,
+  language,
+  sort,
+}: {
+  category: string;
+  genre: string;
+  language: string;
+  sort: string;
+}) {
   return (
     <form className="grid grid-cols-2 gap-3 sm:grid-cols-4" action="/movies" method="get">
-      <Select name="genre" defaultValue="" aria-label="Filter by genre">
+      {category !== "all" && <input type="hidden" name="category" value={category} />}
+      <Select name="genre" value={genre} aria-label="Filter by genre">
         <option value="">All Genres</option>
         {genres.map((g) => (
           <option key={g.slug} value={g.slug}>
@@ -308,7 +352,7 @@ function MoviesFilterBar() {
           </option>
         ))}
       </Select>
-      <Select name="language" defaultValue="" aria-label="Filter by language">
+      <Select name="language" value={language} aria-label="Filter by language">
         <option value="">All Languages</option>
         {languages.map((l) => (
           <option key={l.code} value={l.code}>
@@ -316,7 +360,7 @@ function MoviesFilterBar() {
           </option>
         ))}
       </Select>
-      <Select name="sort" defaultValue="rating" aria-label="Sort movies">
+      <Select name="sort" value={sort} aria-label="Sort movies">
         <option value="rating">Top Rated</option>
         <option value="year">Newest Year</option>
         <option value="title">A–Z</option>
