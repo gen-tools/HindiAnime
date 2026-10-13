@@ -23,6 +23,7 @@ import { deduplicateEpisodes } from "@/lib/episodes";
 import { fuzzySearch, fuzzyScore, COMMON_ACRONYMS } from "@/lib/fuzzy-search";
 import { anime, getAnimeBySlug, getAnimeByGenre, getAnimeByLanguage, getAnimeByCountry } from "@/lib/mock/anime";
 import { matchesCountry } from "@/lib/mock/countries";
+import { shareInFlightRequest } from "@/lib/api/in-flight";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -310,7 +311,39 @@ export function mapSearchItemToAnime(
 
   const backdrop = getAnimeBackdrop(cleanSlug, poster || undefined);
   const mock = getAnimeBySlug(cleanSlug);
-  const genres = mock?.genres && mock.genres.length > 0 ? mock.genres : [];
+  const genres = mock?.genres && mock.genres.length > 0 ? [...mock.genres] : [];
+
+  const rawTitleLower = (item.title || "").toLowerCase();
+  const slugLower = cleanSlug.toLowerCase();
+  const detectedLanguages: LanguageCode[] = [];
+
+  if (rawTitleLower.includes("tamil") || slugLower.includes("tamil")) detectedLanguages.push("tamil");
+  if (rawTitleLower.includes("telugu") || slugLower.includes("telugu")) detectedLanguages.push("telugu");
+  if (rawTitleLower.includes("hindi") || slugLower.includes("hindi")) detectedLanguages.push("hindi");
+
+  if (mock?.languages && mock.languages.length > 0) {
+    for (const l of mock.languages) {
+      if (!detectedLanguages.includes(l)) detectedLanguages.push(l);
+    }
+  }
+
+  // Fallback to Hindi — the primary language of all anime on Hindi Anime
+  if (detectedLanguages.length === 0) {
+    detectedLanguages.push("hindi");
+  }
+
+  const KNOWN_GENRE_KEYWORDS = [
+    "action", "adventure", "fantasy", "romance", "comedy", "horror",
+    "thriller", "sports", "mystery", "sci-fi", "isekai", "slice-of-life",
+    "psychological", "supernatural", "drama", "shounen", "school",
+  ];
+  if (genres.length === 0) {
+    for (const gk of KNOWN_GENRE_KEYWORDS) {
+      if (rawTitleLower.includes(gk) || slugLower.includes(gk)) {
+        genres.push(gk);
+      }
+    }
+  }
 
   return {
     id: cleanSlug,
@@ -326,7 +359,7 @@ export function mapSearchItemToAnime(
     durationMinutes: mock?.durationMinutes || 0,
     episodeCount: mock?.episodeCount || 0,
     genres,
-    languages: mock?.languages || [],
+    languages: detectedLanguages,
     country: mock?.country,
     seasons: mock?.seasons || 0,
     studio: mock?.studio || "",
@@ -579,9 +612,6 @@ export interface GlobalAnimeSearchResponse {
 }
 
 const GLOBAL_SEARCH_PAGE_SIZE = 12;
-const GLOBAL_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
-let globalCatalogCache: { items: Anime[]; timestamp: number } | null = null;
-let globalCatalogPromise: Promise<Anime[]> | null = null;
 
 const catalogPageCache = new Map<string, { data: CatalogPageResult; timestamp: number }>();
 
@@ -713,8 +743,8 @@ export async function scrapeAnimeSaltGenre(
   try {
     const url =
       page <= 1
-        ? `https://animesalt.cx/category/genre/${cleanGenre}/`
-        : `https://animesalt.cx/category/genre/${cleanGenre}/page/${page}/`;
+        ? `https://animesalt.cx/category/${cleanGenre}/`
+        : `https://animesalt.cx/category/${cleanGenre}/page/${page}/`;
 
     const html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
@@ -747,8 +777,8 @@ export async function scrapeAnimeSaltLanguage(
   try {
     const url =
       page <= 1
-        ? `https://animesalt.cx/category/language/${cleanLang}/`
-        : `https://animesalt.cx/category/language/${cleanLang}/page/${page}/`;
+        ? `https://animesalt.cx/category/${cleanLang}/`
+        : `https://animesalt.cx/category/${cleanLang}/page/${page}/`;
 
     const html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
@@ -1290,59 +1320,9 @@ export async function getCatalog(
   return null;
 }
 
-async function getFullCatalog(kind: "series" | "movies"): Promise<Anime[]> {
-  const firstPage = await getCatalog(kind, 1);
-  const firstItems = firstPage?.results?.results ?? [];
-  const totalPages = Math.max(1, firstPage?.results?.totalPages ?? 1);
-  const pages = Array.from({ length: totalPages - 1 }, (_, index) => index + 2);
-  const remainingItems: AnimeSearchResult[] = [];
-
-  // Fetch a small batch at a time: this builds the full index promptly while
-  // avoiding a burst of dozens of requests to the existing API/source.
-  for (let index = 0; index < pages.length; index += 6) {
-    const batch = await Promise.all(
-      pages.slice(index, index + 6).map((page) => getCatalog(kind, page))
-    );
-    for (const catalogPage of batch) {
-      if (catalogPage?.results?.results) {
-        remainingItems.push(...catalogPage.results.results);
-      }
-    }
-  }
-
-  return uniqueBySlug(
-    [...firstItems, ...remainingItems].map((item) =>
-      mapSearchItemToAnime(item, kind === "movies" ? "Movie" : "TV")
-    )
-  );
-}
-
-async function getGlobalCatalog(): Promise<Anime[]> {
-  if (
-    globalCatalogCache &&
-    Date.now() - globalCatalogCache.timestamp < GLOBAL_CATALOG_CACHE_TTL_MS
-  ) {
-    return globalCatalogCache.items;
-  }
-
-  if (!globalCatalogPromise) {
-    globalCatalogPromise = Promise.all([getFullCatalog("series"), getFullCatalog("movies")])
-      .then(([series, movies]) => {
-        const items = uniqueBySlug([...series, ...movies]);
-        globalCatalogCache = { items, timestamp: Date.now() };
-        return items;
-      })
-      .finally(() => {
-        globalCatalogPromise = null;
-      });
-  }
-
-  return globalCatalogPromise;
-}
-
 /**
- * Searches every title in the existing API catalog, not just titles on the
- * current route. Uses the API search endpoint / full dataset scraper.
+ * Searches through the API's query endpoint. Falling back to a full multi-page
+ * catalog scan on a no-match query multiplied one search into dozens of calls.
  */
 export async function searchGlobalAnime(
   query: string,
@@ -1357,9 +1337,9 @@ export async function searchGlobalAnime(
 
   // 1. Query live search for both query and alias (e.g. jjk -> jujutsu kaisen)
   const [searchResp, aliasResp] = await Promise.all([
-    searchAnime(cleanQ, page),
+    searchAnime(cleanQ, page, { allowScraperFallback: false }),
     aliasTerm && aliasTerm !== cleanQ.toLowerCase()
-      ? searchAnime(aliasTerm, page)
+      ? searchAnime(aliasTerm, page, { allowScraperFallback: false })
       : Promise.resolve(null),
   ]);
 
@@ -1416,9 +1396,8 @@ export async function searchGlobalAnime(
     };
   }
 
-  // 2. Fallback: fuzzy search against known catalog/mock titles
-  const catalog = await getGlobalCatalog();
-  const ranked = fuzzySearch(cleanQ, catalog.length > 0 ? catalog : anime, 0.4);
+  // Keep no-match/error fallback local; never turn one query into a full catalog sweep.
+  const ranked = fuzzySearch(cleanQ, anime, 0.4);
   const currentPage = Math.max(1, page);
   const start = (currentPage - 1) * GLOBAL_SEARCH_PAGE_SIZE;
 
@@ -1429,6 +1408,69 @@ export async function searchGlobalAnime(
     })),
     totalPages: Math.max(1, Math.ceil(ranked.length / GLOBAL_SEARCH_PAGE_SIZE)),
   };
+}
+
+type SearchSuggestion = {
+  slug: string;
+  title: string;
+  poster: string;
+  year: number;
+  type: string;
+  score: number;
+};
+
+/** Typeahead is a bounded API-only lookup; it never scans the full catalog. */
+export async function getSearchSuggestions(query: string): Promise<SearchSuggestion[]> {
+  const state = getSearchSuggestions as typeof getSearchSuggestions & {
+    cache?: Map<string, { results: SearchSuggestion[]; timestamp: number }>;
+    inFlight?: Map<string, Promise<SearchSuggestion[]>>;
+  };
+  const cache = state.cache ?? (state.cache = new Map());
+  const inFlight = state.inFlight ?? (state.inFlight = new Map());
+  const cleanQuery = query.trim().replace(/\s+/g, " ").slice(0, 100);
+  if (cleanQuery.length < 2) return [];
+
+  const cacheKey = cleanQuery.toLowerCase();
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 15_000) {
+    return cached.results;
+  }
+
+  return shareInFlightRequest(inFlight, cacheKey, async () => {
+    const alias = COMMON_ACRONYMS[cacheKey];
+    const queries = alias && alias !== cacheKey ? [cleanQuery, alias] : [cleanQuery];
+    const responses = await Promise.all(
+      queries.map((term) => searchAnime(term, 1, { allowScraperFallback: false }))
+    );
+    const seen = new Set<string>();
+    const scored: SearchSuggestion[] = [];
+
+    for (const response of responses) {
+      for (const raw of response?.results?.results ?? []) {
+        const item = mapSearchItemToAnime(raw);
+        if (!item.slug || seen.has(item.slug)) continue;
+        seen.add(item.slug);
+        const titleScore = fuzzyScore(cleanQuery, item.title).score;
+        const slugScore = fuzzyScore(cleanQuery, item.slug.replace(/-/g, " ")).score;
+        scored.push({
+          slug: item.slug,
+          title: item.title,
+          poster: item.poster,
+          year: item.year,
+          type: item.type,
+          score: Math.max(titleScore, slugScore),
+        });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const results = scored.slice(0, 8);
+    // Keep negative results retryable; only cache actual matches.
+    if (results.length > 0) {
+      cache.set(cacheKey, { results, timestamp: Date.now() });
+    }
+    return results;
+  });
 }
 
 export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null> {
@@ -1584,6 +1626,7 @@ function parseHomepageArticles(
 }
 
 let homepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
+let homepageFeedInFlight: Promise<HomepageApiResponse | null> | null = null;
 
 function hasHomepageItems(feed: HomepageApiResponse | null | undefined): boolean {
   const sections = feed?.data?.results;
@@ -1655,7 +1698,23 @@ export async function scrapeDirectHomepageFeed(): Promise<HomepageApiResponse | 
   }
 }
 
-export async function getHomepageFeed(): Promise<HomepageApiResponse | null> {
+export function getHomepageFeed(): Promise<HomepageApiResponse | null> {
+  // Reuse a verified feed before repeating the API → AnimeSalt fallback chain.
+  if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
+    return Promise.resolve(homepageFeedCache.data);
+  }
+  if (homepageFeedInFlight) return homepageFeedInFlight;
+
+  const request = getHomepageFeedUnshared();
+  homepageFeedInFlight = request;
+  const cleanup = () => {
+    if (homepageFeedInFlight === request) homepageFeedInFlight = null;
+  };
+  void request.then(cleanup, cleanup);
+  return request;
+}
+
+async function getHomepageFeedUnshared(): Promise<HomepageApiResponse | null> {
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
@@ -1769,7 +1828,8 @@ export function mapLatestEpisodeToEpisode(item: LatestEpisodeItem): Episode {
  */
 export async function searchAnime(
   keyword: string,
-  page: number = 1
+  page: number = 1,
+  options: { allowScraperFallback?: boolean } = {}
 ): Promise<AnimeSearchResponse | null> {
   const cleanKeyword = keyword?.trim();
   if (!cleanKeyword) return null;
@@ -1793,6 +1853,10 @@ export async function searchAnime(
   } catch (err) {
     console.error("searchAnime API error:", err);
   }
+
+  // Typeahead suggestions must stay a single bounded API lookup. A no-match
+  // keystroke must not trigger a full AnimeSalt search/catalog scrape.
+  if (options.allowScraperFallback === false) return null;
 
   // 2. Direct search scraper fallback across full AnimeSalt database (2,500+ titles)
   try {
@@ -2102,6 +2166,7 @@ export interface ScrapedSeriesMeta {
 }
 
 const seriesScrapeCache = new Map<string, { data: ScrapedSeriesMeta; timestamp: number }>();
+const seriesScrapeInFlight = new Map<string, Promise<ScrapedSeriesMeta | null>>();
 
 function parseEpisodesFromHtml(html: string): EpisodeItem[] {
   const episodes: EpisodeItem[] = [];
@@ -2170,7 +2235,7 @@ export function buildWorkerProxyUrl(targetUrl: string): string {
   const base = (
     process.env.NEXT_PUBLIC_CF_PROXY_URL ||
     process.env.CF_PROXY_URL ||
-    "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+    "https://wispy-cherry-6934.sheztech.workers.dev"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
   return `${base}/?url=${encodeURIComponent(targetUrl)}`;
 }
@@ -2253,35 +2318,33 @@ async function fetchHtmlWithWorkerFallback(url: string): Promise<string | null> 
     // direct fetch error
   }
 
-  try {
-    const proxyUrl = buildWorkerProxyUrl(url);
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 6000);
-    const pRes = await fetch(proxyUrl, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      signal: controller.signal,
-    });
-    clearTimeout(t);
-    if (pRes.ok) {
-      const text = await pRes.text();
-      if (!is404Html(text)) return text;
-    }
-  } catch {
-    // proxy fetch error
-  }
-
   return null;
 }
 
-export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
+export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
   const cleanId = cleanAnimeSlug(slug) || slug;
-  if (!cleanId) return null;
+  if (!cleanId) return Promise.resolve(null);
 
   const cached = seriesScrapeCache.get(cleanId);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.data;
+    return Promise.resolve(cached.data);
   }
 
+  const pending = seriesScrapeInFlight.get(cleanId);
+  if (pending) return pending;
+
+  const request = scrapeDirectSeriesDataUnshared(cleanId);
+  seriesScrapeInFlight.set(cleanId, request);
+  const cleanup = () => {
+    if (seriesScrapeInFlight.get(cleanId) === request) {
+      seriesScrapeInFlight.delete(cleanId);
+    }
+  };
+  void request.then(cleanup, cleanup);
+  return request;
+}
+
+async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedSeriesMeta | null> {
   try {
     const decodedSlug = normalizeSlug(cleanId);
     let html: string | null = null;
@@ -2835,6 +2898,8 @@ export const BLOCKED_STREAM_DOMAINS = [
   "vudeo",
   // ── Broken / Timeout / ASN-locked stream hosts ─────────────────────────────
   "rubystm",
+  "cloudy.upns.one",
+  "upns.one",
   "acek-cdn",
   "dramiyos-cdn",
   "prx-am",
@@ -3025,21 +3090,9 @@ export async function getHomepageData(): Promise<HomepageData> {
   const resolvedUpcoming = upcomingItems.length > 0 ? upcomingItems : fallback.upcomingItems;
   const resolvedEpisodes = latestEpisodes.length > 0 ? latestEpisodes : fallback.latestEpisodes;
 
-  // Hydrate rotating spotlight hero items with max 1.5s timeout so page speed stays ultra-fast
-  let heroItems: Anime[] = [];
-  try {
-    heroItems = await Promise.race([
-      enrichAnimeSynopses(resolvedTrending.slice(0, 6)),
-      new Promise<Anime[]>((_, reject) =>
-        setTimeout(() => reject(new Error("enrich timeout")), 1500)
-      ),
-    ]);
-  } catch {
-    heroItems = resolvedTrending.slice(0, 6);
-  }
-  if (!heroItems || heroItems.length === 0) {
-    heroItems = fallback.heroItems;
-  }
+  // Use the already-mapped trending entries for the first render. Optional
+  // per-title enrichment fans out to detail APIs and AnimeSalt scrapes.
+  const heroItems = resolvedTrending.slice(0, 6);
 
   return {
     heroItems,

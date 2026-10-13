@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ function isAllowedHost(hostname: string): boolean {
 const CF_PROXY_RAW =
   process.env.CF_PROXY_URL ||
   process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=";
+  "https://wispy-cherry-6934.sheztech.workers.dev/?url=";
 
 const CF_PROXY = CF_PROXY_RAW.includes("?url=")
   ? CF_PROXY_RAW

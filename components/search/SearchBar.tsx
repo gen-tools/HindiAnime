@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
+import { cleanAnimeSlug } from "@/lib/api/client";
 
 interface Suggestion {
   slug: string;
@@ -38,7 +39,7 @@ export function SearchBar({
   const containerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const debouncedValue = useDebounce(value, 260);
+  const debouncedValue = useDebounce(value, 400);
 
   // Fetch suggestions whenever debounced value changes
   useEffect(() => {
@@ -85,7 +86,8 @@ export function SearchBar({
   function navigateTo(slug: string) {
     setOpen(false);
     setSuggestions([]);
-    router.push(`/anime/${slug}`);
+    const clean = cleanAnimeSlug(slug) || slug;
+    router.push(`/anime/${clean}`);
   }
 
   function handleSubmit(e: React.FormEvent) {

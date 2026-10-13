@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { genres } from "@/lib/mock/genres";
 import { anime } from "@/lib/mock/anime";
@@ -6,6 +7,7 @@ import {
   getCatalogPosterItems,
   getHomepageData,
   getHomepagePosterCatalog,
+  getGenreCatalog,
 } from "@/lib/api/client";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
@@ -22,11 +24,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/genre", {
   title: "Anime Genres",
   description:
     "Discover anime across all genres including Action, Adventure, Fantasy, Romance, Sci-Fi, and more on Hindi Anime.",
-};
+});
 
 const genreIcons: Record<string, LucideIcon> = {
   action: Swords,
@@ -37,15 +39,21 @@ const genreIcons: Record<string, LucideIcon> = {
 };
 
 export default async function GenresDirectoryPage() {
-  const homepageData = await getHomepageData();
+  const [homepageData, actionData, fantasyData] = await Promise.all([
+    getHomepageData(),
+    getGenreCatalog("action", 1),
+    getGenreCatalog("fantasy", 1),
+  ]);
+
   const browseItems = getCatalogPosterItems(
     anime,
     getHomepagePosterCatalog(homepageData)
   );
   const getAnimeByGenre = (slug: string) =>
     browseItems.filter((item) => item.genres.includes(slug));
-  const actionAnime = getAnimeByGenre("action").slice(0, 6);
-  const fantasyAnime = getAnimeByGenre("fantasy").slice(0, 6);
+
+  const actionAnime = actionData.results.length > 0 ? actionData.results.slice(0, 6) : getAnimeByGenre("action").slice(0, 6);
+  const fantasyAnime = fantasyData.results.length > 0 ? fantasyData.results.slice(0, 6) : getAnimeByGenre("fantasy").slice(0, 6);
 
   return (
     <div className="container-page py-10 md:py-14">

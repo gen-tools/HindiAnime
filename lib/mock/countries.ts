@@ -151,9 +151,9 @@ export function matchesCountry(anime: Anime, countryCode: string): boolean {
   // 4. India detection
   if (code === "india") {
     if (INDIAN_STUDIOS.some((st) => normStudio.includes(st))) return true;
-    return INDIAN_KEYWORDS.some(
-      (kw) => normSlug.includes(kw) || normTitle.includes(kw)
-    );
+    if (INDIAN_KEYWORDS.some((kw) => normSlug.includes(kw) || normTitle.includes(kw))) return true;
+    // On Hindi Anime, India filter matches anime with Indian regional dubs (Hindi, Tamil, Telugu)
+    return Boolean(anime.languages && anime.languages.some((l) => ["hindi", "tamil", "telugu"].includes(l)));
   }
 
   // 5. United States detection
@@ -197,8 +197,9 @@ export function matchesCountry(anime: Anime, countryCode: string): boolean {
     if (
       matchesCountry(anime, "korea") ||
       matchesCountry(anime, "china") ||
-      matchesCountry(anime, "india") ||
-      matchesCountry(anime, "usa")
+      matchesCountry(anime, "usa") ||
+      INDIAN_KEYWORDS.some((kw) => normSlug.includes(kw) || normTitle.includes(kw)) ||
+      INDIAN_STUDIOS.some((st) => normStudio.includes(st))
     ) {
       return false;
     }

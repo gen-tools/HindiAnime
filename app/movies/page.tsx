@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { Play, Info, Sparkles, Clock } from "lucide-react";
 import { PosterArt } from "@/components/anime/PosterArt";
@@ -11,7 +12,6 @@ import { Badge } from "@/components/ui/Badge";
 import { NoResultsState } from "@/components/search/SearchStates";
 import { Pagination } from "@/components/ui/Pagination";
 import {
-  enrichAnimeSynopses,
   getCatalog,
   mapSearchItemToAnime,
   SYNOPSIS_FALLBACK,
@@ -21,11 +21,11 @@ import { languages } from "@/lib/mock/languages";
 import { formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/movies", {
   title: "Anime Movies",
   description:
     "Explore and stream anime movies in Hindi and regional languages on Hindi Anime.",
-};
+});
 
 export default async function MoviesPage({
   searchParams,
@@ -36,10 +36,10 @@ export default async function MoviesPage({
   const page = Math.max(1, Number(params.page) || 1);
   const movieResponse = await getCatalog("movies", page);
   const totalPages = movieResponse?.results?.totalPages ?? 1;
-  const apiMovies = await enrichAnimeSynopses(
-    (movieResponse?.results?.results ?? []).map((item) =>
-      mapSearchItemToAnime(item, "Movie")
-    )
+  // Catalog cards need no follow-up detail scrape; keep movie listing to its
+  // single catalog request and use metadata already present in each item.
+  const apiMovies = (movieResponse?.results?.results ?? []).map((item) =>
+    mapSearchItemToAnime(item, "Movie")
   );
   const featured = apiMovies[0];
   let results = [...apiMovies];

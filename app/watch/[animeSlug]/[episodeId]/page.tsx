@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { EpisodeNavigation } from "@/components/episodes/EpisodeNavigation";
@@ -36,6 +37,7 @@ import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
+import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 
 function createFallbackAnime(slug: string): Anime {
   const mock = getAnimeBySlug(slug);
@@ -86,17 +88,23 @@ export async function generateMetadata({
   );
 
   const rawEpisodes = epApiRes?.results?.episodes || [];
-  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes ? directData.s1Episodes : [];
+  // Do NOT count scraper's movie s1Episodes as series episodes
+  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes && !directData.isMovie
+    ? directData.s1Episodes
+    : [];
   const hasSeriesEpisodes = rawEpisodes.length > 0 || s1Fallback.length > 0;
-  const hasMultipleSeasons = Boolean(directData?.seasons && directData.seasons.length > 1);
+  const hasMultipleSeasons = Boolean(directData?.seasons && directData.seasons.length > 1 && !directData.isMovie);
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeDataMeta = resolveAnimeInfoData(apiInfo);
 
+  const isMovieRoute = episodeId === "movie";
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
-    (Boolean(directData?.isMovie) || (Boolean(movieData?.title) && !animeDataMeta?.title));
+    isMovieRoute ||
+    Boolean(directData?.isMovie) ||
+    (!hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      (Boolean(movieData?.title) && !animeDataMeta?.title));
 
   let anime: Anime = createFallbackAnime(cleanSlug);
   if (isMovie && movieData?.title) {
@@ -164,7 +172,7 @@ export async function generateMetadata({
   const cleanTitle = cleanAnimeTitle(rawTitle) || formatDisplayTitle(cleanSlug);
 
   // ── Build SEO metadata for the episode/watch page ────────────────────────
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+  const siteUrl = CANONICAL_SITE_ORIGIN;
 
   // Episode label: "Season 1 Episode 3" or "Full Movie"
   let episodeLabel: string;
@@ -205,26 +213,35 @@ export async function generateMetadata({
 
   const seoDescription = buildWatchDescription();
 
+  const canonicalUrl = getCanonicalUrl(`/watch/${cleanSlug}/${episodeId}`);
+  const posterUrl = anime.poster && anime.poster.startsWith("http") ? anime.poster : DEFAULT_OG_IMAGE;
+
   return {
     title: {
       absolute: seoTitle,
     },
     description: seoDescription,
+    alternates: { canonical: canonicalUrl },
     openGraph: {
       title: seoTitle,
       description: seoDescription,
       type: isMovie ? "video.movie" : "video.episode",
-      url: `${siteUrl}/watch/${cleanSlug}/${episodeId}`,
-      ...(anime.poster && anime.poster.startsWith("http")
-        ? { images: [{ url: anime.poster, alt: cleanTitle }] }
-        : {}),
+      url: canonicalUrl,
+      siteName: "Hindi Anime",
+      locale: "en_US",
+      images: [
+        {
+          url: posterUrl,
+          alt: cleanTitle,
+        },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title: seoTitle,
       description: seoDescription,
+      images: [posterUrl],
     },
-    alternates: { canonical: `/watch/${cleanSlug}/${episodeId}` },
   };
 }
 
@@ -237,7 +254,9 @@ export default async function WatchPage({
   const cleanSlug = cleanAnimeSlug(rawSlug) || rawSlug;
   const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
 
-  const epMatch = episodeId.match(/ep-(\d+)-(\d+)/);
+  // 'movie' is a special episodeId used for all movies — skip episode regex
+  const isMovieRoute = episodeId === "movie";
+  const epMatch = isMovieRoute ? null : episodeId.match(/ep-(\d+)-(\d+)/);
   const seasonNumber = epMatch ? parseInt(epMatch[1], 10) || 1 : 1;
   const episodeNumber = epMatch ? parseInt(epMatch[2], 10) || 1 : 1;
 
@@ -248,7 +267,8 @@ export default async function WatchPage({
     searchAnime(searchKeyword, 1),
     getAvailableSeasons(cleanSlug),
     scrapeDirectSeriesData(cleanSlug),
-    getEpisodes(cleanSlug, seasonNumber),
+    // Skip episode fetch for explicit movie routes
+    isMovieRoute ? Promise.resolve(null) : getEpisodes(cleanSlug, seasonNumber),
     getHomepageFeed(),
   ]);
 
@@ -258,22 +278,28 @@ export default async function WatchPage({
   );
 
   const rawEpisodes = epApiRes?.results?.episodes || [];
-  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes ? directData.s1Episodes : [];
+  // Do NOT count scraper's movie s1Episodes as series episodes
+  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes && !directData.isMovie
+    ? directData.s1Episodes
+    : [];
   const effectiveRawEpisodes = rawEpisodes.length > 0 ? rawEpisodes : s1Fallback;
 
   const hasSeriesEpisodes = effectiveRawEpisodes.length > 0;
   const hasMultipleSeasons =
     (discoveredSeasons && discoveredSeasons.length > 1) ||
-    Boolean(directData?.seasons && directData.seasons.length > 1);
+    Boolean(directData?.seasons && directData.seasons.length > 1 && !directData.isMovie);
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
 
-  // A title is only a movie if it has NO series episodes and is confirmed as a movie
+  // isMovieRoute (episodeId === 'movie') is the strongest signal — always a movie.
+  // directData.isMovie is next. Fallback: no episodes + movie metadata only.
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
-    (Boolean(directData?.isMovie) || (Boolean(movieData?.title) && !animeData?.title));
+    isMovieRoute ||
+    Boolean(directData?.isMovie) ||
+    (!hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      (Boolean(movieData?.title) && !animeData?.title));
 
   let anime: Anime = createFallbackAnime(cleanSlug);
   if (isMovie && movieData?.title) {
@@ -375,9 +401,13 @@ export default async function WatchPage({
   let episodes: Episode[] = [];
 
   if (isMovie) {
+    // Redirect old ep-* movie URLs to the clean /movie route
+    if (episodeId !== "movie") {
+      redirect(`/watch/${cleanSlug}/movie`);
+    }
     episodes = [
       {
-        id: "ep-1-1",
+        id: "movie",
         animeSlug: cleanSlug,
         animeTitle: anime.title,
         animePoster: anime.poster,
@@ -691,8 +721,8 @@ export default async function WatchPage({
         )}
       </div>
 
-      {/* Episode list / Other episodes options */}
-      {!isMovie && (
+      {/* Episode list — only shown for series, never for movies */}
+      {!isMovie && !isMovieRoute && anime.type !== "Movie" && (
         <div className="mt-8">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -731,6 +761,58 @@ export default async function WatchPage({
           />
         </div>
       )}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": isMovie ? "Movie" : "TVEpisode",
+                "@id": `${getCanonicalUrl(`/watch/${cleanSlug}/${episodeId}`)}#media`,
+                url: getCanonicalUrl(`/watch/${cleanSlug}/${episodeId}`),
+                name: `${anime.title} ${isMovie ? "Full Movie" : episode.title || `Episode ${episode.number}`}`,
+                description: anime.synopsis,
+                image: anime.poster,
+                episodeNumber: !isMovie ? episode.number : undefined,
+                ...(!isMovie
+                  ? {
+                      partOfSeries: {
+                        "@type": "TVSeries",
+                        name: anime.title,
+                        url: getCanonicalUrl(`/anime/${cleanSlug}`),
+                      },
+                    }
+                  : {}),
+              },
+              {
+                "@type": "BreadcrumbList",
+                "@id": `${getCanonicalUrl(`/watch/${cleanSlug}/${episodeId}`)}#breadcrumbs`,
+                itemListElement: [
+                  {
+                    "@type": "ListItem",
+                    position: 1,
+                    name: "Home",
+                    item: CANONICAL_SITE_ORIGIN,
+                  },
+                  {
+                    "@type": "ListItem",
+                    position: 2,
+                    name: anime.title,
+                    item: getCanonicalUrl(`/anime/${cleanSlug}`),
+                  },
+                  {
+                    "@type": "ListItem",
+                    position: 3,
+                    name: isMovie ? "Watch Movie" : `Watch Episode ${episode.number}`,
+                    item: getCanonicalUrl(`/watch/${cleanSlug}/${episodeId}`),
+                  },
+                ],
+              },
+            ],
+          }).replace(/</g, "\\u003c"),
+        }}
+      />
     </div>
   );
 }

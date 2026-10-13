@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import { SearchBar } from "@/components/search/SearchBar";
 import { SearchFilters } from "@/components/search/SearchFilters";
 import { EmptySearchState, NoResultsState } from "@/components/search/SearchStates";
@@ -17,10 +18,11 @@ import {
 import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/search", {
   title: "Search",
   description: "Search anime, movies, and characters across Hindi Anime's catalog.",
-};
+  robots: { index: false, follow: true },
+});
 
 export default async function SearchPage({
   searchParams,

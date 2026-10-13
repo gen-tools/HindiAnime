@@ -31,6 +31,7 @@ import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
+import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 
 function isMatchingMovie(movieTitle: string | undefined, slug: string): boolean {
   if (!movieTitle) return false;
@@ -72,9 +73,9 @@ export async function generateMetadata({
   );
 
   const rawEpisodes = epApiRes?.results?.episodes || [];
-  const s1Fallback = directData?.s1Episodes || [];
+  const s1Fallback = directData?.s1Episodes && !directData.isMovie ? directData.s1Episodes : [];
   const hasSeriesEpisodes = rawEpisodes.length > 0 || s1Fallback.length > 0;
-  const hasMultipleSeasons = Boolean(directData?.seasons && directData.seasons.length > 1);
+  const hasMultipleSeasons = Boolean(directData?.seasons && directData.seasons.length > 1 && !directData.isMovie);
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
@@ -82,12 +83,14 @@ export async function generateMetadata({
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
 
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
+    Boolean(directData?.isMovie) ||
     (
-      mockItem?.type === "Movie" ||
-      Boolean(directData?.isMovie) ||
-      (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
+      !hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      (
+        mockItem?.type === "Movie" ||
+        (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
+      )
     );
 
   let item: Anime | undefined;
@@ -307,28 +310,35 @@ export async function generateMetadata({
 
   const seoDescription = buildAnimeDescription(item);
   const ogType = item.type === "Movie" ? "video.movie" : "video.tv_show";
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+  const canonicalUrl = getCanonicalUrl(`/anime/${cleanSlug}`);
+  const posterUrl = item.poster && item.poster.startsWith("http") ? item.poster : DEFAULT_OG_IMAGE;
 
   return {
     title: {
       absolute: seoTitle,
     },
     description: seoDescription,
+    alternates: { canonical: canonicalUrl },
     openGraph: {
       title: seoTitle,
       description: seoDescription,
       type: ogType,
-      url: `${siteUrl}/anime/${cleanSlug}`,
-      ...(item.poster && item.poster.startsWith("http")
-        ? { images: [{ url: item.poster, alt: cleanTitle }] }
-        : {}),
+      url: canonicalUrl,
+      siteName: "Hindi Anime",
+      locale: "en_US",
+      images: [
+        {
+          url: posterUrl,
+          alt: cleanTitle,
+        },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title: seoTitle,
       description: seoDescription,
+      images: [posterUrl],
     },
-    alternates: { canonical: `/anime/${cleanSlug}` },
   };
 }
 
@@ -365,28 +375,31 @@ export default async function AnimeDetailPage({
 
   const rawEpisodes = epApiRes?.results?.episodes || [];
   const s1Fallback =
-    seasonNum === 1 && directData?.s1Episodes ? directData.s1Episodes : [];
+    // Do NOT count scraper's movie s1Episodes as series episodes
+    seasonNum === 1 && directData?.s1Episodes && !directData.isMovie ? directData.s1Episodes : [];
   const effectiveRawEpisodes =
     rawEpisodes.length > 0 ? rawEpisodes : s1Fallback;
 
   const hasSeriesEpisodes = effectiveRawEpisodes.length > 0;
   const hasMultipleSeasons =
     (availableSeasons && availableSeasons.length > 1) ||
-    (directData?.seasons && directData.seasons.length > 1);
+    (directData?.seasons && directData.seasons.length > 1 && !directData.isMovie);
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
 
-  // A title is only a movie if it has NO series episodes and is confirmed as a movie
+  // directData.isMovie is the most reliable signal — honor it first
   const isMovie =
-    !hasSeriesEpisodes &&
-    !hasMultipleSeasons &&
+    Boolean(directData?.isMovie) ||
     (
-      mockItem?.type === "Movie" ||
-      Boolean(directData?.isMovie) ||
-      (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
+      !hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      (
+        mockItem?.type === "Movie" ||
+        (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
+      )
     );
 
   let item: Anime | undefined;
@@ -557,7 +570,7 @@ export default async function AnimeDetailPage({
   if (isMovie) {
     episodes = [
       {
-        id: "ep-1-1",
+        id: "movie",
         animeSlug: cleanSlug,
         animeTitle: item.title,
         animePoster: item.poster,
@@ -628,7 +641,11 @@ export default async function AnimeDetailPage({
         text: `Season ${s}`,
       }));
 
-  const firstEpisodeId = episodes.length > 0 ? episodes[0].id : `ep-${seasonNum}-1`;
+  const firstEpisodeId = isMovie
+    ? "movie"
+    : episodes.length > 0
+    ? episodes[0].id
+    : `ep-${seasonNum}-1`;
 
   // ── Build "You Might Also Like" genre-based anime ─────────────────────────
   const nonGenreTags = new Set([
@@ -733,7 +750,7 @@ export default async function AnimeDetailPage({
 
       <AnimeInfo item={item} firstEpisodeId={firstEpisodeId} />
 
-      {episodes.length > 0 && (
+      {!isMovie && episodes.length > 0 && (
         <div className="container-page mt-10">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2">
@@ -764,6 +781,63 @@ export default async function AnimeDetailPage({
           viewAllHref={`/genre/${primaryGenre}`}
         />
       )}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": isMovie ? "Movie" : "TVSeries",
+                "@id": `${getCanonicalUrl(`/anime/${cleanSlug}`)}#media`,
+                url: getCanonicalUrl(`/anime/${cleanSlug}`),
+                name: item.title,
+                description: item.synopsis,
+                image: item.poster,
+                datePublished: item.year ? `${item.year}-01-01` : undefined,
+                genre: item.genres,
+                inLanguage: item.languages,
+                aggregateRating: item.rating
+                  ? {
+                      "@type": "AggregateRating",
+                      ratingValue: item.rating,
+                      bestRating: "10",
+                      worstRating: "1",
+                      ratingCount: 120,
+                    }
+                  : undefined,
+                ...(!isMovie && item.episodeCount
+                  ? { numberOfEpisodes: item.episodeCount, numberOfSeasons: item.seasons || 1 }
+                  : {}),
+              },
+              {
+                "@type": "BreadcrumbList",
+                "@id": `${getCanonicalUrl(`/anime/${cleanSlug}`)}#breadcrumbs`,
+                itemListElement: [
+                  {
+                    "@type": "ListItem",
+                    position: 1,
+                    name: "Home",
+                    item: CANONICAL_SITE_ORIGIN,
+                  },
+                  {
+                    "@type": "ListItem",
+                    position: 2,
+                    name: isMovie ? "Movies" : "Series",
+                    item: `${CANONICAL_SITE_ORIGIN}/${isMovie ? "movies" : "series"}`,
+                  },
+                  {
+                    "@type": "ListItem",
+                    position: 3,
+                    name: item.title,
+                    item: getCanonicalUrl(`/anime/${cleanSlug}`),
+                  },
+                ],
+              },
+            ],
+          }).replace(/</g, "\\u003c"),
+        }}
+      />
     </div>
   );
 }

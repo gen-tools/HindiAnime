@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import { ShieldCheck, Lock, Eye, FileText } from "lucide-react";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/privacy", {
   title: "Privacy Policy",
   description: "Privacy Policy and data protection guidelines for Hindi Anime.",
-};
+});
 
 export default function PrivacyPolicyPage() {
   return (

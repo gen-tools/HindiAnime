@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { ListingFilters } from "@/components/search/ListingFilters";
 import { NoResultsState } from "@/components/search/SearchStates";
@@ -16,11 +17,11 @@ import { Sparkles, Tv, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { deduplicateEpisodes, getEpisodeIdentity } from "@/lib/episodes";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = createCanonicalMetadata("/latest", {
   title: "Latest Releases & New Episodes",
   description:
     "Watch newly dropped anime episodes and freshly added anime series and movies on Hindi Anime.",
-};
+});
 
 const PAGE_SIZE = 12;
 

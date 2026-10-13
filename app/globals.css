@@ -124,6 +124,58 @@ body {
   animation: glow-pulse 3.2s ease-in-out infinite;
 }
 
+@keyframes section-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.section-reveal {
+  animation: section-enter 220ms ease-out both;
+}
+
+@keyframes hero-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes hero-progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes mobile-panel-enter {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.hero-slide-enter,
+.hero-copy-enter {
+  animation: hero-enter 220ms ease-out both;
+}
+
+.hero-progress-fill {
+  animation: hero-progress 7500ms linear both;
+}
+
+.mobile-menu-backdrop-enter {
+  animation: section-enter 160ms ease-out both;
+}
+
+.mobile-menu-panel-enter {
+  animation: mobile-panel-enter 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .section-reveal,
+  .hero-slide-enter,
+  .hero-copy-enter,
+  .hero-progress-fill,
+  .mobile-menu-backdrop-enter,
+  .mobile-menu-panel-enter {
+    animation: none;
+  }
+}
+
 /* ─── Global Bottom Navigation & Dock ────────────────────────────────────────── */
 .mobile-bottom-nav-container {
   position: fixed !important;

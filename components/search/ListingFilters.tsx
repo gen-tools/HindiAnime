@@ -11,20 +11,69 @@ export function ListingFilters({ years }: { years: number[] }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const isGenreRoute = pathname.startsWith("/genre/");
+  const routeGenreSlug = isGenreRoute ? pathname.split("/")[2] : "";
+  const activeGenre = isGenreRoute ? routeGenreSlug : (searchParams.get("genre") || "");
+
+  const isLangRoute = pathname.startsWith("/language/");
+  const routeLangCode = isLangRoute ? pathname.split("/")[2] : "";
+  const activeLang = isLangRoute ? routeLangCode : (searchParams.get("language") || "");
+
+  function handleGenreChange(newGenre: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("genre");
+    params.delete("page");
+    const query = params.toString() ? `?${params.toString()}` : "";
+
+    if (pathname.startsWith("/genre")) {
+      if (newGenre) {
+        router.push(`/genre/${newGenre}${query}`);
+      } else {
+        router.push(`/search${query}`);
+      }
+      return;
+    }
+
+    if (newGenre) params.set("genre", newGenre);
+    else params.delete("genre");
+    router.push(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`);
+  }
+
+  function handleLanguageChange(newLang: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("language");
+    params.delete("page");
+    const query = params.toString() ? `?${params.toString()}` : "";
+
+    if (pathname.startsWith("/language")) {
+      if (newLang) {
+        router.push(`/language/${newLang}${query}`);
+      } else {
+        router.push(`/search${query}`);
+      }
+      return;
+    }
+
+    if (newLang) params.set("language", newLang);
+    else params.delete("language");
+    router.push(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`);
+  }
+
   function updateParam(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set(key, value);
     else params.delete(key);
     params.delete("page");
-    router.push(`${pathname}?${params.toString()}`);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    router.push(`${pathname}${query}`);
   }
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <Select
         aria-label="Filter by language"
-        value={searchParams.get("language") ?? ""}
-        onChange={(e) => updateParam("language", e.target.value)}
+        value={activeLang}
+        onChange={(e) => handleLanguageChange(e.target.value)}
       >
         <option value="">All Languages</option>
         {languages.map((l) => (
@@ -49,8 +98,8 @@ export function ListingFilters({ years }: { years: number[] }) {
 
       <Select
         aria-label="Filter by genre"
-        value={searchParams.get("genre") ?? ""}
-        onChange={(e) => updateParam("genre", e.target.value)}
+        value={activeGenre}
+        onChange={(e) => handleGenreChange(e.target.value)}
       >
         <option value="">All Genres</option>
         {genres.map((g) => (

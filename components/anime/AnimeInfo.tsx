@@ -10,7 +10,10 @@ import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
 import { FavoriteButton } from "./FavoriteButton";
 
 export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeId?: string }) {
-  const targetWatchHref = firstEpisodeId
+  const isMovie = item.type === "Movie" || firstEpisodeId === "movie";
+  const targetWatchHref = isMovie
+    ? `/watch/${item.slug}/movie`
+    : firstEpisodeId
     ? `/watch/${item.slug}/${firstEpisodeId}`
     : `/watch/${item.slug}/ep-1-1`;
 

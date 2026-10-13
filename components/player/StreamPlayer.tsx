@@ -82,7 +82,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
 // CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
 const CF_WORKER_BASE = (
-  process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://wispy-cherry-6934.shahazaibseo038.workers.dev"
+  process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://wispy-cherry-6934.sheztech.workers.dev"
 )
   .replace(/\/\?url=$/, "")
   .replace(/\?url=$/, "")
@@ -184,10 +184,18 @@ export function StreamPlayer({
 
     try {
       let data: { results?: unknown[] } | null = null;
+      let clientError = false;
 
       for (const endpoint of endpoints) {
         try {
           const res = await fetch(endpoint);
+          // A 4xx is a final source-resolution result, not a transient failure.
+          // In particular, do not send the same request through another proxy
+          // or automatically repeat it after the Worker/API has rejected it.
+          if (res.status >= 400 && res.status < 500) {
+            clientError = true;
+            break;
+          }
           if (res.ok) {
             const json = await res.json();
             if (Array.isArray(json?.results) && json.results.length > 0) {
@@ -200,7 +208,7 @@ export function StreamPlayer({
 
       const parsed = parseServers((data?.results ?? []) as import("@/types/api").StreamItem[]);
       if (parsed.length === 0) {
-        if (!isRetry) {
+        if (!isRetry && !clientError) {
           retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
           return;
         }
@@ -234,10 +242,33 @@ export function StreamPlayer({
   activeServerRef.current = activeServer;
 
   const handleDirectPlaybackError = useCallback(() => {
-    // When direct playback fails or stream times out, show error state with Change Server button
-    // (Never auto-switch server behind the user's back)
+    // 1. If the current activeServer has a playable embed fallback (e.g. Vidmoly embed URL),
+    // seamlessly convert it to an embed so the episode continues playing without error
+    const current = activeServerRef.current;
+    if (
+      current &&
+      current.embed &&
+      isValidEmbedUrl(current.embed) &&
+      !current.embed.includes(".m3u8") &&
+      current.embed !== current.url
+    ) {
+      console.warn(`[StreamPlayer] Direct stream failed on ${current.label}, falling back to embed player`);
+      setActiveServer((prev) => (prev ? { ...prev, type: "embed", isDirect: false } : null));
+      setState("ready");
+      return;
+    }
+
+    // 2. Otherwise auto-advance to the next server if alternatives exist
+    const curServers = serversRef.current;
+    if (curServers.length > 1) {
+      console.warn(`[StreamPlayer] Direct stream failed, auto-advancing to next available server`);
+      handleNextServer();
+      return;
+    }
+
+    // 3. Only show error state if no fallback or other servers exist
     setState("error");
-  }, []);
+  }, [handleNextServer]);
 
   const handleServerSelect = useCallback((server: ValidServer) => {
     setActiveServer(server);
@@ -588,7 +619,7 @@ function EmbedFrame({
       webkitallowfullscreen="true"
       mozallowfullscreen="true"
       loading="eager"
-      referrerPolicy="no-referrer"
+      referrerPolicy="strict-origin-when-cross-origin"
     />
   );
 }
@@ -656,6 +687,7 @@ function HlsPlayer({
         });
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
+          const isMediaRawUrl = Boolean(rawUrl && (rawUrl.includes(".m3u8") || rawUrl.includes("/hls") || rawUrl.includes(".mp4")));
           // Detect repeated fragment load errors (e.g. 403 on .ts segments)
           if (
             data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR ||
@@ -664,7 +696,7 @@ function HlsPlayer({
             fragErrorCount++;
             if (fragErrorCount >= 2) {
               console.warn("[HlsPlayer] Repeated fragment load error:", data.details);
-              if (!triedRaw && rawUrl && rawUrl !== src) {
+              if (!triedRaw && isMediaRawUrl && rawUrl && rawUrl !== src) {
                 triedRaw = true;
                 fragErrorCount = 0;
                 console.info("[HlsPlayer] Falling back to raw URL:", rawUrl.substring(0, 60));
@@ -680,7 +712,7 @@ function HlsPlayer({
 
           if (data.fatal) {
             console.warn("[HlsPlayer] Fatal HLS error:", data.type, data.details, "src:", src.substring(0, 60));
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !triedRaw && rawUrl && rawUrl !== src) {
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !triedRaw && isMediaRawUrl && rawUrl && rawUrl !== src) {
               // Proxy failed — try the raw stream URL directly
               triedRaw = true;
               networkRetries = 0;

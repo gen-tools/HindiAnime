@@ -30,7 +30,7 @@ const sizeStyles: Record<Size, string> = {
 };
 
 const shared =
-  "focus-ring inline-flex items-center justify-center rounded-lg font-semibold transition-all duration-200 whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none";
+  "focus-ring inline-flex items-center justify-center rounded-lg font-semibold transition-[color,background-color,border-color,opacity,transform] duration-150 whitespace-nowrap active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none motion-reduce:transform-none";
 
 export function Button({
   variant = "primary",

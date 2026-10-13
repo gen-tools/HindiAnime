@@ -1,17 +1,19 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
 import { ListingFilters } from "@/components/search/ListingFilters";
 import { NoResultsState } from "@/components/search/SearchStates";
-import { getLanguageCatalog } from "@/lib/api/client";
+import { getLanguageCatalog, getGenreCatalog } from "@/lib/api/client";
 import { Headphones, Subtitles, Globe, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import { languages } from "@/lib/mock/languages";
 import { genres } from "@/lib/mock/genres";
+import { matchesCountry } from "@/lib/mock/countries";
+import { CANONICAL_SITE_ORIGIN } from "@/lib/seo";
 
 interface LanguagePageConfig {
   h1: string;
@@ -45,62 +47,6 @@ const languageConfigs: Record<string, LanguagePageConfig> = {
     intro:
       "Watch popular Telugu dubbed anime releases and enjoy anime in Telugu with high-quality audio. Explore a curated selection of Telugu anime series and movies ready for streaming.",
   },
-  bengali: {
-    h1: "Bengali Dubbed Anime",
-    title: "Bengali Dubbed Anime - Watch Anime in Bengali",
-    description:
-      "Watch Bengali dubbed anime and explore anime in Bengali online. Enjoy popular animated series with regional audio and find great shows to stream.",
-    intro:
-      "Browse engaging Bengali dubbed anime and enjoy anime in Bengali with localized dubs. Discover compelling stories and popular Bengali anime episodes available to watch online.",
-  },
-  kannada: {
-    h1: "Kannada Dubbed Anime",
-    title: "Kannada Dubbed Anime - Watch Anime in Kannada",
-    description:
-      "Watch Kannada dubbed anime and stream anime in Kannada online. Browse popular series with local audio tracks and find your next anime to watch.",
-    intro:
-      "Stream entertaining Kannada dubbed anime and watch anime in Kannada with regional voice dubbing. Discover trending Kannada anime series and episodes updated for fans.",
-  },
-  malayalam: {
-    h1: "Malayalam Dubbed Anime",
-    title: "Malayalam Dubbed Anime - Watch Anime in Malayalam",
-    description:
-      "Watch Malayalam dubbed anime and discover anime in Malayalam online. Stream popular series with Malayalam audio and start watching your favorites.",
-    intro:
-      "Discover quality Malayalam dubbed anime and experience anime in Malayalam with regional audio options. Stream beloved Malayalam anime series and movies in one convenient place.",
-  },
-  english: {
-    h1: "English Dubbed Anime",
-    title: "English Dubbed Anime - Watch Anime in English",
-    description:
-      "Watch English dubbed anime series and movies. Stream popular releases with high quality English voiceovers and synchronized subtitles.",
-    intro:
-      "Browse top English dubbed anime and stream favorite anime series in English. Explore a wide variety of dubbed anime releases with clear voice acting and full episode availability.",
-  },
-  japanese: {
-    h1: "Japanese Anime with Subtitles",
-    title: "Japanese Anime - Watch Original Anime in Japanese",
-    description:
-      "Watch original Japanese anime with synchronized subtitles. Stream trending and classic series with authentic Japanese audio.",
-    intro:
-      "Experience original Japanese anime broadcasts with multi-language subtitle tracks. Stream classic masterpieces and ongoing seasonal anime in authentic Japanese voice.",
-  },
-  korean: {
-    h1: "Korean Dubbed Anime",
-    title: "Korean Dubbed Anime - Watch Anime in Korean",
-    description:
-      "Watch Korean dubbed anime and manhwa adaptations online with clear audio and multi-language subtitles.",
-    intro:
-      "Explore Korean dubbed anime and webtoon adaptations with Korean audio dubs. Stream engaging anime series and special releases.",
-  },
-  marathi: {
-    h1: "Marathi Dubbed Anime",
-    title: "Marathi Dubbed Anime - Watch Anime in Marathi",
-    description:
-      "Watch Marathi dubbed anime episodes and films online with localized regional audio tracks.",
-    intro:
-      "Stream entertaining Marathi dubbed anime with regional voiceovers. Discover available Marathi anime series and movies for regional anime fans.",
-  },
 };
 
 function getLanguageConfig(code: string, label: string): LanguagePageConfig {
@@ -129,7 +75,7 @@ export async function generateMetadata({
   if (!lang) return {};
 
   const config = getLanguageConfig(lang.code, lang.label);
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://hindianime.com";
+  const siteUrl = CANONICAL_SITE_ORIGIN;
   const canonicalUrl = `${siteUrl}/language/${lang.code}`;
 
   const fullTitle = `${config.title} | Hindi Anime`;
@@ -176,16 +122,31 @@ export default async function LanguagePage({
   const lang = languages.find((l) => l.code === language);
   if (!lang) notFound();
 
+  // If redundant or different language was provided in query param, redirect to clean route
+  if (sParams.language && sParams.language !== language) {
+    const next = new URLSearchParams(sParams as Record<string, string>);
+    const targetLang = next.get("language")!;
+    next.delete("language");
+    next.delete("page");
+    const query = next.toString() ? `?${next.toString()}` : "";
+    redirect(`/language/${targetLang}${query}`);
+  }
+
   const config = getLanguageConfig(lang.code, lang.label);
-  const { genre, type, sort = "rating" } = sParams;
+  const { genre, country, type, sort = "rating" } = sParams;
   const page = Math.max(1, Number(sParams.page) || 1);
 
-  const langData = await getLanguageCatalog(language, page);
-  let items = langData.results;
-  const totalPages = langData.totalPages;
+  const catalogData = genre
+    ? await getGenreCatalog(genre, page)
+    : await getLanguageCatalog(language, page);
+
+  let items = catalogData.results;
+  const totalPages = catalogData.totalPages;
   const years = [...new Set(items.map((a) => a.year).filter((y) => y > 0))].sort((a, b) => b - a);
 
   if (genre) items = items.filter((a) => a.genres.includes(genre));
+  if (language) items = items.filter((a) => a.languages.includes(language as never));
+  if (country) items = items.filter((a) => matchesCountry(a, country));
   if (type) items = items.filter((a) => a.type === type);
   if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
 
@@ -197,6 +158,7 @@ export default async function LanguagePage({
 
   function buildHref(p: number) {
     const next = new URLSearchParams(sParams as Record<string, string>);
+    next.delete("language");
     next.set("page", String(p));
     return `/language/${language}?${next.toString()}`;
   }

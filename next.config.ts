@@ -34,10 +34,6 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [
           {
-            key: "X-Robots-Tag",
-            value: "noindex, nofollow, noarchive, nosnippet, noimageindex",
-          },
-          {
             key: "X-Content-Type-Options",
             value: "nosniff",
           },
@@ -57,20 +53,24 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https://image.tmdb.org https://*.anilist.co https://s4.anilist.co https://img.animesalt.cx https://animesalt.cx https://*.animesalt.cx https://*.tmdb.org https://multishows.top https://*.multishows.top https://i0.wp.com https://i1.wp.com https://i2.wp.com https://i3.wp.com https://*.wp.com",
               "font-src 'self' data:",
-              "connect-src 'self' https: http: blob: data: https://graphql.anilist.co https://api-delta-taupe-46.vercel.app https://animesalt.cx https://*.workers.dev https://wispy-cherry-6934.shahazaibseo038.workers.dev",
+              "connect-src 'self' https: http: blob: data: https://graphql.anilist.co https://api-delta-taupe-46.vercel.app https://animesalt.cx https://*.workers.dev https://wispy-cherry-6934.sheztech.workers.dev",
               // Permissive frame-src and media-src so embedded video players and streams function smoothly
               "frame-src 'self' https: http:",
-              "media-src 'self' blob: data: https: http: https://*.workers.dev https://wispy-cherry-6934.shahazaibseo038.workers.dev",
+              "media-src 'self' blob: data: https: http: https://*.workers.dev https://wispy-cherry-6934.sheztech.workers.dev",
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",
             ].join("; "),
           },
         ],
+      },
+      {
+        source: "/api/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" }],
       },
       {
         // The animesalt proxy re-serves third-party player pages inside our iframe.

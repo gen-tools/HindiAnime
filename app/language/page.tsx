@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { languages } from "@/lib/mock/languages";
 import { anime } from "@/lib/mock/anime";
@@ -13,11 +14,11 @@ import { Badge } from "@/components/ui/Badge";
 import { Globe, Headphones, Subtitles, ArrowRight, Sparkles, Flame } from "lucide-react";
 import type { LanguageCode } from "@/types/language";
 
-export const metadata: Metadata = {
-  title: "Browse Anime by Language | Hindi, Tamil, Telugu & More",
+export const metadata: Metadata = createCanonicalMetadata("/language", {
+  title: "Browse Anime by Language | Hindi, Tamil & Telugu Dubbed",
   description:
-    "Explore anime dubbed and subtitled in Hindi, Tamil, Telugu, English, Japanese, Malayalam, Kannada, Bengali, Marathi, and Korean.",
-};
+    "Explore anime dubbed in Hindi, Tamil, and Telugu. Stream your favorite anime series and movies with authentic regional audio.",
+});
 
 const languageDetails: Record<
   string,
@@ -44,55 +45,6 @@ const languageDetails: Record<
     subCount: "100%",
     flag: "🇮🇳",
   },
-  english: {
-    native: "English",
-    description: "Official English dubs and dual-audio tracks with complete closed captions.",
-    dubCount: "95%",
-    subCount: "100%",
-    flag: "🌐",
-  },
-  japanese: {
-    native: "日本語",
-    description: "Original Japanese broadcasts with accurate subtitles across 10 Indian & global languages.",
-    dubCount: "Original",
-    subCount: "100%",
-    flag: "🇯🇵",
-  },
-  korean: {
-    native: "한국어",
-    description: "Korean audio and subtitles for manhwa adaptations and webtoon-inspired anime.",
-    dubCount: "75%",
-    subCount: "90%",
-    flag: "🇰🇷",
-  },
-  malayalam: {
-    native: "മലയാളം",
-    description: "Malayalam dubbed anime and subtitle options for South Indian anime fans.",
-    dubCount: "70%",
-    subCount: "85%",
-    flag: "🇮🇳",
-  },
-  kannada: {
-    native: "ಕನ್ನಡ",
-    description: "Kannada audio dubs and localized subtitles for popular anime titles.",
-    dubCount: "70%",
-    subCount: "85%",
-    flag: "🇮🇳",
-  },
-  bengali: {
-    native: "বাংলা",
-    description: "Bengali translated subtitles and dubbed episodes for Eastern India fans.",
-    dubCount: "65%",
-    subCount: "85%",
-    flag: "🇮🇳",
-  },
-  marathi: {
-    native: "मराठी",
-    description: "Marathi dubbed anime movies and television broadcasts.",
-    dubCount: "65%",
-    subCount: "80%",
-    flag: "🇮🇳",
-  },
 };
 
 export default async function LanguagesDirectoryPage() {
@@ -106,7 +58,7 @@ export default async function LanguagesDirectoryPage() {
   const hindiAnime = getAnimeByLanguage("hindi").slice(0, 6);
   const regionalAnime = browseItems
     .filter((a) =>
-      a.languages.some((l) => ["tamil", "telugu", "malayalam", "kannada", "bengali", "marathi"].includes(l))
+      a.languages.some((l) => ["tamil", "telugu"].includes(l))
     )
     .slice(0, 6);
 
@@ -124,14 +76,14 @@ export default async function LanguagesDirectoryPage() {
             Browse Anime by Language
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-text-secondary sm:text-base">
-            Hindi Anime brings you anime in your mother tongue. Switch between Hindi, Tamil, Telugu,
-            English, Japanese, and more with crystal-clear audio dubbing and precise subtitles.
+            Hindi Anime brings you anime in your mother tongue. Switch between Hindi, Tamil, and
+            Telugu with crystal-clear audio dubbing and precise subtitles.
           </p>
 
           <div className="mt-6 flex flex-wrap gap-4 text-xs font-medium text-text-muted">
             <span className="flex items-center gap-1.5 rounded-lg border border-border-line bg-surface/80 px-3 py-1.5 text-text-secondary">
               <Headphones className="h-4 w-4 text-green-light" />
-              10+ Dubbed Audio Languages
+              3 Dubbed Audio Languages
             </span>
             <span className="flex items-center gap-1.5 rounded-lg border border-border-line bg-surface/80 px-3 py-1.5 text-text-secondary">
               <Subtitles className="h-4 w-4 text-green-light" />
@@ -149,9 +101,9 @@ export default async function LanguagesDirectoryPage() {
       <section className="mt-12">
         <div className="mb-6 flex items-center justify-between">
           <h2 className="font-display text-2xl font-bold text-text-primary">
-            All Available Languages
+            Supported Languages
           </h2>
-          <span className="text-xs text-text-muted">10 Supported Dialects</span>
+          <span className="text-xs text-text-muted">3 Supported</span>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -254,7 +206,7 @@ export default async function LanguagesDirectoryPage() {
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-green-bright" />
             <h2 className="font-display text-2xl font-bold text-text-primary">
-              Top Regional Language Dubs (Tamil, Telugu &amp; more)
+              Top Regional Language Dubs (Tamil &amp; Telugu)
             </h2>
           </div>
           <div className="flex gap-2">

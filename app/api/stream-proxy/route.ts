@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
+import { DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
 
 // Stream links are dynamic and short-lived
@@ -22,8 +23,7 @@ const DEFAULT_HEADERS = {
 
 const rawCfProxy = (
   process.env.CF_PROXY_URL ||
-  process.env.NEXT_PUBLIC_CF_PROXY_URL ||
-  "https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url="
+  `${DEFAULT_WORKER_BASE_URL}/?url=`
 ).trim(); // trim trailing newlines/spaces common in .env files
 
 const CF_PROXY_URL = rawCfProxy.includes("?url=")
@@ -38,14 +38,14 @@ const CF_PROXY_URL = rawCfProxy.includes("?url=")
 function getCfWorkerBase(): string {
   try {
     // The env var may be the full proxy URL like:
-    //   https://wispy-cherry-6934.shahazaibseo038.workers.dev/?url=
+    //   https://wispy-cherry-6934.sheztech.workers.dev/?url=
     // or just the base:
-    //   https://wispy-cherry-6934.shahazaibseo038.workers.dev
+    //   https://wispy-cherry-6934.sheztech.workers.dev
     const parsed = new URL(rawCfProxy.split("?")[0].replace(/\/+$/, ""));
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     // Absolute fallback
-    return "https://wispy-cherry-6934.shahazaibseo038.workers.dev";
+    return DEFAULT_WORKER_BASE_URL;
   }
 }
 const CF_WORKER_BASE = getCfWorkerBase();
@@ -84,10 +84,22 @@ function slugToTitleVariants(slug: string, season: string): string[] {
 
 function isBlockedSource(s: TokoSource): boolean {
   const provider = (s.providerName || s.source || s.server || "").toLowerCase();
-  if (provider.includes("hindmovie") || provider.includes("mvlink") || provider.includes("animesama")) return true;
+  if (
+    provider.includes("hindmovie") ||
+    provider.includes("mvlink") ||
+    provider.includes("animesama") ||
+    provider.includes("rubystm") ||
+    provider.includes("cloudy") ||
+    provider.includes("upns")
+  ) return true;
 
   const urlStr = (s.url || "").toLowerCase();
   if (/\.(mkv|zip|rar|7z|tar|gz|torrent|iso)(\?|$)/i.test(urlStr)) return true;
+  if (
+    urlStr.includes("rubystm") ||
+    urlStr.includes("cloudy.upns.one") ||
+    urlStr.includes("upns.one")
+  ) return true;
   if (BLOCKED_STREAM_DOMAINS.some((d) => urlStr.includes(d) || provider.includes(d))) return true;
 
   try {
@@ -136,6 +148,7 @@ async function fetchTokoSources(
 
   const directUrl = `${TOKO_API_URL}/api/v3/toko/stream?${params.toString()}`;
   const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(directUrl)}`;
+  const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
 
   let data: TokoStreamResponse | null = null;
 
@@ -161,23 +174,33 @@ async function fetchTokoSources(
 
   // 2. Try proxy fetch if direct fetch failed
   if (!data) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
-      const res = await fetch(proxyUrl, {
-        signal: controller.signal,
-        cache: "no-store",
-        headers: DEFAULT_HEADERS,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const text = await res.text();
-        if (!text.includes("<!DOCTYPE html") && !text.includes("challenge")) {
-          data = JSON.parse(text) as TokoStreamResponse;
+    if (!workerSecret) {
+      console.error("[stream-proxy] Worker Toko fallback skipped: server proxy secret is not configured");
+    } else {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
+        try {
+          const res = await fetch(proxyUrl, {
+            signal: controller.signal,
+            cache: "no-store",
+            headers: {
+              ...DEFAULT_HEADERS,
+              "x-hindianime-proxy-secret": workerSecret,
+            },
+          });
+          if (res.ok) {
+            const text = await res.text();
+            if (!text.includes("<!DOCTYPE html") && !text.includes("challenge")) {
+              data = JSON.parse(text) as TokoStreamResponse;
+            }
+          }
+        } finally {
+          clearTimeout(timer);
         }
+      } catch {
+        // proxy error
       }
-    } catch {
-      // proxy error
     }
   }
 
@@ -235,21 +258,28 @@ function buildTokoItem(s: TokoSource): StreamItem {
     .replace(/&amp;/gi, "&")
     .trim();
 
+  const hdrs = (s.headers as Record<string, string>) || {};
+  const referer = hdrs.Referer || hdrs.referer || "";
+  const origin  = hdrs.Origin  || hdrs.origin  || "";
+
   let hlsProxyUrl: string | undefined;
   if (isDirectStream) {
-    const hdrs = (s.headers as Record<string, string>) || {};
-    const referer = hdrs.Referer || hdrs.referer || "";
-    const origin  = hdrs.Origin  || hdrs.origin  || "";
     const params = new URLSearchParams({ url: streamUrl });
     if (referer) params.set("referer", referer);
     if (origin)  params.set("origin",  origin);
     hlsProxyUrl = `${CF_WORKER_BASE}/hls-proxy?${params.toString()}`;
   }
 
+  // Playable embed fallback if direct stream fails:
+  // For toonstream-vidmoly, referer is the actual working embed URL (https://vidmoly.net/embed-...html)
+  const embedFallback = (referer && referer.startsWith("http") && !referer.includes(".m3u8"))
+    ? referer
+    : streamUrl;
+
   return {
     server: "",
     label: "",
-    embed: streamUrl,
+    embed: isDirectStream ? embedFallback : streamUrl,
     url: isDirectStream ? (hlsProxyUrl || streamUrl) : undefined,
     hlsProxyUrl,
     type: isDirectStream ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
@@ -269,7 +299,8 @@ function assembleServers(
 
   function add(item: StreamItem | null | undefined, label: string) {
     if (!item) return;
-    const key = item.embed || item.url || "";
+    // For direct streams, distinguish by item.url so embed fallbacks do not collide with pure embed slots
+    const key = item.type !== "embed" ? (item.url || item.embed || "") : (item.embed || item.url || "");
     if (!key) return;
     if (usedUrls.has(key)) return;
     usedUrls.add(key);
@@ -279,29 +310,63 @@ function assembleServers(
 
   // ── Slot 1: Hindi Dub direct HLS (Toko) ──────────────────────────────────
   const s1 = rawSources.find((s) => !isBlockedSource(s) && isHindi(s) && isDirect(s));
-  if (s1) add(buildTokoItem(s1), "Server 1 · 🇮🇳 Hindi Dub HLS ⚡");
+  if (s1) {
+    add(buildTokoItem(s1), "Server 1 · 🇮🇳 Hindi Dub HLS ⚡");
+  } else {
+    // If no direct HLS, fallback to Toko Hindi embed or AnimeSalt Hindi
+    const fallbackHindi = animeSaltItems.find(
+      (s) => !isBlockedSource({ url: s.embed } as TokoSource) &&
+        (s.embed.includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream"))
+    ) || rawSources.find((s) => !isBlockedSource(s) && isHindi(s) && !usedUrls.has(s.url || ""));
+    if (fallbackHindi) {
+      if ("embed" in fallbackHindi && fallbackHindi.embed) {
+        add(fallbackHindi as StreamItem, "Server 1 · 🇮🇳 Hindi Dub");
+      } else {
+        add(buildTokoItem(fallbackHindi as TokoSource), "Server 1 · 🇮🇳 Hindi Dub");
+      }
+    }
+  }
 
-  // ── Slot 2: AnimeSalt MyStream (ravok.buzz) ───────────────────────────────
+  // ── Slot 2: AnimeSalt MyStream (ravok.buzz) or AnimeSalt Hindi ────────────
   const saltMyStream = animeSaltItems.find(
     (s) => !isBlockedSource({ url: s.embed } as TokoSource) &&
-      (s.embed.includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream"))
+      (s.embed.includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream")) &&
+      !usedUrls.has(s.embed)
   );
   if (saltMyStream) {
     add(saltMyStream, "Server 2 · 🇮🇳 MyStream");
+  } else {
+    const saltHindi = animeSaltItems.find((s) => isHindi(s) && !usedUrls.has(s.embed));
+    if (saltHindi) add(saltHindi, "Server 2 · 🇮🇳 Hindi (Abyss)");
   }
 
-  // ── Slot 3: Toko Hindi Dub embed #1 (cloudy.upns.one / abyssplayer) ───────
-  const s3 = rawSources.find(
+  // ── Slot 3: Toko Hindi Dub embed #1 (Vidmoly) ────────────────────────────
+  // User requested: remove rubystm and cloudy from toko, use Toko's 2 other embed servers (vidmoly & abyssplayer)
+  const s3Vidmoly = rawSources.find(
+    (s) => !isBlockedSource(s) && isHindi(s) && (s.url || "").includes("vidmoly.net") && !usedUrls.has(s.url || "")
+  );
+  const s3 = s3Vidmoly || rawSources.find(
     (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
   );
-  if (s3) add(buildTokoItem(s3), "Server 3 · 🇮🇳 Hindi Dub (Toko)");
+  if (s3) {
+    add(buildTokoItem(s3), "Server 3 · 🇮🇳 Vidmoly");
+  } else {
+    const saltHindi = animeSaltItems.find((s) => isHindi(s) && !usedUrls.has(s.embed));
+    if (saltHindi) add(saltHindi, "Server 3 · 🇮🇳 Hindi (Abyss)");
+  }
 
-  // ── Slot 4: Toko Hindi Dub embed #2 ─────────────────────────────────────
-  const s4 = rawSources.find(
+  // ── Slot 4: Toko Hindi Dub embed #2 (AbyssPlayer / FilesForever) ─────────
+  const s4Abyss = rawSources.find(
+    (s) => !isBlockedSource(s) && isHindi(s) && ((s.url || "").includes("abyssplayer") || (s.url || "").includes("filesforever")) && !usedUrls.has(s.url || "")
+  );
+  const s4 = s4Abyss || rawSources.find(
     (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
   );
   if (s4) {
-    add(buildTokoItem(s4), "Server 4 · 🇮🇳 Hindi Dub (Toko Alt)");
+    add(buildTokoItem(s4), "Server 4 · 🇮🇳 Abyss");
+  } else {
+    const saltHindi = animeSaltItems.find((s) => isHindi(s) && !usedUrls.has(s.embed));
+    if (saltHindi) add(saltHindi, "Server 4 · 🇮🇳 Hindi (Abyss Alt)");
   }
 
   // ── Slot 5: AnimeSalt Tamil (Abyss) ───────────────────────────────────────
@@ -332,6 +397,20 @@ function assembleServers(
   const s9Salt = animeSaltItems.find((s) => isJapanese(s) && !usedUrls.has(s.embed));
   if (s9Salt) {
     add(s9Salt, "Server 9 · 🇯🇵 Japanese (Abyss)");
+  }
+
+  // Fill any remaining slots up to 9 with remaining unused animeSalt or Toko sources
+  for (const s of animeSaltItems) {
+    if (list.length >= 9) break;
+    if (!usedUrls.has(s.embed)) {
+      add(s, `Server ${list.length + 1} · ${s.languageLabel || s.label || "Alternative"}`);
+    }
+  }
+  for (const s of rawSources) {
+    if (list.length >= 9) break;
+    if (!isBlockedSource(s) && !usedUrls.has(s.url || "")) {
+      add(buildTokoItem(s), `Server ${list.length + 1} · ${s.languageLabel || s.language || "Alternative"}`);
+    }
   }
 
   return list;
@@ -366,14 +445,22 @@ async function fetchAnimeSaltSources(
     .replace(/-s\d+$/i, "")
     .replace(/-\d+(st|nd|rd|th)-season$/i, "");
 
+  const isPossibleMovie = (sNum === 1 && epNum === 1) || slug.includes("movie");
   const candidates = [
+    ...(isPossibleMovie
+      ? [
+          `https://animesalt.cx/movies/${slug}/`,
+          `https://animesalt.cx/movies/${baseSlug}/`,
+        ]
+      : []),
     `https://animesalt.cx/episode/${baseSlug}-${sNum}x${epNum}/`,
     `https://animesalt.cx/episode/${slug}-${sNum}x${epNum}/`,
     `https://animesalt.cx/episode/${baseSlug}-${epNum}/`,
   ];
 
-  // Retrieve AnimeSalt through the general Worker proxy, then use the existing direct fallback.
-  for (const targetUrl of candidates) {
+  // Retrieve AnimeSalt through the general Worker proxy. Use direct fallback
+  // only for network/server failures; a 4xx on a candidate moves to the next candidate.
+  for (const targetUrl of new Set(candidates)) {
     const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`;
     // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
     const fetchUrls = [proxyUrl, targetUrl];
@@ -388,10 +475,11 @@ async function fetchAnimeSaltSources(
       let passedResponseChecks = false;
       let parserResultCount = 0;
       let caughtError: string | null = null;
+      let timer: ReturnType<typeof setTimeout> | undefined;
 
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
+        timer = setTimeout(() => controller.abort(), 6000);
         const res = await fetch(urlToFetch, {
           signal: controller.signal,
           cache: "no-store",
@@ -401,11 +489,12 @@ async function fetchAnimeSaltSources(
             ...(attemptType === "Worker" ? { Origin: "https://hindianime-seven.vercel.app" } : {}),
           },
         });
-        clearTimeout(timer);
         httpStatus = res.status;
         contentType = res.headers.get("content-type");
         const html = await res.text();
         responseBodyLength = html.length;
+        if (res.status >= 400 && res.status < 500) break;
+        if (isCloudflareChallenge(html)) break;
         passedResponseChecks = res.ok && html.length >= 1000 && !html.includes("404 Not Found") && !isCloudflareChallenge(html);
         if (!passedResponseChecks) continue;
 
@@ -471,6 +560,7 @@ async function fetchAnimeSaltSources(
         caughtError = err instanceof Error ? err.message : String(err);
         // try next fetchUrl or candidate
       } finally {
+        if (timer) clearTimeout(timer);
         console.info("[AnimeSalt attempt]", {
           attemptType,
           targetHostPath,

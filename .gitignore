@@ -145,3 +145,6 @@ $RECYCLE.BIN/
 
 # Local Netlify folder
 .netlify
+
+# Scratch scripts
+scratch/

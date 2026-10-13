@@ -1,17 +1,19 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
 import { ListingFilters } from "@/components/search/ListingFilters";
 import { NoResultsState } from "@/components/search/SearchStates";
 import { genres, getGenre } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
+import { matchesCountry } from "@/lib/mock/countries";
 import { getGenreCatalog } from "@/lib/api/client";
 import { posterPalette } from "@/lib/poster";
 import { Layers, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createCanonicalMetadata } from "@/lib/seo";
 
 const PAGE_SIZE = 12;
 
@@ -27,10 +29,10 @@ export async function generateMetadata({
   const { slug } = await params;
   const genre = getGenre(slug);
   if (!genre) return {};
-  return {
+  return createCanonicalMetadata(`/genre/${slug}`, {
     title: `${genre.label} Anime`,
     description: `Explore ${genre.label.toLowerCase()} anime series and movies on Hindi Anime — ${genre.description.toLowerCase()}.`,
-  };
+  });
 }
 
 export default async function GenrePage({
@@ -45,7 +47,17 @@ export default async function GenrePage({
   const genre = getGenre(slug);
   if (!genre) notFound();
 
-  const { language, type, sort = "rating" } = sParams;
+  // If redundant or different genre was provided in query param, redirect to clean route
+  if (sParams.genre && sParams.genre !== slug) {
+    const next = new URLSearchParams(sParams as Record<string, string>);
+    const targetGenre = next.get("genre")!;
+    next.delete("genre");
+    next.delete("page");
+    const query = next.toString() ? `?${next.toString()}` : "";
+    redirect(`/genre/${targetGenre}${query}`);
+  }
+
+  const { language, country, type, sort = "rating" } = sParams;
   const page = Math.max(1, Number(sParams.page) || 1);
 
   const genreData = await getGenreCatalog(slug, page);
@@ -54,6 +66,7 @@ export default async function GenrePage({
   const years = [...new Set(items.map((a) => a.year).filter((y) => y > 0))].sort((a, b) => b - a);
 
   if (language) items = items.filter((a) => a.languages.includes(language as never));
+  if (country) items = items.filter((a) => matchesCountry(a, country));
   if (type) items = items.filter((a) => a.type === type);
   if (sParams.year) items = items.filter((a) => String(a.year) === sParams.year);
 
@@ -65,6 +78,7 @@ export default async function GenrePage({
 
   function buildHref(p: number) {
     const next = new URLSearchParams(sParams as Record<string, string>);
+    next.delete("genre");
     next.set("page", String(p));
     return `/genre/${slug}?${next.toString()}`;
   }
