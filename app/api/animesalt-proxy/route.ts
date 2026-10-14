@@ -24,7 +24,6 @@ function isAllowedHost(hostname: string): boolean {
 
 const CF_PROXY_RAW =
   process.env.CF_PROXY_URL ||
-  process.env.NEXT_PUBLIC_CF_PROXY_URL ||
   "https://wispy-cherry-6934.sheztech.workers.dev/?url=";
 
 const CF_PROXY = CF_PROXY_RAW.includes("?url=")

@@ -1,19 +1,15 @@
-export const WORKER_HOST = "wispy-cherry-6934.sheztech.workers.dev";
-export const DEFAULT_WORKER_BASE_URL = `https://${WORKER_HOST}`;
+/**
+ * Legacy workers.dev hostname (kept until cloud.hindi-anime.com is confirmed live).
+ * New primary custom domain: cloud.hindi-anime.com
+ */
+export const WORKER_LEGACY_HOST = "wispy-cherry-6934.sheztech.workers.dev";
+export const WORKER_CUSTOM_HOST = "cloud.hindi-anime.com";
 
-/** Public browser-facing Worker base; never contains the server shared secret. */
-export function getPublicWorkerBaseUrl(): string {
-  const rawUrl = process.env.NEXT_PUBLIC_CF_PROXY_URL?.trim();
-  if (!rawUrl) return DEFAULT_WORKER_BASE_URL;
+/** Both hostnames are accepted — remove legacy once the new domain is confirmed. */
+export const ALLOWED_WORKER_HOSTS: ReadonlySet<string> = new Set([
+  WORKER_LEGACY_HOST,
+  WORKER_CUSTOM_HOST,
+]);
 
-  try {
-    const url = new URL(rawUrl);
-    const validQuery = url.search === "" ||
-      (url.searchParams.size === 1 && url.searchParams.has("url") && url.searchParams.get("url") === "");
-    if (url.protocol !== "https:" || url.hostname !== WORKER_HOST || url.username || url.password ||
-      url.pathname !== "/" || !validQuery || url.hash) return DEFAULT_WORKER_BASE_URL;
-    return url.origin;
-  } catch {
-    return DEFAULT_WORKER_BASE_URL;
-  }
-}
+/** The preferred default for new server-side requests. */
+export const DEFAULT_WORKER_BASE_URL = `https://${WORKER_CUSTOM_HOST}`;

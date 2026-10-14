@@ -66,7 +66,30 @@
     "as-cdn25.top",
     "as-cdn26.top",
     "api-delta-taupe-46.vercel.app",
+    "ravok.buzz",
   ]);
+
+  const ALLOWED_CDN_HOSTS = new Set([
+    "as-cdn.top",
+    "as-cdn23.top",
+    "as-cdn24.top",
+    "as-cdn25.top",
+    "as-cdn26.top",
+  ]);
+
+  function isAllowedRavokTarget(url) {
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port ||
+      url.hash ||
+      url.search !== ""
+    ) return false;
+    // Strict MyStream embed pattern: mandatory /embed/<id> or /e/<id> with alphanumeric/dash token (3 to 80 chars)
+    // No single-segment paths, no query strings, no ports, and no credentials allowed.
+    return /^\/(?:embed|e)\/[a-zA-Z0-9_-]{3,80}$/.test(url.pathname);
+  }
 
   function isPositiveInteger(value, maxDigits = 12) {
     return typeof value === "string" &&
@@ -190,11 +213,14 @@
     if (host === "animesalt.cx" || host === "www.animesalt.cx" || host === "img.animesalt.cx") {
       return isAllowedAnimeSaltTarget(url);
     }
-    if (host.endsWith(".top") || host.includes("as-cdn")) {
+    if (ALLOWED_CDN_HOSTS.has(host)) {
       return true;
     }
     if (host === "api-delta-taupe-46.vercel.app") {
       return isAllowedTokoStreamTarget(url);
+    }
+    if (host === "ravok.buzz") {
+      return isAllowedRavokTarget(url);
     }
     return false;
   }
@@ -582,6 +608,7 @@
         responseHeaders.delete("x-frame-options");
         responseHeaders.delete("content-security-policy");
         responseHeaders.delete("content-security-policy-report-only");
+        responseHeaders.delete("set-cookie");
 
         if (isAnimeSaltTarget && response.status === 403) {
           if (homepageKv && targetCooldownKey) {
@@ -1020,6 +1047,7 @@
     headers.delete("x-frame-options");
     headers.delete("content-security-policy");
     headers.delete("content-security-policy-report-only");
+    headers.delete("set-cookie");
     return headers;
   }
 
@@ -1398,6 +1426,7 @@
       headers.delete("x-frame-options");
       headers.delete("content-security-policy");
       headers.delete("content-security-policy-report-only");
+      headers.delete("set-cookie");
       if (Number.isSafeInteger(totalPages) && totalPages > 0) {
         headers.set("x-catalog-total-pages", String(totalPages));
       }
@@ -1957,22 +1986,83 @@
     return false;
   }
 
+  const ALLOWED_HLS_BASE_DOMAINS = new Set([
+    "vmpx.online",
+    "vmeas.cloud",
+    "vidmoly.to",
+    "vidmoly.net",
+    "vidmoly.me",
+    "hakunaymatata.com",
+    "hakuna.my",
+    "sibnet.ru",
+    "video.sibnet.ru",
+    "filesforever.in",
+    "filesforever.org",
+    "abyssplayer.com",
+    "vidzy.org",
+    "vidzy.online",
+  ]);
+
+  const PROVIDER_CLUSTER_GROUPS = [
+    // Vidmoly cluster: master/variants/segments spread across these domains
+    new Set(["vidmoly.to", "vidmoly.net", "vidmoly.me", "vmpx.online", "vmeas.cloud"]),
+    // Hakunamatata cluster
+    new Set(["hakunaymatata.com", "hakuna.my"]),
+    // Sibnet cluster
+    new Set(["sibnet.ru", "video.sibnet.ru"]),
+    // FilesForever / Abyss cluster
+    new Set(["filesforever.in", "filesforever.org", "abyssplayer.com"]),
+    // Vidzy cluster
+    new Set(["vidzy.org", "vidzy.online"]),
+  ];
+
+  function areHostsInSameCluster(hostA, hostB) {
+    if (hostA === hostB) return true;
+    for (const cluster of PROVIDER_CLUSTER_GROUPS) {
+      const inClusterA = cluster.has(hostA) || Array.from(cluster).some((d) => hostA.endsWith(`.${d}`));
+      const inClusterB = cluster.has(hostB) || Array.from(cluster).some((d) => hostB.endsWith(`.${d}`));
+      if (inClusterA && inClusterB) return true;
+    }
+    return false;
+  }
+
+  const ALLOWED_HLS_EXT_REGEX = /\.(m3u8|ts|mp4|m4s|aac|vtt|key)(\?.*)?$/i;
+  const ALLOWED_HLS_PATH_REGEX = /\/(hls|hls2|stream|playlist|bt|resource)\//i;
+  const ALLOWED_HLS_BASE_DOMAINS_ARRAY = Array.from(ALLOWED_HLS_BASE_DOMAINS);
+
+  function isAllowedHlsHostName(hostname) {
+    for (let i = 0; i < ALLOWED_HLS_BASE_DOMAINS_ARRAY.length; i++) {
+      const allowed = ALLOWED_HLS_BASE_DOMAINS_ARRAY[i];
+      if (hostname === allowed || hostname.endsWith(`.${allowed}`)) return true;
+    }
+    return false;
+  }
+
+  function hasAllowedHlsMediaExtension(pathname) {
+    return ALLOWED_HLS_EXT_REGEX.test(pathname) || ALLOWED_HLS_PATH_REGEX.test(pathname);
+  }
+
   function isAllowedHlsTarget(target) {
     if (
-      target.protocol !== "https:" || target.username || target.password ||
+      target.protocol !== "https:" || target.username || target.password || target.port ||
       isPrivateOrLocalHost(target.hostname)
     ) return false;
 
-    const pathname = target.pathname.toLowerCase();
     const hostname = target.hostname.toLowerCase();
-    return pathname.endsWith(".m3u8") || pathname.endsWith(".ts") ||
-      pathname.endsWith(".mp4") || pathname.endsWith(".aac") || pathname.endsWith(".vtt") ||
-      pathname.includes("/hls") || pathname.includes("/hls2") || pathname.includes("/stream") ||
-      pathname.includes("/bt/") || pathname.includes("/resource") ||
-      hostname.includes("vmpx.online") || hostname.includes("vmeas.cloud") ||
-      hostname.includes("vidmoly") || hostname.includes("hakunaymatata") ||
-      hostname.includes("sibnet") || hostname.includes("acek-cdn") ||
-      hostname.includes("vidzy") || hostname.includes("streamcdn") || hostname.includes("cdn");
+    const isAllowedHost = isAllowedHlsHostName(hostname);
+    const pathname = target.pathname.toLowerCase();
+    const isAllowedPath = hasAllowedHlsMediaExtension(pathname);
+
+    if (!isAllowedHost || !isAllowedPath) {
+      console.warn("[hls-proxy] Rejected unallowlisted HLS target:", JSON.stringify({
+        host: hostname,
+        path: pathname,
+        reason: !isAllowedHost ? "disallowed-host" : "disallowed-path",
+      }));
+      return false;
+    }
+
+    return true;
   }
 
   async function fetchHlsWithValidatedRedirects(target, headers, signal) {
@@ -2045,10 +2135,40 @@
     });
   }
 
+  async function verifyHlsToken(targetUrl, referer, origin, exp, sig, secret) {
+    if (!targetUrl || !exp || !sig || !secret) return false;
+    if (!/^[0-9a-fA-F]{64}$/.test(sig)) return false;
+    const expNum = Number(exp);
+    if (!Number.isSafeInteger(expNum) || expNum <= 0) return false;
+    if (Math.floor(Date.now() / 1000) > expNum) return false;
+
+    try {
+      const encoder = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode(secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["verify"]
+      );
+      const payload = encoder.encode(`${targetUrl}:${referer || ""}:${origin || ""}:${exp}`);
+      const sigBytes = new Uint8Array(
+        sig.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+      );
+      return await crypto.subtle.verify("HMAC", key, sigBytes, payload);
+    } catch {
+      return false;
+    }
+  }
+
   async function handleHlsProxy(url, request) {
     const targetUrl = url.searchParams.get("url");
+    const parentUrl = url.searchParams.get("parent");
     const referer = url.searchParams.get("referer") || "";
     const origin = url.searchParams.get("origin") || "";
+    const exp = url.searchParams.get("exp");
+    const sig = url.searchParams.get("sig");
+    const secret = env?.[PROXY_SECRET_BINDING];
 
     if (!targetUrl) {
       return new Response(JSON.stringify({ error: "Missing ?url= parameter" }), {
@@ -2067,9 +2187,49 @@
       });
     }
 
-    // Only allow proxying actual media streams (m3u8, ts segments, mp4)
+    // Only allow proxying actual media streams from allowlisted base domains
     if (!isAllowedHlsTarget(parsedTarget)) {
       return new Response(JSON.stringify({ error: "URL type not allowed" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+      });
+    }
+
+    // If parentUrl is present, verify related provider cluster scope
+    let rootParentUrl = targetUrl;
+    if (parentUrl) {
+      let parsedParent;
+      try {
+        parsedParent = new URL(parentUrl);
+      } catch {
+        return new Response(JSON.stringify({ error: "Invalid parent URL" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+        });
+      }
+      if (!isAllowedHlsTarget(parsedParent)) {
+        return new Response(JSON.stringify({ error: "Parent URL not allowed" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+        });
+      }
+      // Target and parent must be in the exact same provider domain cluster
+      const targetHost = parsedTarget.hostname.toLowerCase();
+      const parentHost = parsedParent.hostname.toLowerCase();
+      if (!areHostsInSameCluster(targetHost, parentHost)) {
+        console.warn("[hls-proxy] Rejected cross-provider segment:", JSON.stringify({ targetHost, parentHost }));
+        return new Response(JSON.stringify({ error: "Host not in parent provider cluster" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+        });
+      }
+      rootParentUrl = parentUrl;
+    }
+
+    // Constant-time HMAC token validation against root parent
+    const isValidToken = await verifyHlsToken(rootParentUrl, referer, origin, exp, sig, secret);
+    if (!isValidToken) {
+      return new Response(JSON.stringify({ error: "Unauthorized or expired media token" }), {
         status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders(request) },
       });
@@ -2122,50 +2282,154 @@
       // Add CORS headers
       const corsH = corsHeaders(request);
       for (const [k, v] of Object.entries(corsH)) responseHeaders.set(k, v);
+      responseHeaders.delete("set-cookie");
 
       // For M3U8 playlists, rewrite segment URLs to also go through this proxy
       if (finalUrl.pathname.toLowerCase().endsWith(".m3u8") || (ct && ct.includes("mpegurl"))) {
         const text = await res.text();
         const baseUrl = `${finalUrl.protocol}//${finalUrl.host}${finalUrl.pathname.replace(/\/[^\/]*$/, "/")}`;
         const workerBase = url.origin + "/hls-proxy";
+        // Always propagate the original parent URL across master -> variant -> segment chain
+        const rootParent = parentUrl || targetUrl;
+        const targetHost = parsedTarget.hostname.toLowerCase();
+        const hostDecisionCache = new Map();
 
-        const rewritten = text.split("\n").map((line) => {
+        function checkHostAllowedAndClustered(segHost) {
+          let allowed = hostDecisionCache.get(segHost);
+          if (allowed !== undefined) return allowed;
+
+          allowed = isAllowedHlsHostName(segHost) && areHostsInSameCluster(segHost, targetHost);
+          hostDecisionCache.set(segHost, allowed);
+          if (!allowed) {
+            console.warn("[hls-proxy] Rejected host outside provider cluster:", JSON.stringify({ segHost, targetHost }));
+          }
+          return allowed;
+        }
+
+        const lines = text.split("\n");
+        const rewrittenLines = [];
+        let pendingTagLines = [];
+        let validMediaEntryCount = 0;
+
+        for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed) return line;
-
-          // Rewrite URI attributes in tags like #EXT-X-MEDIA (audio tracks) and #EXT-X-I-FRAME-STREAM-INF
-          if (trimmed.startsWith("#")) {
-            if (trimmed.includes("URI=")) {
-              return trimmed.replace(/URI=["']([^"']+)["']/g, (m, rawUri) => {
-                try {
-                  const segUrl = new URL(rawUri, baseUrl);
-                  let proxySegUrl = `${workerBase}?url=${encodeURIComponent(segUrl.toString())}` +
-                    (referer ? `&referer=${encodeURIComponent(referer)}` : "") +
-                    (origin ? `&origin=${encodeURIComponent(origin)}` : "");
-                  return `URI="${proxySegUrl}"`;
-                } catch {
-                  return m;
-                }
-              });
-            }
-            return line;
+          if (!trimmed) {
+            rewrittenLines.push(line);
+            continue;
           }
 
-          // Rewrite relative or absolute segment or variant playlist URLs through our proxy
+          // Rewrite URI attributes in tags like #EXT-X-KEY (encryption) and #EXT-X-MEDIA
+          if (trimmed.startsWith("#")) {
+            if (trimmed.includes("URI=")) {
+              const match = trimmed.match(/URI=["']([^"']+)["']/);
+              if (match) {
+                try {
+                  const segUrl = new URL(match[1], baseUrl);
+                  const isKeyLine = trimmed.includes("#EXT-X-KEY");
+                  const segHost = segUrl.hostname.toLowerCase();
+                  if (!checkHostAllowedAndClustered(segHost) || !hasAllowedHlsMediaExtension(segUrl.pathname.toLowerCase())) {
+                    if (isKeyLine) {
+                      console.warn("[hls-proxy] Dropped untrusted #EXT-X-KEY line:", JSON.stringify({
+                        keyHost: segHost,
+                        parentHost: targetHost,
+                        rawLine: trimmed,
+                      }));
+                    }
+                    continue; // Drop line
+                  }
+                  const params = new URLSearchParams({
+                    url: segUrl.toString(),
+                    parent: rootParent,
+                    exp: String(exp),
+                    sig: sig || "",
+                  });
+                  if (referer) params.set("referer", referer);
+                  if (origin)  params.set("origin", origin);
+                  rewrittenLines.push(trimmed.replace(match[0], `URI="${workerBase}?${params.toString()}"`));
+                  continue;
+                } catch {
+                  if (trimmed.includes("#EXT-X-KEY")) {
+                    console.warn("[hls-proxy] Dropped malformed #EXT-X-KEY line:", trimmed);
+                  }
+                  continue;
+                }
+              }
+            }
+
+            // Buffer preceding metadata tags that describe the next URL entry (#EXTINF, #EXT-X-STREAM-INF, #EXT-X-BYTERANGE)
+            if (
+              trimmed.startsWith("#EXTINF:") ||
+              trimmed.startsWith("#EXT-X-STREAM-INF:") ||
+              trimmed.startsWith("#EXT-X-BYTERANGE:")
+            ) {
+              pendingTagLines.push(line);
+              continue;
+            }
+
+            // Flush any pending tag lines before standalone playlist tags
+            if (pendingTagLines.length > 0) {
+              for (const pending of pendingTagLines) rewrittenLines.push(pending);
+              pendingTagLines = [];
+            }
+            rewrittenLines.push(line);
+            continue;
+          }
+
+          // Non-tag line: this is a segment or variant playlist URL
           let segUrl;
           try {
             segUrl = new URL(trimmed, baseUrl);
           } catch {
-            return line;
+            // Drop malformed URL and its preceding metadata tag
+            pendingTagLines = [];
+            continue;
           }
-          const proxySegUrl = `${workerBase}?url=${encodeURIComponent(segUrl.toString())}` +
-            (referer ? `&referer=${encodeURIComponent(referer)}` : "") +
-            (origin ? `&origin=${encodeURIComponent(origin)}` : "");
-          return proxySegUrl;
-        }).join("\n");
+
+          const segHost = segUrl.hostname.toLowerCase();
+          if (!checkHostAllowedAndClustered(segHost) || !hasAllowedHlsMediaExtension(segUrl.pathname.toLowerCase())) {
+            // Drop disallowed URL and also drop its preceding metadata tags (#EXTINF / #EXT-X-STREAM-INF)
+            console.warn("[hls-proxy] Dropped media URL and preceding tags:", JSON.stringify({
+              droppedHost: segHost,
+              droppedPath: segUrl.pathname,
+              parentHost: targetHost,
+            }));
+            pendingTagLines = [];
+            continue;
+          }
+
+          // URL is valid and allowlisted: flush its preceding metadata tags and output the rewritten URL
+          validMediaEntryCount++;
+          if (pendingTagLines.length > 0) {
+            for (const pending of pendingTagLines) rewrittenLines.push(pending);
+            pendingTagLines = [];
+          }
+
+          const params = new URLSearchParams({
+            url: segUrl.toString(),
+            parent: rootParent,
+            exp: String(exp),
+            sig: sig || "",
+          });
+          if (referer) params.set("referer", referer);
+          if (origin)  params.set("origin", origin);
+          rewrittenLines.push(`${workerBase}?${params.toString()}`);
+        }
+
+        // If the playlist had media lines but all were dropped, return clear 502 error
+        if (validMediaEntryCount === 0 && lines.some((l) => l.trim().startsWith("#EXTINF") || l.trim().startsWith("#EXT-X-STREAM-INF"))) {
+          return new Response(JSON.stringify({ error: "No valid streams found in playlist; all segments were dropped" }), {
+            status: 502,
+            headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+          });
+        }
+
+        const rewritten = rewrittenLines.join("\n");
 
         responseHeaders.set("Content-Type", "application/vnd.apple.mpegurl");
         responseHeaders.delete("Content-Length");
+        // Playlists contain time-sensitive tokens: never cache
+        responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate");
+        responseHeaders.set("Pragma", "no-cache");
         return new Response(rewritten, { status: res.status, headers: responseHeaders });
       }
 

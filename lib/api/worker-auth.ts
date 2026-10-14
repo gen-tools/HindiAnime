@@ -1,6 +1,6 @@
 import "server-only";
+import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 
-const WORKER_HOST = "wispy-cherry-6934.sheztech.workers.dev";
 const SECRET_HEADER = "x-hindianime-proxy-secret";
 
 function getServerWorkerBaseUrl(): string {
@@ -8,20 +8,22 @@ function getServerWorkerBaseUrl(): string {
     throw new Error("Authenticated Cloudflare Worker requests are server-only.");
   }
 
-  const rawUrl = process.env.CF_PROXY_URL?.trim();
+  const rawUrl = (process.env.CF_PROXY_URL || "").trim();
   if (!rawUrl) {
-    console.error("[worker-auth] CF_PROXY_URL is missing; protected Worker request was not sent.");
-    throw new Error("CF_PROXY_URL is required for authenticated Worker requests.");
+    // No CF_PROXY_URL set — fall back to the default Worker base so the server
+    // can still make unauthenticated requests. Log a warning.
+    console.warn("[worker-auth] CF_PROXY_URL is not set; falling back to DEFAULT_WORKER_BASE_URL without secret.");
+    return DEFAULT_WORKER_BASE_URL;
   }
 
   try {
-    const url = new URL(rawUrl);
+    const url = new URL(rawUrl.split("?")[0].replace(/\/+$/, ""));
     const validQuery =
       url.search === "" ||
       (url.searchParams.size === 1 && url.searchParams.has("url") && url.searchParams.get("url") === "");
     if (
       url.protocol !== "https:" ||
-      url.hostname !== WORKER_HOST ||
+      !ALLOWED_WORKER_HOSTS.has(url.hostname) ||
       url.username ||
       url.password ||
       url.pathname !== "/" ||
@@ -32,8 +34,8 @@ function getServerWorkerBaseUrl(): string {
     }
     return url.origin;
   } catch {
-    console.error("[worker-auth] CF_PROXY_URL must target the configured HTTPS Worker; protected Worker request was not sent.");
-    throw new Error("CF_PROXY_URL is not configured for the authenticated Worker.");
+    console.error("[worker-auth] CF_PROXY_URL must target an allowed Worker hostname; protected Worker request was not sent.");
+    throw new Error("CF_PROXY_URL is not configured for an authenticated Worker.");
   }
 }
 

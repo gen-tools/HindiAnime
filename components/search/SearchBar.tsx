@@ -7,7 +7,6 @@ import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { cleanAnimeSlug } from "@/lib/api/client";
-import { searchAnimeInBrowser } from "@/lib/api/browser-source";
 import type { Anime } from "@/types/anime";
 
 interface Suggestion {
@@ -41,7 +40,7 @@ export function SearchBar({
   const containerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const debouncedValue = useDebounce(value, 400);
+  const debouncedValue = useDebounce(value, 600);
 
   useEffect(() => {
     setValue(defaultValue);
@@ -50,7 +49,7 @@ export function SearchBar({
   // Fetch suggestions whenever debounced value changes
   useEffect(() => {
     const q = debouncedValue.trim();
-    if (q.length < 2) {
+    if (q.length < 3) {
       abortRef.current?.abort();
       abortRef.current = null;
       setSuggestions([]);
@@ -70,9 +69,14 @@ export function SearchBar({
     setLoading(true);
     const loadSuggestions = async () => {
       try {
-        const data = await searchAnimeInBrowser(q, 1, controller.signal);
+        const res = await fetch(`/api/suggestions?q=${encodeURIComponent(q)}`, {
+          signal: controller.signal,
+        });
         if (controller.signal.aborted || abortRef.current !== controller) return;
-        setSuggestions(data.items.slice(0, 8).map((item: Anime) => ({
+        if (!res.ok) return;
+        const data = await res.json() as { results?: Anime[] };
+        if (controller.signal.aborted || abortRef.current !== controller) return;
+        setSuggestions((data.results ?? []).slice(0, 8).map((item: Anime) => ({
           slug: item.slug,
           title: item.title,
           poster: item.poster,

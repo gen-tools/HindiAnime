@@ -13,8 +13,7 @@ import {
   PictureInPicture2,
 } from "lucide-react";
 import { StreamItem } from "@/types/api";
-import { cleanAnimeSlug, isValidEmbedUrl } from "@/lib/api/client";
-import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
+import { isValidEmbedUrl } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -57,7 +56,10 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     let isWorkerProxy = false;
     try {
       const streamHost = new URL(streamUrl).hostname.toLowerCase();
-      isWorkerProxy = streamHost === "proxy.hindi-anime.com" || streamHost.endsWith(".workers.dev");
+      isWorkerProxy =
+        streamHost === "proxy.hindi-anime.com" ||
+        streamHost === "cloud.hindi-anime.com" ||
+        streamHost.endsWith(".workers.dev");
     } catch {
       // Relative application API URLs are handled separately below.
     }
@@ -115,45 +117,8 @@ function abortPlaybackRequest(controller: AbortController | null, message: strin
   controller.abort(new DOMException(message, "AbortError"));
 }
 
-// CF Worker /stream endpoint — bypasses Vercel WAF which blocks /api/stream-proxy on production.
-const CF_WORKER_BASE = (
-  process.env.NEXT_PUBLIC_CF_PROXY_URL || "https://wispy-cherry-6934.sheztech.workers.dev"
-)
-  .replace(/\/\?url=$/, "")
-  .replace(/\?url=$/, "")
-  .replace(/\/$/, "");
-const CF_GENERAL_PROXY_URL = `${CF_WORKER_BASE}/?url=`;
-const CF_STREAM_URL = `${CF_WORKER_BASE}/stream`;
-
-async function fetchAnimeSaltHtml(
-  slug: string,
-  season: number,
-  episode: number,
-  signal: AbortSignal,
-  isMovie: boolean
-): Promise<{ targetUrl: string; html: string } | null> {
-  const cleanId = cleanAnimeSlug(slug) || slug;
-  const targetUrls = isMovie
-    ? [buildAnimeSaltMovieUrl(cleanId)]
-    : buildAnimeSaltEpisodeCandidates(cleanId, season, episode);
-  for (const targetUrl of targetUrls) {
-    try {
-      const response = await fetch(`${CF_GENERAL_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`, {
-        cache: "no-store",
-        signal,
-      });
-      if (!response.ok) continue;
-      const html = await response.text();
-      if (html.length <= 512 * 1024 && isValidAnimeSaltHtml(html)) {
-        return { targetUrl, html };
-      }
-    } catch {
-      if (signal.aborted) return null;
-      // Try the next existing AnimeSalt episode URL candidate.
-    }
-  }
-  return null;
-}
+// All stream resolution is done server-side via /api/stream-proxy.
+// The client never calls the CF Worker directly.
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -298,23 +263,20 @@ export function StreamPlayer({
     }
 
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
-    const endpoints = [`/api/stream-proxy${qs}`, `${CF_STREAM_URL}${qs}`];
 
     try {
+      // All scraping happens server-side. The browser only calls the Next.js
+      // route handler — the Worker is never called from the client.
       let data: { results?: unknown[] } | null = null;
 
-      for (const endpoint of endpoints) {
-        try {
-          const res = await fetch(endpoint, { signal: controller.signal });
-          if (!res.ok) continue;
-
+      try {
+        const res = await fetch(`/api/stream-proxy${qs}`, { signal: controller.signal });
+        if (res.ok) {
           const text = await res.text();
           let parsedJson: { results?: unknown[] } | null = null;
           try {
             const obj = JSON.parse(text);
-            if (Array.isArray(obj?.results) && obj.results.length > 0) {
-              parsedJson = obj;
-            }
+            if (Array.isArray(obj?.results) && obj.results.length > 0) parsedJson = obj;
           } catch {
             // Not a single JSON document; parse as NDJSON lines below
           }
@@ -324,9 +286,7 @@ export function StreamPlayer({
             for (const line of lines) {
               try {
                 const obj = JSON.parse(line);
-                if (Array.isArray(obj?.results) && obj.results.length > 0) {
-                  parsedJson = obj;
-                }
+                if (Array.isArray(obj?.results) && obj.results.length > 0) parsedJson = obj;
               } catch {
                 // ignore unparseable line
               }
@@ -335,33 +295,10 @@ export function StreamPlayer({
 
           if (parsedJson && Array.isArray(parsedJson.results) && parsedJson.results.length > 0) {
             data = parsedJson;
-            break;
           }
-        } catch (error) {
-          if (isAbortError(error) || controller.signal.aborted) return;
         }
-      }
-
-      if (!isCurrentRequest()) return;
-      if (!data) {
-        try {
-          const res = await fetch(`${CF_STREAM_URL}${qs}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          if (!isCurrentRequest()) return;
-          if (res.ok) {
-            const text = await res.text();
-            try {
-              const json = JSON.parse(text);
-              if (Array.isArray(json?.results) && json.results.length > 0) data = json;
-            } catch {
-              // ignore
-            }
-          }
-        } catch (error) {
-          if (isAbortError(error) || controller.signal.aborted) return;
-        }
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) return;
       }
 
       if (!isCurrentRequest()) return;

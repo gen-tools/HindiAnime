@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { NoResultsState } from "@/components/search/SearchStates";
 import { Pagination } from "@/components/ui/Pagination";
-import { searchAnimeInBrowser } from "@/lib/api/browser-source";
 import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
 
@@ -50,8 +49,11 @@ export function BrowserSearchResults({
 
     const controller = new AbortController();
     setLoading(true);
-    searchAnimeInBrowser(query, page, controller.signal)
-      .then(({ items: liveItems, totalPages: liveTotalPages }) => {
+    fetch(`/api/suggestions?q=${encodeURIComponent(query)}&page=${page}`, {
+      signal: controller.signal,
+    })
+      .then((res) => res.ok ? res.json() as Promise<{ results?: Anime[] }> : Promise.resolve({ results: [] as Anime[] }))
+      .then(({ results: liveItems = [] }) => {
         const filtered = liveItems.filter((item) =>
           (!filters.genre || item.genres.includes(filters.genre)) &&
           (!filters.language || item.languages.includes(filters.language as never)) &&
@@ -59,7 +61,7 @@ export function BrowserSearchResults({
           (!filters.type || item.type === filters.type)
         );
         setItems(filtered);
-        setTotalPages(liveTotalPages);
+        setTotalPages(1);
       })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name !== "AbortError") {

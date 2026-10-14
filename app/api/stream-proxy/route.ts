@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { createHmac } from "crypto";
 import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
-import { DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
+import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import { buildServerWorkerProxyUrl, getServerWorkerHeaders } from "@/lib/api/worker-auth";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
@@ -47,21 +48,20 @@ const rawCfProxy = (
 
 /**
  * Base URL for the Cloudflare Worker endpoint.
+ * Accepted hostnames: wispy-cherry-6934.sheztech.workers.dev (legacy)
+ * and cloud.hindi-anime.com (new custom domain).
  * Robustly extracted using URL().origin so trailing /?url=, newlines,
  * or slash variants in the env var never produce a malformed proxy URL.
  */
 function getCfWorkerBase(): string {
   try {
-    // The env var may be the full proxy URL like:
-    //   https://wispy-cherry-6934.sheztech.workers.dev/?url=
-    // or just the base:
-    //   https://wispy-cherry-6934.sheztech.workers.dev
     const parsed = new URL(rawCfProxy.split("?")[0].replace(/\/+$/, ""));
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    // Absolute fallback
-    return DEFAULT_WORKER_BASE_URL;
-  }
+    if (ALLOWED_WORKER_HOSTS.has(parsed.hostname)) {
+      return `${parsed.protocol}//${parsed.host}`;
+    }
+  } catch { /* fall through */ }
+  // Absolute fallback
+  return DEFAULT_WORKER_BASE_URL;
 }
 const CF_WORKER_BASE = getCfWorkerBase();
 
@@ -439,10 +439,23 @@ function buildTokoItem(s: TokoSource): StreamItem {
 
   let hlsProxyUrl: string | undefined;
   if (isDirectStream) {
-    const params = new URLSearchParams({ url: streamUrl });
-    if (referer) params.set("referer", referer);
-    if (origin)  params.set("origin",  origin);
-    hlsProxyUrl = `${CF_WORKER_BASE}/hls-proxy?${params.toString()}`;
+    const secret = process.env.CF_PROXY_SHARED_SECRET;
+    if (!secret) {
+      console.error("[stream-proxy] CF_PROXY_SHARED_SECRET is not configured; refusing to issue unsigned proxy link.");
+    } else {
+      const exp = Math.floor(Date.now() / 1000) + 7200; // 2 hour window
+      const payload = `${streamUrl}:${referer || ""}:${origin || ""}:${exp}`;
+      const sig = createHmac("sha256", secret).update(payload).digest("hex");
+
+      const params = new URLSearchParams({
+        url: streamUrl,
+        exp: String(exp),
+        sig,
+      });
+      if (referer) params.set("referer", referer);
+      if (origin)  params.set("origin",  origin);
+      hlsProxyUrl = `${CF_WORKER_BASE}/hls-proxy?${params.toString()}`;
+    }
   }
 
   // Playable embed fallback if direct stream fails:
