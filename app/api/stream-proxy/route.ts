@@ -151,19 +151,6 @@ async function readTokoResponse(
 ): Promise<{ rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null> {
   const rawSources: TokoSource[] = [];
   const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-
-  if (!contentType.includes("text/event-stream")) {
-    const text = await response.text();
-    if (text.includes("<!DOCTYPE html") || text.toLowerCase().includes("challenge")) return null;
-    const data = JSON.parse(text) as TokoStreamResponse;
-    for (const source of data.sources || []) onSource?.(source);
-    return { rawSources: data.sources || [], byLanguage: data.byLanguage, complete: true };
-  }
-
-  if (!response.body) return null;
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let pending = "";
   let complete = false;
   let byLanguage: Record<string, unknown> | undefined;
 
@@ -176,20 +163,46 @@ async function readTokoResponse(
     }
     if (!dataLines.length) return;
 
-    const payload = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
-    if (eventName === "source") {
-      const source = payload as unknown as TokoSource;
-      if (typeof source.url === "string" && source.url.trim()) {
-        rawSources.push(source);
-        onSource?.(source);
+    try {
+      const payload = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+      if (eventName === "source") {
+        const source = payload as unknown as TokoSource;
+        if (typeof source.url === "string" && source.url.trim()) {
+          rawSources.push(source);
+          onSource?.(source);
+        }
+      } else if (eventName === "done") {
+        complete = true;
+        if (payload.byLanguage && typeof payload.byLanguage === "object") {
+          byLanguage = payload.byLanguage as Record<string, unknown>;
+        }
       }
-    } else if (eventName === "done") {
-      complete = true;
-      if (payload.byLanguage && typeof payload.byLanguage === "object") {
-        byLanguage = payload.byLanguage as Record<string, unknown>;
-      }
+    } catch {
+      // Ignore single malformed frame
     }
   };
+
+  if (!contentType.includes("text/event-stream")) {
+    const text = await response.text();
+    if (text.includes("<!DOCTYPE html") || text.toLowerCase().includes("challenge")) return null;
+    if (text.includes("event:") || text.includes("data:")) {
+      const frames = text.split(/\r?\n\r?\n/);
+      for (const frame of frames) processEvent(frame);
+      return { rawSources, byLanguage, complete: complete || rawSources.length > 0 };
+    }
+    try {
+      const data = JSON.parse(text) as TokoStreamResponse;
+      for (const source of data.sources || []) onSource?.(source);
+      return { rawSources: data.sources || [], byLanguage: data.byLanguage, complete: true };
+    } catch {
+      return null;
+    }
+  }
+
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
 
   try {
     while (true) {
@@ -207,7 +220,7 @@ async function readTokoResponse(
   }
 
   if (!complete && rawSources.length === 0) return null;
-  return { rawSources, byLanguage, complete };
+  return { rawSources, byLanguage, complete: complete || rawSources.length > 0 };
 }
 
 function isBlockedSource(s: TokoSource): boolean {
@@ -328,34 +341,28 @@ async function fetchTokoSources(
     }
   }
 
-  // 2. Try proxy fetch if direct fetch failed
-  if (!data) {
+  // 2. Try proxy fetch if direct fetch failed or returned no sources
+  if (!data || data.rawSources.length === 0) {
     if (!workerSecret) {
       console.error("[stream-proxy] Worker Toko fallback skipped: server proxy secret is not configured");
     } else {
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
-        try {
-          const res = await fetch(proxyUrl, {
-            signal: controller.signal,
-            cache: "no-store",
-            headers: {
-              ...DEFAULT_HEADERS,
-              "x-hindianime-proxy-secret": workerSecret,
-            },
-          });
-          if (res.ok) {
-            const text = await res.text();
-            if (!text.includes("<!DOCTYPE html") && !text.includes("challenge")) {
-              data = JSON.parse(text) as unknown as { rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean };
-            }
-          }
-        } finally {
-          clearTimeout(timer);
-        }
+        data = await fetchSources(proxyUrl, true);
+      } catch (err) {
+        console.error("[stream-proxy] Worker Toko fallback error:", err);
+      }
+    }
+  }
+
+  // 3. Fallback: try stream=0 via Worker proxy if still empty
+  if (!data || data.rawSources.length === 0) {
+    if (workerSecret) {
+      try {
+        const stream0Url = `${directUrl}&stream=0`;
+        const proxyStream0Url = `${rawCfProxy}${encodeURIComponent(stream0Url)}`;
+        data = await fetchSources(proxyStream0Url, true);
       } catch {
-        // proxy error
+        // stream=0 fallback error
       }
     }
   }

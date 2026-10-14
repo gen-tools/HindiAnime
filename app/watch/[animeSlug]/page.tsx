@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
 import { WatchTracker } from "@/components/player/WatchTracker";
@@ -93,7 +93,9 @@ export default async function MovieWatchPage({
       mockAnime?.type !== "TV" &&
       Boolean(matchingMovie?.title));
 
-  if (!isMovie) notFound();
+  if (!isMovie) {
+    redirect(`/watch/${slug}/ep-1-1`);
+  }
 
   const title =
     matchingMovie?.title ||

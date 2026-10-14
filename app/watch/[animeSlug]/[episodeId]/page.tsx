@@ -296,13 +296,15 @@ export default async function WatchPage({
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
   // isMovieRoute (episodeId === 'movie') is the strongest signal — always a movie.
-  // directData.isMovie is next. Fallback: no episodes + movie metadata only.
+  // Only classify as movie if explicitly a movie route or confirmed movie type with no series episodes
   const isMovie =
     isMovieRoute ||
-    Boolean(directData?.isMovie) ||
+    (Boolean(directData?.isMovie) && mockAnime?.type !== "TV" && episodeId === "movie") ||
     (!hasSeriesEpisodes &&
       !hasMultipleSeasons &&
-      (Boolean(movieData?.title) && !animeData?.title));
+      episodeId === "movie" &&
+      Boolean(movieData?.title) &&
+      !animeData?.title);
 
   let anime: Anime = createFallbackAnime(cleanSlug);
   if (isMovie && movieData?.title) {

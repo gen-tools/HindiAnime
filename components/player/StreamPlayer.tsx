@@ -302,28 +302,43 @@ export function StreamPlayer({
 
     try {
       let data: { results?: unknown[] } | null = null;
-      let clientError = false;
 
       for (const endpoint of endpoints) {
         try {
-          const res = await fetch(endpoint);
-          // A 4xx is a final source-resolution result, not a transient failure.
-          // In particular, do not send the same request through another proxy
-          // or automatically repeat it after the Worker/API has rejected it.
-          if (res.status >= 400 && res.status < 500) {
-            clientError = true;
-            break;
-          }
-          if (res.ok) {
-            const json = await res.json();
-            if (Array.isArray(json?.results) && json.results.length > 0) {
-              data = json;
-              break;
+          const res = await fetch(endpoint, { signal: controller.signal });
+          if (!res.ok) continue;
+
+          const text = await res.text();
+          let parsedJson: { results?: unknown[] } | null = null;
+          try {
+            const obj = JSON.parse(text);
+            if (Array.isArray(obj?.results) && obj.results.length > 0) {
+              parsedJson = obj;
             }
+          } catch {
+            // Not a single JSON document; parse as NDJSON lines below
+          }
+
+          if (!parsedJson) {
+            const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+            for (const line of lines) {
+              try {
+                const obj = JSON.parse(line);
+                if (Array.isArray(obj?.results) && obj.results.length > 0) {
+                  parsedJson = obj;
+                }
+              } catch {
+                // ignore unparseable line
+              }
+            }
+          }
+
+          if (parsedJson && Array.isArray(parsedJson.results) && parsedJson.results.length > 0) {
+            data = parsedJson;
+            break;
           }
         } catch (error) {
           if (isAbortError(error) || controller.signal.aborted) return;
-          /* try the existing Worker stream fallback below */
         }
       }
 
@@ -336,19 +351,23 @@ export function StreamPlayer({
           });
           if (!isCurrentRequest()) return;
           if (res.ok) {
-            const json = await res.json();
-            if (Array.isArray(json?.results) && json.results.length > 0) data = json;
+            const text = await res.text();
+            try {
+              const json = JSON.parse(text);
+              if (Array.isArray(json?.results) && json.results.length > 0) data = json;
+            } catch {
+              // ignore
+            }
           }
         } catch (error) {
           if (isAbortError(error) || controller.signal.aborted) return;
-          /* try next endpoint */
         }
       }
 
       if (!isCurrentRequest()) return;
       const parsed = parseServers((data?.results ?? []) as import("@/types/api").StreamItem[]);
       if (parsed.length === 0) {
-        if (!isRetry && !clientError) {
+        if (!isRetry) {
           retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
           return;
         }
