@@ -56,15 +56,31 @@ const rawCfProxy = (
  */
 function getCfWorkerBase(): string {
   try {
-    const parsed = new URL(rawCfProxy.split("?")[0].replace(/\/+$/, ""));
-    if (ALLOWED_WORKER_HOSTS.has(parsed.hostname)) {
-      return `${parsed.protocol}//${parsed.host}`;
+    const parsed = new URL(rawCfProxy);
+    const allowedQuery = parsed.search === "" ||
+      (parsed.searchParams.size === 1 && parsed.searchParams.has("url") && parsed.searchParams.get("url") === "");
+    if (
+      parsed.protocol === "https:" &&
+      ALLOWED_WORKER_HOSTS.has(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password &&
+      parsed.pathname === "/" &&
+      allowedQuery &&
+      !parsed.hash
+    ) {
+      return parsed.origin;
     }
   } catch { /* fall through */ }
   // Absolute fallback
   return DEFAULT_WORKER_BASE_URL;
 }
 const CF_WORKER_BASE = getCfWorkerBase();
+
+function buildCfProxyUrl(targetUrl: string): string {
+  const proxyUrl = new URL("/", CF_WORKER_BASE);
+  proxyUrl.searchParams.set("url", targetUrl);
+  return proxyUrl.toString();
+}
 
 /**
  * Generate title search variants for Toko.
@@ -297,7 +313,7 @@ async function fetchTokoSources(
   // Omit stream=0 to use the backend's existing progressive SSE response.
 
   const directUrl = `${TOKO_API_URL}/api/v3/toko/stream?${params.toString()}`;
-  const proxyUrl = `${rawCfProxy}${encodeURIComponent(directUrl)}`;
+  const proxyUrl = buildCfProxyUrl(directUrl);
   const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
 
   let data: { rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null = null;
@@ -360,7 +376,7 @@ async function fetchTokoSources(
     if (workerSecret) {
       try {
         const stream0Url = `${directUrl}&stream=0`;
-        const proxyStream0Url = `${rawCfProxy}${encodeURIComponent(stream0Url)}`;
+        const proxyStream0Url = buildCfProxyUrl(stream0Url);
         data = await fetchSources(proxyStream0Url, true);
       } catch {
         // stream=0 fallback error
@@ -661,7 +677,7 @@ async function fetchAnimeSaltSources(
   // Retrieve AnimeSalt through the general Worker proxy. Use direct fallback
   // only for network/server failures; a 4xx on a candidate moves to the next candidate.
   for (const targetUrl of new Set(candidates)) {
-    const proxyUrl = `${rawCfProxy}${encodeURIComponent(targetUrl)}&diag1=1`;
+    const proxyUrl = buildCfProxyUrl(targetUrl);
     // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
     const fetchUrls: Array<string | null> = browserResult ? [null] : [proxyUrl];
 
@@ -686,7 +702,9 @@ async function fetchAnimeSaltSources(
           if (!passedResponseChecks) continue;
         } else {
           const controller = new AbortController();
-          timer = setTimeout(() => controller.abort(), 6000);
+          // The Worker allows up to 10 seconds for upstream AnimeSalt fetches.
+          // Leave enough time for the Worker response to return to Vercel too.
+          timer = setTimeout(() => controller.abort(), 12_000);
           const res = await fetch(urlToFetch, {
             signal: controller.signal,
             cache: "no-store",
