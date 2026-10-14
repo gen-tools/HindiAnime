@@ -540,16 +540,25 @@ function assembleServers(
     if (saltHindi) add(saltHindi, "Server 2 · 🇮🇳 Hindi (Abyss)");
   }
 
-  // ── Slot 3: Toko Hindi Dub embed #1 (Vidmoly) ────────────────────────────
-  // User requested: remove rubystm and cloudy from toko, use Toko's 2 other embed servers (vidmoly & abyssplayer)
-  const s3Vidmoly = rawSources.find(
-    (s) => !isBlockedSource(s) && isHindi(s) && (s.url || "").includes("vidmoly.net") && !usedUrls.has(s.url || "")
+  // ── Slot 3: RubyVidHub Hindi Dub, with a non-Vidmoly fallback ────────────
+  const isRubyVidHub = (s: TokoSource) => {
+    const provider = `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""}`.toLowerCase();
+    let host = "";
+    try { host = new URL(s.url).hostname.toLowerCase(); } catch { /* invalid URLs are filtered elsewhere */ }
+    return host === "rubyvidhub.com" || host.endsWith(".rubyvidhub.com") || provider.includes("rubyvidhub");
+  };
+  const isVidmoly = (s: TokoSource) => {
+    const provider = `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""}`.toLowerCase();
+    return /vidmoly|vmnow\.online|vmpx\.online|vmeas\.cloud/.test(`${provider} ${s.url || ""}`.toLowerCase());
+  };
+  const rubyVidHub = rawSources.find(
+    (s) => !isBlockedSource(s) && isHindi(s) && isRubyVidHub(s) && !usedUrls.has(s.url || "")
   );
-  const s3 = s3Vidmoly || rawSources.find(
-    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
+  const s3 = rubyVidHub || rawSources.find(
+    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !isVidmoly(s) && !usedUrls.has(s.url || "")
   );
   if (s3) {
-    add(buildTokoItem(s3), "Server 3 · 🇮🇳 Vidmoly");
+    add(buildTokoItem(s3), rubyVidHub ? "Server 3 · 🇮🇳 RubyVidHub" : "Server 3 · 🇮🇳 Hindi Dub");
   } else {
     const saltHindi = animeSaltItems.find((s) => isHindi(s) && !usedUrls.has(s.embed));
     if (saltHindi) add(saltHindi, "Server 3 · 🇮🇳 Hindi (Abyss)");
@@ -788,7 +797,7 @@ async function buildStreamResponse(
   cleanId: string,
   season: string,
   ep: string,
-  browserResult?: { targetUrl: string; html: string } | null
+  browserResult?: { targetUrl: string; html: string; isMovie?: boolean } | null
 ) {
   const [{ rawSources: tokoRaw, byLanguage }, animeSaltItems] = await Promise.all([
     fetchTokoSources(cleanId, season, ep),

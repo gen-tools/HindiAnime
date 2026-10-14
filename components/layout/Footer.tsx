@@ -26,7 +26,7 @@ export function Footer() {
         <div className="col-span-2 lg:col-span-2">
           <Logo />
           <p className="mt-4 max-w-xs text-sm leading-relaxed text-text-muted">
-            Watch Hindi dubbed anime, Tamil dubbed anime, and Telugu dubbed anime online — all in one place.
+           Watch Hindi, Tamil, Telugu, English, and Japanese anime online for free on HindiAnime. Stream dubbed and subbed anime series and movies, browse by genre, and catch the latest episodes anytime.
           </p>
         </div>
 

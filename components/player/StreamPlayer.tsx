@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { StreamItem } from "@/types/api";
 import { isValidEmbedUrl } from "@/lib/api/client";
+import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
+import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl } from "@/lib/animesalt-stream";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -117,8 +119,34 @@ function abortPlaybackRequest(controller: AbortController | null, message: strin
   controller.abort(new DOMException(message, "AbortError"));
 }
 
-// All stream resolution is done server-side via /api/stream-proxy.
-// The client never calls the CF Worker directly.
+function parseStreamResponse(text: string): { results?: StreamItem[] } | null {
+  try {
+    const parsed = JSON.parse(text) as { results?: StreamItem[] };
+    if (Array.isArray(parsed.results)) return parsed;
+  } catch {
+    // The POST stream can contain multiple newline-delimited snapshots.
+  }
+  let latest: { results?: StreamItem[] } | null = null;
+  for (const line of text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+    try {
+      const parsed = JSON.parse(line) as { results?: StreamItem[] };
+      if (Array.isArray(parsed.results)) latest = parsed;
+    } catch {
+      // Ignore incomplete or non-JSON stream lines.
+    }
+  }
+  return latest;
+}
+
+function hasAnimeSaltResult(data: { results?: StreamItem[] } | null): boolean {
+  return Boolean(data?.results?.some((item) =>
+    /animesalt|mystream|abyss/i.test(`${item.server || ""} ${item.label || ""} ${item.embed || ""}`)
+  ));
+}
+
+// Stream aggregation runs through /api/stream-proxy. If its server-side
+// AnimeSalt fetch is missing, the browser fetches AnimeSalt through the public
+// Worker proxy and submits the HTML back to that same route for parsing.
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -265,44 +293,81 @@ export function StreamPlayer({
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
 
     try {
-      // All scraping happens server-side. The browser only calls the Next.js
-      // route handler — the Worker is never called from the client.
-      let data: { results?: unknown[] } | null = null;
+      // Start with the server-side aggregator, then use the browser Worker
+      // fallback below if the server response has no AnimeSalt source.
+      let data: { results?: StreamItem[] } | null = null;
 
       try {
         const res = await fetch(`/api/stream-proxy${qs}`, { signal: controller.signal });
         if (res.ok) {
-          const text = await res.text();
-          let parsedJson: { results?: unknown[] } | null = null;
-          try {
-            const obj = JSON.parse(text);
-            if (Array.isArray(obj?.results) && obj.results.length > 0) parsedJson = obj;
-          } catch {
-            // Not a single JSON document; parse as NDJSON lines below
-          }
-
-          if (!parsedJson) {
-            const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-            for (const line of lines) {
-              try {
-                const obj = JSON.parse(line);
-                if (Array.isArray(obj?.results) && obj.results.length > 0) parsedJson = obj;
-              } catch {
-                // ignore unparseable line
-              }
-            }
-          }
-
-          if (parsedJson && Array.isArray(parsedJson.results) && parsedJson.results.length > 0) {
-            data = parsedJson;
-          }
+          data = parseStreamResponse(await res.text());
         }
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;
       }
 
+      // Production server egress can fail to retrieve AnimeSalt while the same
+      // Worker endpoint is reachable from the viewer's browser. Use the existing
+      // POST route to parse that browser-fetched HTML and merge it with Toko.
       if (!isCurrentRequest()) return;
-      const parsed = parseServers((data?.results ?? []) as import("@/types/api").StreamItem[]);
+      if (!hasAnimeSaltResult(data)) {
+        const configuredWorkerUrl = (process.env.NEXT_PUBLIC_CF_PROXY_URL || DEFAULT_WORKER_BASE_URL).trim();
+        let workerOrigin: string | null = null;
+        try {
+          const parsed = new URL(configuredWorkerUrl.split("?")[0].replace(/\/+$/, ""));
+          if (parsed.protocol === "https:" && ALLOWED_WORKER_HOSTS.has(parsed.hostname)) workerOrigin = parsed.origin;
+        } catch {
+          // Keep the initial server-side results if public Worker configuration is invalid.
+        }
+
+        const animeSaltTargets = isMovie
+          ? [buildAnimeSaltMovieUrl(animeSlug)]
+          : buildAnimeSaltEpisodeCandidates(animeSlug, season, episode);
+
+        if (workerOrigin) {
+          for (const targetUrl of animeSaltTargets) {
+            try {
+              const workerUrl = new URL("/", workerOrigin);
+              workerUrl.searchParams.set("url", targetUrl);
+              const htmlResponse = await fetch(workerUrl, {
+                signal: controller.signal,
+                cache: "no-store",
+                headers: { Accept: "text/html" },
+              });
+              if (!htmlResponse.ok || !(htmlResponse.headers.get("content-type") || "").toLowerCase().includes("text/html")) continue;
+
+              const animeSaltHtml = await htmlResponse.text();
+              if (new TextEncoder().encode(animeSaltHtml).byteLength > 512 * 1024) continue;
+
+              const parsedResponse = await fetch("/api/stream-proxy", {
+                method: "POST",
+                signal: controller.signal,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  id: animeSlug,
+                  season,
+                  ep: episode,
+                  isMovie,
+                  animeSaltTargetUrl: targetUrl,
+                  animeSaltHtml,
+                }),
+              });
+              if (!parsedResponse.ok) continue;
+              const parsedData = parseStreamResponse(await parsedResponse.text());
+              if (hasAnimeSaltResult(parsedData)) {
+                data = parsedData;
+                break;
+              }
+            } catch (error) {
+              if (isAbortError(error) || controller.signal.aborted) return;
+              // Try the next supported AnimeSalt episode alias.
+            }
+          }
+        }
+      }
+
+      if (!isCurrentRequest()) return;
+      const parsed = parseServers(data?.results ?? []);
       if (parsed.length === 0) {
         if (!isRetry) {
           retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
@@ -438,7 +503,7 @@ export function StreamPlayer({
                 embed={activeServer.embed}
                 title={episodeTitle}
                 reloadKey={reloadKey}
-                restrictNavigation={activeServer.label.toLowerCase().includes("mystream")}
+                restrictNavigation={/mystream|animesalt/i.test(activeServer.label)}
               />
             )}
 
@@ -677,9 +742,9 @@ function ErrorState({
 
 // ─── EmbedFrame ──────────────────────────────────────────────────────────────
 //
-// Keep provider embeds permissive except MyStream, which opts into a sandbox
-// that blocks popups and top-frame navigation while allowing scripts, media
-// presentation, and fullscreen. Other provider embeds remain unchanged.
+// Keep other provider embeds permissive. AnimeSalt embeds and MyStream use a
+// sandbox that blocks popups and top-frame navigation while allowing scripts,
+// media presentation, and fullscreen. This limits popup ads from those sources.
 // We intentionally do NOT gate player health on the iframe `onload` event:
 // cross-origin embeds initialize their video via deferred subresource/script
 // loads whose completion the parent frame cannot observe, and a short

@@ -1791,10 +1791,24 @@
       }
     }
 
-    // Slot 3 — Toko Hindi Dub Embed #1
-    const s3 = rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url));
+    // Slot 3 — prefer a real RubyVidHub Hindi embed; skip Vidmoly on fallback.
+    const isRubyVidHub = (s) => {
+      const provider = `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""}`.toLowerCase();
+      let host = "";
+      try { host = new URL(s.url).hostname.toLowerCase(); } catch { /* invalid URL */ }
+      return host === "rubyvidhub.com" || host.endsWith(".rubyvidhub.com") || provider.includes("rubyvidhub");
+    };
+    const isVidmoly = (s) => /vidmoly|vmnow\.online|vmpx\.online|vmeas\.cloud/i.test(
+      `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""} ${s.url || ""}`
+    );
+    const rubyVidHub = rawSources.find((s) =>
+      !isBlockedStreamSource(s) && s.url && isHindi(s) && isRubyVidHub(s) && !usedUrls.has(s.url)
+    );
+    const s3 = rubyVidHub || rawSources.find((s) =>
+      !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !isVidmoly(s) && !usedUrls.has(s.url)
+    );
     if (s3) {
-      addToko(s3, "Server 3 · 🇮🇳 Hindi Dub (Toko)");
+      addToko(s3, rubyVidHub ? "Server 3 · 🇮🇳 RubyVidHub" : "Server 3 · 🇮🇳 Hindi Dub (Toko)");
     } else {
       // Fallback: any remaining AnimeSalt Hindi
       const s3Salt = (animeSaltItems || []).find((s) => s.audioLanguage === "hi" && !usedUrls.has(s.embed || ""));
