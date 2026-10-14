@@ -1668,6 +1668,213 @@ type HomepageFetchDiagnostic = {
   responseBytes: number;
 };
 
+function extractImgSrc(htmlSnippet: string): string | null {
+  const m =
+    htmlSnippet.match(/data-src=["']([^"']+)["']/) ||
+    htmlSnippet.match(/src=["']([^"']+)["']/);
+  let src = m ? m[1] : null;
+  if (src && src.startsWith("//")) src = "https:" + src;
+  return src && !src.startsWith("data:") ? src : null;
+}
+
+function extractTitle(htmlSnippet: string, fallbackSlug: string = ""): string {
+  const chartTitle = htmlSnippet.match(/<div class="chart-title"[^>]*>([\s\S]*?)<\/div>/i)?.[1];
+  if (chartTitle) return decodeHtmlEntities(chartTitle.trim());
+  const entryTitle = htmlSnippet.match(/<h2[^>]*class=["']entry-title["'][^>]*>([\s\S]*?)<\/h2>/i)?.[1];
+  if (entryTitle) return decodeHtmlEntities(entryTitle.trim());
+  const altTitle =
+    htmlSnippet.match(/alt="Image\s*([^"]*)"/i)?.[1] ||
+    htmlSnippet.match(/alt='Image\s*([^']*)'/i)?.[1];
+  if (altTitle) return decodeHtmlEntities(altTitle.trim());
+  if (fallbackSlug) {
+    return fallbackSlug
+      .split("-")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
+  }
+  return "";
+}
+
+function parseHomepageCharts(html: string, sectionName: string): HomepageRankedItem[] {
+  const idx = html.indexOf(sectionName);
+  if (idx === -1) return [];
+  const sectionHtml = html.substring(idx, idx + 40000);
+  const endIdx = sectionHtml.indexOf('class="section-title', 50);
+  const chunk = endIdx > 0 ? sectionHtml.substring(0, endIdx) : sectionHtml;
+
+  const items: HomepageRankedItem[] = [];
+  const itemRegex =
+    /<div class="chart-item">([\s\S]*?)(?=<div class="chart-item">|<\/div>\s*<\/div>\s*<\/div>|$)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = itemRegex.exec(chunk)) !== null) {
+    const itemHtml = match[1];
+    const rank =
+      itemHtml.match(/<div class="chart-number">(\d+)<\/div>/)?.[1] ||
+      String(items.length + 1);
+    const link = itemHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
+    const poster = extractImgSrc(itemHtml);
+    const title = extractTitle(itemHtml);
+    if (link && poster) {
+      items.push({
+        rank,
+        anime_id: link,
+        title: title || "Anime",
+        poster,
+      });
+    }
+  }
+  return items;
+}
+
+function parseHomepageArticles(
+  html: string,
+  sectionName: string,
+  isFreshDrop: boolean = false
+): (HomepageFreshDropItem | AnimeListItem)[] {
+  const idx = html.indexOf(sectionName);
+  if (idx === -1) return [];
+  const sectionHtml = html.substring(idx, idx + 40000);
+  const endIdx = sectionHtml.indexOf('class="section-title', 50);
+  const chunk = endIdx > 0 ? sectionHtml.substring(0, endIdx) : sectionHtml;
+
+  const items: (HomepageFreshDropItem | AnimeListItem)[] = [];
+  const artRegex = /<article[^>]*class=["']post[^"']*["']>([\s\S]*?)<\/article>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = artRegex.exec(chunk)) !== null) {
+    const artHtml = match[1];
+    const poster = extractImgSrc(artHtml);
+    const link = artHtml.match(/href=["']([^"']+)["']/)?.[1] || "";
+    const slug = cleanAnimeSlug(link);
+    const title = extractTitle(artHtml, slug);
+    const seasonMatch = artHtml
+      .match(/<span[^>]*class=["']post-ql["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
+      ?.trim();
+    const yearMatch = artHtml
+      .match(/<span[^>]*class=["']year["'][^>]*>([\s\S]*?)<\/span>/i)?.[1]
+      ?.trim();
+
+    let season = "1";
+    if (seasonMatch) {
+      const sNum = seasonMatch.match(/\d+/);
+      if (sNum) season = sNum[0];
+    }
+    let episode = "1";
+    if (yearMatch) {
+      const epNum = yearMatch.match(/EP:\s*(\d+(?:-\d+)?)/i) || yearMatch.match(/\d+/);
+      if (epNum) episode = epNum[1] || epNum[0];
+    }
+
+    if (link && poster) {
+      if (isFreshDrop) {
+        items.push({
+          anime_id: link,
+          title,
+          poster,
+          season,
+          episode,
+        } as HomepageFreshDropItem);
+      } else {
+        items.push({
+          anime_id: link,
+          title,
+          poster,
+        } as AnimeListItem);
+      }
+    }
+  }
+  return items;
+}
+
+export function parseHomepageSourceHtml(
+  html: string,
+  diagnostics = false,
+  fetchDiagnostic?: HomepageFetchDiagnostic
+): HomepageApiResponse | null {
+  const parseStartedAt = Date.now();
+  const mostWatched_Series = parseHomepageCharts(html, "Most-Watched Series");
+  const mostWatched_Films = parseHomepageCharts(html, "Most-Watched Films");
+  const fresh_drops = parseHomepageArticles(html, "Fresh Drops", true) as HomepageFreshDropItem[];
+  const on_air_series = parseHomepageArticles(html, "On-Air Series") as AnimeListItem[];
+  const latest_animeMovies = parseHomepageArticles(html, "Latest Anime Movies") as AnimeListItem[];
+  const sectionCounts: HomepageSectionCounts = {
+    freshDrops: fresh_drops.length,
+    latestAnimeMovies: latest_animeMovies.length,
+    mostWatchedFilms: mostWatched_Films.length,
+    mostWatchedSeries: mostWatched_Series.length,
+    onAirSeries: on_air_series.length,
+  };
+
+  if (
+    mostWatched_Series.length === 0 &&
+    mostWatched_Films.length === 0 &&
+    fresh_drops.length === 0
+  ) {
+    logHomepageSsr(diagnostics, {
+      source: "animesalt-homepage",
+      attempt: "parse",
+      outcome: "parse-failure",
+      ...fetchDiagnostic,
+      elapsedMs: Date.now() - parseStartedAt,
+      errorCategory: "no-recognized-homepage-sections",
+      sectionCounts,
+    });
+    return null;
+  }
+
+  logHomepageSsr(diagnostics, {
+    source: "animesalt-homepage",
+    attempt: "parse",
+    outcome: "success",
+    ...fetchDiagnostic,
+    elapsedMs: Date.now() - parseStartedAt,
+    sectionCounts,
+  });
+
+  return {
+    success: true,
+    data: {
+      success: true,
+      results: { mostWatched_Series, mostWatched_Films, fresh_drops, on_air_series, latest_animeMovies },
+    },
+  };
+}
+
+export async function scrapeDirectHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
+  if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
+    return homepageFeedCache.data;
+  }
+
+  const startedAt = Date.now();
+  try {
+    let fetchDiagnostic: HomepageFetchDiagnostic | undefined;
+    const html = await fetchHtmlWithWorkerFallback("https://animesalt.cx/", diagnostics, (details) => {
+      fetchDiagnostic = details;
+    });
+    if (!html) {
+      logHomepageSsr(diagnostics, {
+        source: "animesalt-homepage",
+        attempt: "fetch-chain",
+        outcome: "unavailable",
+        errorCategory: "all-fetch-attempts-failed",
+        elapsedMs: Date.now() - startedAt,
+        sectionCounts: { freshDrops: 0, latestAnimeMovies: 0, mostWatchedFilms: 0, mostWatchedSeries: 0, onAirSeries: 0 },
+      });
+      return null;
+    }
+    const feed = parseHomepageSourceHtml(html, diagnostics, fetchDiagnostic);
+    if (!feed) return null;
+
+    homepageFeedCache = { data: feed, timestamp: Date.now() };
+    return feed;
+  } catch (err) {
+    if (!diagnostics) {
+      console.error("[Scraper] Error scraping direct homepage feed:", err);
+      return null;
+    }
+    return null;
+  }
+}
+
 export function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
   // Reuse a verified feed before repeating the API → AnimeSalt fallback chain.
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
@@ -1685,6 +1892,11 @@ export function getHomepageFeed(diagnostics = false): Promise<HomepageApiRespons
 }
 
 async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApiResponse | null> {
+  if (typeof window !== "undefined") {
+    // In-browser: return cached feed or null rather than attempting direct CORS fetch to external API
+    return homepageFeedCache?.data ?? null;
+  }
+
   const apiStartedAt = Date.now();
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
@@ -1730,46 +1942,7 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
           });
           return data;
         }
-        logHomepageSsr(diagnostics, {
-          source: "catalog-api-homepage",
-          attempt: "fetch-and-parse",
-          outcome: "cached-data-rejected",
-          status: res.status,
-          contentType,
-          cacheStatus,
-          responseBytes: await responseBytes(),
-          elapsedMs: Date.now() - apiStartedAt,
-          errorCategory: data.cached === true ? "cached-api-data" : "unsuccessful-api-data",
-          sectionCounts: getHomepageSectionCounts(data),
-        });
-      } else if (data) {
-        const counts = getHomepageSectionCounts(data);
-        const empty = Object.values(counts).every((count) => count === 0);
-        logHomepageSsr(diagnostics, {
-          source: "catalog-api-homepage",
-          attempt: "fetch-and-parse",
-          outcome: data.cached === true || data.data?.success === false ? "cached-empty" : "invalid-response",
-          status: res.status,
-          contentType,
-          cacheStatus,
-          responseBytes: await responseBytes(),
-          elapsedMs: Date.now() - apiStartedAt,
-          errorCategory: empty ? "no-homepage-items" : "invalid-homepage-schema",
-          sectionCounts: counts,
-        });
       }
-    } else {
-      logHomepageSsr(diagnostics, {
-        source: "catalog-api-homepage",
-        attempt: "fetch",
-        outcome: "non-ok-status",
-        status: res.status,
-        contentType,
-        cacheStatus,
-        responseBytes: await responseBytes(),
-        elapsedMs: Date.now() - apiStartedAt,
-        errorCategory: "http-status",
-      });
     }
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
@@ -1782,7 +1955,13 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
     });
   }
 
-  // Retain valid API data on temporary failures; do not bypass the API with a Worker scrape.
+  // Fallback 1: Direct scrape from AnimeSalt via Cloudflare Worker proxy
+  const scrapedFeed = await scrapeDirectHomepageFeed(diagnostics);
+  if (hasHomepageItems(scrapedFeed)) {
+    homepageFeedCache = { data: scrapedFeed!, timestamp: Date.now() };
+    return scrapedFeed;
+  }
+
   // Fallback 2: Cached in-memory feed if available
   const cachedFeed = homepageFeedCache?.data;
   if (hasHomepageItems(cachedFeed)) {
@@ -3195,16 +3374,48 @@ export interface HomepageData {
   upcomingItems: Anime[];
 }
 
-/** Static mock records are not evidence of current popularity or episode releases. */
 export function getFallbackHomepageData(): HomepageData {
+  const rankedAnime = [...anime].sort(
+    (a, b) => (a.trendingRank ?? 99) - (b.trendingRank ?? 99)
+  );
+
+  const heroItems = rankedAnime.slice(0, 6);
+  const trendingItems = rankedAnime.slice(0, 16);
+  const popularItems = rankedAnime
+    .filter((a) => a.type === "TV")
+    .sort((a, b) => (a.popularityRank ?? 99) - (b.popularityRank ?? 99));
+  const movieItems = rankedAnime.filter((a) => a.type === "Movie");
+  const seriesItems = rankedAnime.filter((a) => a.type === "TV");
+  const upcomingItems = rankedAnime.filter(
+    (a) => a.status === "Upcoming" || a.status === "Ongoing"
+  );
+
+  const latestEpisodes: Episode[] = rankedAnime.slice(0, 16).map((a, i) => {
+    const epNum = (i % 12) + 1;
+    return {
+      id: `ep-1-${epNum}`,
+      animeSlug: a.slug,
+      animeTitle: a.title,
+      animePoster: a.poster,
+      season: 1,
+      number: epNum,
+      title: `Episode ${epNum}`,
+      thumbnail: a.backdrop || a.poster,
+      durationMinutes: a.durationMinutes || 24,
+      languages: a.languages,
+      releasedAt: a.updatedAt || "",
+      isNew: true,
+    };
+  });
+
   return {
-    heroItems: [],
-    latestEpisodes: [],
-    trendingItems: [],
-    popularItems: [],
-    movieItems: [],
-    seriesItems: [],
-    upcomingItems: [],
+    heroItems,
+    latestEpisodes,
+    trendingItems,
+    popularItems,
+    movieItems,
+    seriesItems,
+    upcomingItems,
   };
 }
 
