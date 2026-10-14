@@ -13,7 +13,6 @@ import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Badge } from "@/components/ui/Badge";
 import { Globe, Headphones, Subtitles, ArrowRight, Sparkles, Flame } from "lucide-react";
 import type { LanguageCode } from "@/types/language";
-import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/language", {
   title: "Browse Anime by Language | Hindi, Tamil & Telugu Dubbed",

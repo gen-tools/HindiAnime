@@ -17,7 +17,6 @@ import {
 } from "@/lib/api/client";
 import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
-import { createCanonicalMetadata } from "@/lib/seo";
 import { redirect } from "next/navigation";
 import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 

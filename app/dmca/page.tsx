@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { ShieldAlert, FileText, CheckCircle2, AlertTriangle, Mail } from "lucide-react";
-import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/dmca", {
   title: "DMCA Policy",

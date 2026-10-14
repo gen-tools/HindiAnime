@@ -436,8 +436,8 @@ export default async function WatchPage({
             idx
           )
         )
-      )
-    );
+      );
+    }
   }
 
   // If still empty, synthesize the full episode list for the season

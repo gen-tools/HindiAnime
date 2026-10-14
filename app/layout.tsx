@@ -16,10 +16,6 @@ const bebas = Bebas_Neue({
   display: "swap",
 });
 
-import { CANONICAL_SITE_ORIGIN } from "@/lib/seo";
-
-const SITE_URL = CANONICAL_SITE_ORIGIN;
-
 export const metadata: Metadata = {
   metadataBase: new URL(CANONICAL_SITE_ORIGIN),
   alternates: { canonical: getCanonicalUrl("/") },

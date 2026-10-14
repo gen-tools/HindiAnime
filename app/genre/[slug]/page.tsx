@@ -14,6 +14,7 @@ import { posterPalette } from "@/lib/poster";
 import { Layers, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createCanonicalMetadata } from "@/lib/seo";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 
 const PAGE_SIZE = 12;
 
@@ -57,8 +58,21 @@ export default async function GenrePage({
     redirect(`/genre/${targetGenre}${query}`);
   }
 
-  const { language, country, type, sort = "rating" } = sParams;
-  const page = Math.max(1, Number(sParams.page) || 1);
+  const filterParams = normalizeFilterParams(sParams, {
+    omit: ["genre"],
+    sortOptions: ["rating", "recent", "title"],
+  });
+  if (hasFilterParamChanges(sParams, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/genre/${slug}${query ? `?${query}` : ""}`);
+  }
+
+  const language = filterParams.get("language");
+  const country = filterParams.get("country");
+  const type = filterParams.get("type");
+  const sort = filterParams.get("sort") ?? "recent";
+  const year = filterParams.get("year");
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
 
   const genreData = await getGenreCatalog(slug, page);
   let items = genreData.results;
@@ -77,8 +91,7 @@ export default async function GenrePage({
   const paged = items;
 
   function buildHref(p: number) {
-    const next = new URLSearchParams(sParams as Record<string, string>);
-    next.delete("genre");
+    const next = new URLSearchParams(filterParams);
     next.set("page", String(p));
     return `/genre/${slug}?${next.toString()}`;
   }

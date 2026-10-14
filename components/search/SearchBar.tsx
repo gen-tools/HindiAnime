@@ -7,6 +7,8 @@ import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { cleanAnimeSlug } from "@/lib/api/client";
+import { searchAnimeInBrowser } from "@/lib/api/browser-source";
+import type { Anime } from "@/types/anime";
 
 interface Suggestion {
   slug: string;
@@ -70,7 +72,7 @@ export function SearchBar({
       try {
         const data = await searchAnimeInBrowser(q, 1, controller.signal);
         if (controller.signal.aborted || abortRef.current !== controller) return;
-        setSuggestions(data.items.slice(0, 8).map((item) => ({
+        setSuggestions(data.items.slice(0, 8).map((item: Anime) => ({
           slug: item.slug,
           title: item.title,
           poster: item.poster,

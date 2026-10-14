@@ -1668,80 +1668,14 @@ type HomepageFetchDiagnostic = {
   responseBytes: number;
 };
 
-export async function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
-  // Reuse the last verified API feed before another API request. This cache
-  // expires on the same 60-second freshness window.
-  if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
-    logHomepageSsr(diagnostics, {
-      source: "homepage-memory-cache",
-      attempt: "lookup",
-      outcome: "hit",
-      elapsedMs: 0,
-      sectionCounts: getHomepageSectionCounts(homepageFeedCache.data),
-    });
-    return homepageFeedCache.data;
-  }
-
-  try {
-    // Do not depend on the separate Vercel API deployment for the homepage.
-    // It can be served a Vercel Security Checkpoint, while the Worker can
-    // still retrieve the public AnimeSalt page that supplies these cards.
-    const html = await fetchHtmlWithWorkerFallback("https://animesalt.cx/");
-    if (!html) return null;
-    const mostWatched_Series = parseHomepageCharts(html, "Most-Watched Series");
-    const mostWatched_Films = parseHomepageCharts(html, "Most-Watched Films");
-    const fresh_drops = parseHomepageArticles(
-      html,
-      "Fresh Drops",
-      true
-    ) as HomepageFreshDropItem[];
-    const on_air_series = parseHomepageArticles(
-      html,
-      "On-Air Series"
-    ) as AnimeListItem[];
-    const latest_animeMovies = parseHomepageArticles(
-      html,
-      "Latest Anime Movies"
-    ) as AnimeListItem[];
-
-    if (
-      mostWatched_Series.length === 0 &&
-      mostWatched_Films.length === 0 &&
-      fresh_drops.length === 0
-    ) {
-      return null;
-    }
-
-    const feed: HomepageApiResponse = {
-      success: true,
-      data: {
-        success: true,
-        results: {
-          mostWatched_Series,
-          mostWatched_Films,
-          fresh_drops,
-          on_air_series,
-          latest_animeMovies,
-        },
-      },
-    };
-
-    homepageFeedCache = { data: feed, timestamp: Date.now() };
-    return feed;
-  } catch (err) {
-    console.error("[Scraper] Error scraping direct homepage feed:", err);
-    return null;
-  }
-}
-
-export function getHomepageFeed(): Promise<HomepageApiResponse | null> {
+export function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
   // Reuse a verified feed before repeating the API → AnimeSalt fallback chain.
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
     return Promise.resolve(homepageFeedCache.data);
   }
   if (homepageFeedInFlight) return homepageFeedInFlight;
 
-  const request = getHomepageFeedUnshared();
+  const request = getHomepageFeedUnshared(diagnostics);
   homepageFeedInFlight = request;
   const cleanup = () => {
     if (homepageFeedInFlight === request) homepageFeedInFlight = null;
@@ -1750,7 +1684,8 @@ export function getHomepageFeed(): Promise<HomepageApiResponse | null> {
   return request;
 }
 
-async function getHomepageFeedUnshared(): Promise<HomepageApiResponse | null> {
+async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApiResponse | null> {
+  const apiStartedAt = Date.now();
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
       next: { revalidate: 60 },
@@ -2366,6 +2301,39 @@ export function buildWorkerProxyUrl(targetUrl: string): string {
     "https://wispy-cherry-6934.sheztech.workers.dev"
   ).replace(/\?url=.*$/, "").replace(/\/+$/, "");
   return `${base}/?url=${encodeURIComponent(targetUrl)}`;
+}
+
+const SERVER_WORKER_HOST = "wispy-cherry-6934.sheztech.workers.dev";
+const WORKER_SECRET_HEADER = "x-hindianime-proxy-secret";
+
+function getServerWorkerBaseUrl(): string {
+  if (typeof window !== "undefined") throw new Error("Authenticated Worker requests are server-only.");
+  const rawUrl = process.env.CF_PROXY_URL?.trim();
+  if (!rawUrl) {
+    console.error("[worker-auth] CF_PROXY_URL is missing; protected Worker request was not sent.");
+    throw new Error("CF_PROXY_URL is required for authenticated Worker requests.");
+  }
+  try {
+    const url = new URL(rawUrl);
+    const validQuery =
+      url.search === "" ||
+      (url.searchParams.size === 1 && url.searchParams.has("url") && url.searchParams.get("url") === "");
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== SERVER_WORKER_HOST ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      !validQuery ||
+      url.hash
+    ) {
+      throw new Error("invalid Worker URL");
+    }
+    return url.origin;
+  } catch {
+    console.error("[worker-auth] CF_PROXY_URL must target the configured HTTPS Worker; protected Worker request was not sent.");
+    throw new Error("CF_PROXY_URL is not configured for the authenticated Worker.");
+  }
 }
 
 function buildServerWorkerProxyUrl(targetUrl: string): string {
@@ -3268,19 +3236,7 @@ export function mapHomepageFeedToData(feed: HomepageApiResponse): HomepageData {
   const seriesItems = uniqueBySlug(
     (sections.on_air_series || []).map((item) => mapHomepageItem(item, "TV"))
   );
-  const recentlyUpdated = new Set(latestEpisodes.map((episode) => episode.animeSlug));
-  const upcomingItems = onAirSeries.filter((item) => !recentlyUpdated.has(item.slug));
-
-  const resolvedTrending = trendingItems.length > 0 ? trendingItems : fallback.trendingItems;
-  const resolvedPopular = popularSeries.length > 0 ? popularSeries : fallback.popularItems;
-  const resolvedMovies = latestMovies.length > 0 ? latestMovies : fallback.movieItems;
-  const resolvedSeries = onAirSeries.length > 0 ? onAirSeries : fallback.seriesItems;
-  const resolvedUpcoming = upcomingItems.length > 0 ? upcomingItems : fallback.upcomingItems;
-  const resolvedEpisodes = latestEpisodes.length > 0 ? latestEpisodes : fallback.latestEpisodes;
-
-  // Use the already-mapped trending entries for the first render. Optional
-  // per-title enrichment fans out to detail APIs and AnimeSalt scrapes.
-  const heroItems = resolvedTrending.slice(0, 6);
+  const latestSlugs = new Set(latestEpisodes.map((episode) => episode.animeSlug));
 
   return {
     heroItems: trendingItems.slice(0, 6),

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { ProfileView } from "@/components/profile/ProfileView";
-import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/profile", {
   title: "Guest Profile & Library",

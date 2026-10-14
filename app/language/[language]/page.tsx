@@ -13,7 +13,8 @@ import { cn } from "@/lib/utils";
 import { languages } from "@/lib/mock/languages";
 import { genres } from "@/lib/mock/genres";
 import { matchesCountry } from "@/lib/mock/countries";
-import { CANONICAL_SITE_ORIGIN } from "@/lib/seo";
+import { CANONICAL_SITE_ORIGIN, createCanonicalMetadata } from "@/lib/seo";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 
 interface LanguagePageConfig {
   h1: string;
@@ -161,8 +162,21 @@ export default async function LanguagePage({
   }
 
   const config = getLanguageConfig(lang.code, lang.label);
-  const { genre, country, type, sort = "rating" } = sParams;
-  const page = Math.max(1, Number(sParams.page) || 1);
+  const filterParams = normalizeFilterParams(sParams, {
+    omit: ["language"],
+    sortOptions: ["rating", "recent", "title"],
+  });
+  if (hasFilterParamChanges(sParams, filterParams)) {
+    const query = filterParams.toString();
+    redirect(`/language/${language}${query ? `?${query}` : ""}`);
+  }
+
+  const genre = filterParams.get("genre");
+  const country = filterParams.get("country");
+  const type = filterParams.get("type");
+  const sort = filterParams.get("sort") ?? "recent";
+  const year = filterParams.get("year");
+  const page = Math.max(1, Number(filterParams.get("page")) || 1);
 
   const catalogData = genre
     ? await getGenreCatalog(genre, page)
@@ -185,8 +199,7 @@ export default async function LanguagePage({
   const paged = items;
 
   function buildHref(p: number) {
-    const next = new URLSearchParams(sParams as Record<string, string>);
-    next.delete("language");
+    const next = new URLSearchParams(filterParams);
     next.set("page", String(p));
     return `/language/${language}?${next.toString()}`;
   }

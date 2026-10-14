@@ -25,14 +25,6 @@ export function ListingFilters({ years }: { years: number[] }) {
     ? pathSegments[1]
     : (normalizedParams.get("genre") ?? "");
 
-  const isGenreRoute = pathname.startsWith("/genre/");
-  const routeGenreSlug = isGenreRoute ? pathname.split("/")[2] : "";
-  const activeGenre = isGenreRoute ? routeGenreSlug : (searchParams.get("genre") || "");
-
-  const isLangRoute = pathname.startsWith("/language/");
-  const routeLangCode = isLangRoute ? pathname.split("/")[2] : "";
-  const activeLang = isLangRoute ? routeLangCode : (searchParams.get("language") || "");
-
   function handleGenreChange(newGenre: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("genre");
@@ -88,7 +80,7 @@ export function ListingFilters({ years }: { years: number[] }) {
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <Select
         aria-label="Filter by language"
-        value={activeLang}
+        value={activeLanguage}
         onChange={(e) => handleLanguageChange(e.target.value)}
       >
         <option value="">All Languages</option>

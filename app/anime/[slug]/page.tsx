@@ -340,7 +340,7 @@ export async function generateMetadata({
       description: seoDescription,
       images: [posterUrl],
     },
-  };
+  });
 }
 
 export default async function AnimeDetailPage({

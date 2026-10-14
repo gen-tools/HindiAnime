@@ -1,7 +1,21 @@
 import { NextResponse } from "next/server";
 import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
 import { DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
+import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
+import { buildServerWorkerProxyUrl, getServerWorkerHeaders } from "@/lib/api/worker-auth";
 import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
+
+function isCloudflareChallenge(text: string): boolean {
+  return (
+    text.includes("Just a moment...") ||
+    text.includes("cf-chl-widget") ||
+    text.includes("challenge-platform") ||
+    text.includes("cf-browser-verification") ||
+    text.includes("Attention Required! | Cloudflare") ||
+    text.includes("enable-javascript") ||
+    text.includes("security check")
+  );
+}
 
 // Stream links are dynamic and short-lived
 export const dynamic = "force-dynamic";
@@ -269,7 +283,7 @@ async function fetchTokoSources(
   // Omit stream=0 to use the backend's existing progressive SSE response.
 
   const directUrl = `${TOKO_API_URL}/api/v3/toko/stream?${params.toString()}`;
-  const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(directUrl)}`;
+  const proxyUrl = `${rawCfProxy}${encodeURIComponent(directUrl)}`;
   const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
 
   let data: { rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null = null;
@@ -284,7 +298,10 @@ async function fetchTokoSources(
       const res = await fetch(url, {
         signal: controller.signal,
         cache: "no-store",
-        headers: throughWorker ? getServerWorkerHeaders(DEFAULT_HEADERS) : DEFAULT_HEADERS,
+        headers: throughWorker ? {
+          ...DEFAULT_HEADERS,
+          ...(workerSecret ? { "x-hindianime-proxy-secret": workerSecret } : {}),
+        } : DEFAULT_HEADERS,
       });
       if (!res.ok) {
         if (throughWorker) {
@@ -331,7 +348,7 @@ async function fetchTokoSources(
           if (res.ok) {
             const text = await res.text();
             if (!text.includes("<!DOCTYPE html") && !text.includes("challenge")) {
-              data = JSON.parse(text) as TokoStreamResponse;
+              data = JSON.parse(text) as unknown as { rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean };
             }
           }
         } finally {
@@ -521,7 +538,7 @@ function assembleServers(
   }
   // Retain the original Server 3 URL in deduplication so no other role takes
   // it after the Server 3 substitution.
-  if (originalS3?.url) usedUrls.add(originalS3.url);
+  if (s3?.url) usedUrls.add(s3.url);
 
   // ── Slot 5: AnimeSalt Tamil (Abyss) ───────────────────────────────────────
   const s5Salt = animeSaltItems.find((s) => isTamil(s) && !usedUrls.has(s.embed));
@@ -582,10 +599,9 @@ async function fetchAnimeSaltSources(
   episode: string,
   browserResult?: { targetUrl: string; html: string; isMovie?: boolean } | null
 ): Promise<StreamItem[]> {
-  const candidates = buildAnimeSaltEpisodeCandidates(slug, season, episode);
-  const validMovieUrl = browserResult?.isMovie && browserResult.targetUrl === buildAnimeSaltMovieUrl(slug);
-  if (browserResult && !validMovieUrl && !candidates.includes(browserResult.targetUrl)) return [];
-
+  const sNum = parseInt(season, 10);
+  const epNum = parseInt(episode, 10);
+  const baseSlug = cleanAnimeSlug(slug);
   const isPossibleMovie = (sNum === 1 && epNum === 1) || slug.includes("movie");
   const candidates = [
     ...(isPossibleMovie
@@ -598,11 +614,13 @@ async function fetchAnimeSaltSources(
     `https://animesalt.cx/episode/${slug}-${sNum}x${epNum}/`,
     `https://animesalt.cx/episode/${baseSlug}-${epNum}/`,
   ];
+  const validMovieUrl = browserResult?.isMovie && candidates.some((c) => c.includes("/movies/") && browserResult.targetUrl === c);
+  if (browserResult && !validMovieUrl && !candidates.includes(browserResult.targetUrl)) return [];
 
   // Retrieve AnimeSalt through the general Worker proxy. Use direct fallback
   // only for network/server failures; a 4xx on a candidate moves to the next candidate.
   for (const targetUrl of new Set(candidates)) {
-    const proxyUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}&diag1=1`;
+    const proxyUrl = `${rawCfProxy}${encodeURIComponent(targetUrl)}&diag1=1`;
     // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
     const fetchUrls: Array<string | null> = browserResult ? [null] : [proxyUrl];
 
@@ -619,25 +637,33 @@ async function fetchAnimeSaltSources(
       let timer: ReturnType<typeof setTimeout> | undefined;
 
       try {
-        const controller = new AbortController();
-        timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(urlToFetch, {
-          signal: controller.signal,
-          cache: "no-store",
-          headers: {
-            ...DEFAULT_HEADERS,
-            Accept: "text/html",
-            ...(attemptType === "Worker" ? { Origin: "https://hindianime-seven.vercel.app" } : {}),
-          },
-        });
-        httpStatus = res.status;
-        contentType = res.headers.get("content-type");
-        const html = await res.text();
-        responseBodyLength = html.length;
-        if (res.status >= 400 && res.status < 500) break;
-        if (isCloudflareChallenge(html)) break;
-        passedResponseChecks = res.ok && html.length >= 1000 && !html.includes("404 Not Found") && !isCloudflareChallenge(html);
-        if (!passedResponseChecks) continue;
+        let html: string;
+        if (urlToFetch === null) {
+          if (!browserResult?.html) continue;
+          html = browserResult.html;
+          passedResponseChecks = html.length >= 1000 && !html.includes("404 Not Found") && !isCloudflareChallenge(html);
+          if (!passedResponseChecks) continue;
+        } else {
+          const controller = new AbortController();
+          timer = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(urlToFetch, {
+            signal: controller.signal,
+            cache: "no-store",
+            headers: {
+              ...DEFAULT_HEADERS,
+              Accept: "text/html",
+              ...(attemptType === "Worker" ? { Origin: "https://hindianime-seven.vercel.app" } : {}),
+            },
+          });
+          httpStatus = res.status;
+          contentType = res.headers.get("content-type");
+          html = await res.text();
+          responseBodyLength = html.length;
+          if (res.status >= 400 && res.status < 500) break;
+          if (isCloudflareChallenge(html)) break;
+          passedResponseChecks = res.ok && html.length >= 1000 && !html.includes("404 Not Found") && !isCloudflareChallenge(html);
+          if (!passedResponseChecks) continue;
+        }
 
         const items: StreamItem[] = [];
         const usedUrls = new Set<string>();

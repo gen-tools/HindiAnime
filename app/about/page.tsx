@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { Sparkles, Globe2, Layers } from "lucide-react";
-import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/about", {
   title: "About",

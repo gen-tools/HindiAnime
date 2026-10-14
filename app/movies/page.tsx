@@ -1,6 +1,8 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { createCanonicalMetadata } from "@/lib/seo";
+import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 import Link from "next/link";
 import { Play, Info, Sparkles, Clock } from "lucide-react";
 import { PosterArt } from "@/components/anime/PosterArt";

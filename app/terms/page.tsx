@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { FileText, CheckCircle2, AlertTriangle, Shield } from "lucide-react";
-import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/terms", {
   title: "Terms of Service",

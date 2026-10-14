@@ -298,6 +298,7 @@ export function StreamPlayer({
     }
 
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
+    const endpoints = [`/api/stream-proxy${qs}`, `${CF_STREAM_URL}${qs}`];
 
     try {
       let data: { results?: unknown[] } | null = null;
@@ -319,20 +320,11 @@ export function StreamPlayer({
               data = json;
               break;
             }
-            pending += decoder.decode(value, { stream: !done });
-            const lines = pending.split("\n");
-            pending = lines.pop() || "";
-            for (const line of lines) consumeLine(line);
-            if (done) break;
           }
-          if (pending.trim()) consumeLine(pending);
-          if (latestResults.length > 0) {
-            data = { results: latestResults };
-          }
+        } catch (error) {
+          if (isAbortError(error) || controller.signal.aborted) return;
+          /* try the existing Worker stream fallback below */
         }
-      } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) return;
-        /* try the existing Worker stream fallback below */
       }
 
       if (!isCurrentRequest()) return;

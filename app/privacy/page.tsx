@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { ShieldCheck, Lock, Eye, FileText } from "lucide-react";
-import { createCanonicalMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = createCanonicalMetadata("/privacy", {
   title: "Privacy Policy",
