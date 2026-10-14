@@ -102,7 +102,18 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     });
   }
 
-  return servers;
+  const animeSaltHindiIndex = servers.findIndex((server) =>
+    /animesalt/i.test(server.label) && /hindi|mystream/i.test(server.label)
+  );
+  if (animeSaltHindiIndex > 0) {
+    const [animeSaltHindi] = servers.splice(animeSaltHindiIndex, 1);
+    servers.unshift(animeSaltHindi);
+  }
+
+  return servers.map((server, index) => ({
+    ...server,
+    label: server.label.replace(/^Server\s+\d+/, `Server ${index + 1}`),
+  }));
 }
 
 function isAbortError(error: unknown): boolean {

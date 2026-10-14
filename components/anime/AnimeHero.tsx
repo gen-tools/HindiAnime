@@ -80,9 +80,9 @@ export function AnimeHero({ items }: { items: Anime[] }) {
             )}
           </div>
 
-          <h1 className="font-display text-3xl font-black leading-[1.06] tracking-tight text-white sm:text-5xl md:text-6xl">
+          <h2 className="font-display text-3xl font-black leading-[1.06] tracking-tight text-white sm:text-5xl md:text-6xl">
             {item.title}
-          </h1>
+          </h2>
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs sm:text-sm">
             {item.rating > 0 && (

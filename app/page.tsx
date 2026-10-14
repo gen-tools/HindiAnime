@@ -20,6 +20,7 @@ export default async function HomePage() {
 
   return (
     <>
+      <h1 className="sr-only">Hindi Anime – Watch Hindi Dubbed Anime Online</h1>
       <BrowserHomepageSections initialData={homepageData} />
 
       {/* 8. Other existing sections */}
