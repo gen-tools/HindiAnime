@@ -47,13 +47,14 @@ export function BrowserSearchResults({
     if (ssrRequestKeyRef.current === requestKey) return;
     ssrRequestKeyRef.current = null;
 
-    const controller = new AbortController();
+    let active = true;
     setLoading(true);
-    fetch(`/api/suggestions?q=${encodeURIComponent(query)}&page=${page}`, {
-      signal: controller.signal,
-    })
-      .then((res) => res.ok ? res.json() as Promise<{ results?: Anime[] }> : Promise.resolve({ results: [] as Anime[] }))
-      .then(({ results: liveItems = [] }) => {
+    fetch(`/api/search?q=${encodeURIComponent(query)}&page=${page}`, { cache: "no-store" })
+      .then((res) => res.ok
+        ? res.json() as Promise<{ results?: Anime[]; totalPages?: number }>
+        : Promise.resolve({ results: [] as Anime[], totalPages: 1 }))
+      .then(({ results: liveItems = [], totalPages: liveTotalPages = 1 }) => {
+        if (!active) return;
         const filtered = liveItems.filter((item) =>
           (!filters.genre || item.genres.includes(filters.genre)) &&
           (!filters.language || item.languages.includes(filters.language as never)) &&
@@ -61,17 +62,15 @@ export function BrowserSearchResults({
           (!filters.type || item.type === filters.type)
         );
         setItems(filtered);
-        setTotalPages(1);
+        setTotalPages(liveTotalPages);
       })
       .catch((error: unknown) => {
-        if (error instanceof Error && error.name !== "AbortError") {
-          console.warn("[Search] Live source request failed.", error.message);
-        }
+        if (active) console.warn("[Search] Live source request failed.", error);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (active) setLoading(false);
       });
-    return () => controller.abort();
+    return () => { active = false; };
   }, [query, page, filters.genre, filters.language, filters.country, filters.type, requestKey]);
 
   function buildHref(nextPage: number) {

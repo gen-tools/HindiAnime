@@ -1724,6 +1724,12 @@
       return isHlsSource(s) || s.type === "mp4";
     }
 
+    function isToonStreamSource(s) {
+      return /toon[\s._-]*stream/i.test(
+        `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""} ${s.server || ""} ${s.url || ""} ${s.headers?.Referer || s.headers?.referer || ""}`
+      );
+    }
+
     // Build a result item from a Toko raw source
     function buildTokoResult(s, serverNum, customLabel) {
       const isDirectStream = isDirect(s);
@@ -1825,7 +1831,7 @@
       addSalt(myStream, "Server 2 · 🇮🇳 MyStream");
     } else {
       // Fallback: Toko Hindi embed or ravok.buzz from rawSources
-      const s2Toko = rawSources.find((s) => !isBlockedStreamSource(s) && s.url && (s.url.includes("ravok.buzz") || (isHindi(s) && !isDirect(s))) && !usedUrls.has(s.url));
+      const s2Toko = rawSources.find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && (s.url.includes("ravok.buzz") || (isHindi(s) && !isDirect(s))) && !usedUrls.has(s.url));
       if (s2Toko) {
         const isRavok = (s2Toko.url || "").includes("ravok.buzz");
         addToko(s2Toko, isRavok ? "Server 2 · 🇮🇳 MyStream" : "Server 2 · 🇮🇳 Hindi Dub");
@@ -1838,7 +1844,7 @@
       `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""} ${s.url || ""}`
     );
     const s3 = rawSources.find((s) =>
-      !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !isVidmoly(s) && !usedUrls.has(s.url)
+      !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !isVidmoly(s) && !isToonStreamSource(s) && !usedUrls.has(s.url)
     );
     if (s3) {
       addToko(s3, "Server 3 · 🇮🇳 Hindi Dub (Toko)");
@@ -1849,7 +1855,7 @@
     }
 
     // Slot 4 — Toko Hindi Dub Embed #2
-    const s4 = rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url));
+    const s4 = rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
     if (s4) {
       addToko(s4, "Server 4 · 🇮🇳 Hindi Dub (Toko Alt)");
     } else {
@@ -1862,8 +1868,8 @@
     if (s5Salt) {
       addSalt(s5Salt, "Server 5 · 🌐 Tamil (Abyss)");
     } else {
-      const s5Toko = getByLangSources("ta").find((s) => !isBlockedStreamSource(s) && s.url && !usedUrls.has(s.url)) ||
-        rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isTamil(s) && !usedUrls.has(s.url));
+      const s5Toko = getByLangSources("ta").find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && !usedUrls.has(s.url)) ||
+        rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isTamil(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
       if (s5Toko) addToko(s5Toko, "Server 5 · 🌐 Tamil");
     }
 
@@ -1872,8 +1878,8 @@
     if (s6Salt) {
       addSalt(s6Salt, "Server 6 · 🌐 Telugu (Abyss)");
     } else {
-      const s6Toko = getByLangSources("te").find((s) => !isBlockedStreamSource(s) && s.url && !usedUrls.has(s.url)) ||
-        rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isTelugu(s) && !usedUrls.has(s.url));
+      const s6Toko = getByLangSources("te").find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && !usedUrls.has(s.url)) ||
+        rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isTelugu(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
       if (s6Toko) addToko(s6Toko, "Server 6 · 🌐 Telugu");
     }
 
@@ -1882,18 +1888,32 @@
     if (s7Salt) {
       addSalt(s7Salt, "Server 7 · 🇬🇧 English");
     } else {
-      const s7Toko = getByLangSources("en").find((s) => !isBlockedStreamSource(s) && s.url && !usedUrls.has(s.url) && !isHindi(s)) ||
-        rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isEnglish(s) && !isHindi(s) && !usedUrls.has(s.url));
+      const s7Toko = getByLangSources("en").find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && !usedUrls.has(s.url) && !isHindi(s)) ||
+        rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isEnglish(s) && !isHindi(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
       if (s7Toko) addToko(s7Toko, "Server 7 · 🇬🇧 English");
     }
 
-    // Slot 8 — Japanese AnimeSalt embed
+    // Keep Japanese HLS out of server results.
+    for (const source of rawSources) {
+      if (isJapanese(source) && isHlsSource(source) && source.url) usedUrls.add(source.url);
+    }
+
+    // Slot 8 — Toko ToonStream embed
+    const toonStream = rawSources.find((s) =>
+      !isBlockedStreamSource(s) && s.url && isToonStreamSource(s) && !isDirect(s) && !usedUrls.has(s.url)
+    );
+    if (toonStream) {
+      addToko(toonStream, "Server 8 · 📺 ToonStream");
+      usedUrls.add(toonStream.url);
+    }
+
+    // Slot 9 — Japanese AnimeSalt embed
     const s9Salt = (animeSaltItems || []).find((s) => isJapanese(s) && !usedUrls.has(s.embed || ""));
     if (s9Salt) {
-      addSalt(s9Salt, "Server 8 · 🇯🇵 Japanese (Abyss)");
+      addSalt(s9Salt, "Server 9 · 🇯🇵 Japanese (Abyss)");
     } else {
       const s8By = getByLangSources("ja").find((s) => !isBlockedStreamSource(s) && s.url && !usedUrls.has(s.url));
-      if (s8By) addToko(s8By, "Server 8 · 🇯🇵 Japanese");
+      if (s8By && !isHlsSource(s8By)) addToko(s8By, "Server 9 · 🇯🇵 Japanese");
     }
 
     // ── Fill remaining slots up to 9 with other available languages/sources ──
@@ -1903,7 +1923,7 @@
         const sources = getByLangSources(langCode);
         for (const s of sources) {
           if (list.length >= 9) break;
-          if (isBlockedStreamSource(s)) continue;
+          if (isBlockedStreamSource(s) || isToonStreamSource(s) || (langCode === "ja" && isHlsSource(s))) continue;
           const key = s.url || "";
           if (!key || usedUrls.has(key)) continue;
           const flag = langCode === "fr" ? "🇫🇷" : langCode === "es" ? "🇪🇸" : langCode === "de" ? "🇩🇪" : "🌐";
@@ -1916,7 +1936,7 @@
     if (list.length < 9) {
       for (const s of rawSources) {
         if (list.length >= 9) break;
-        if (isBlockedStreamSource(s)) continue;
+        if (isBlockedStreamSource(s) || isToonStreamSource(s) || (isJapanese(s) && isHlsSource(s))) continue;
         const key = s.url || "";
         if (!key || usedUrls.has(key)) continue;
         addToko(s, `Server ${list.length + 1} · ${s.languageLabel || s.language || "Mirror"}`);

@@ -178,6 +178,8 @@ export interface EpisodeResponse {
 export interface StreamItem {
   /** Server identifier e.g. "options-0" */
   server: string;
+  /** Provider that supplied this stream, when known. */
+  sourceProvider?: string;
   /** Optional display label e.g. "Server 1 · 🇮🇳 Hindi Dub · HLS" */
   label?: string;
   /**

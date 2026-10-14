@@ -151,7 +151,8 @@ function parseStreamResponse(text: string): { results?: StreamItem[] } | null {
 
 function hasAnimeSaltResult(data: { results?: StreamItem[] } | null): boolean {
   return Boolean(data?.results?.some((item) =>
-    /animesalt|mystream|abyss/i.test(`${item.server || ""} ${item.label || ""} ${item.embed || ""}`)
+    item.sourceProvider?.toLowerCase() === "animesalt" ||
+    /animesalt|ravok\.buzz/i.test(`${item.server || ""} ${item.label || ""} ${item.embed || ""}`)
   ));
 }
 

@@ -555,6 +555,11 @@ function assembleServers(
     if (fallbackHindi) add(fallbackHindi, "Server 2 · 🇮🇳 Hindi (Abyss)");
   }
 
+  const isToonStreamSource = (s: TokoSource) =>
+    /toon[\s._-]*stream/i.test(
+      `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""} ${s.server || ""} ${s.url || ""} ${s.headers?.Referer || s.headers?.referer || ""}`
+    );
+
   // ── Slot 3: Remaining AnimeSalt/Toko Hindi source ─────────────────────────
   const saltMyStream = animeSaltItems.find(
     (s) => !isBlockedSource({ url: s.embed } as TokoSource) &&
@@ -574,7 +579,7 @@ function assembleServers(
     return /vidmoly|vmnow\.online|vmpx\.online|vmeas\.cloud/.test(`${provider} ${s.url || ""}`.toLowerCase());
   };
   const s3 = rawSources.find(
-    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !isVidmoly(s) && !usedUrls.has(s.url || "")
+    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !isVidmoly(s) && !isToonStreamSource(s) && !usedUrls.has(s.url || "")
   );
   if (s3) {
     add(buildTokoItem(s3), "Server 3 · 🇮🇳 Hindi Dub");
@@ -585,10 +590,10 @@ function assembleServers(
 
   // ── Slot 4: Toko Hindi Dub embed #2 (AbyssPlayer / FilesForever) ─────────
   const s4Abyss = rawSources.find(
-    (s) => !isBlockedSource(s) && isHindi(s) && ((s.url || "").includes("abyssplayer") || (s.url || "").includes("filesforever")) && !usedUrls.has(s.url || "")
+    (s) => !isBlockedSource(s) && isHindi(s) && !isToonStreamSource(s) && ((s.url || "").includes("abyssplayer") || (s.url || "").includes("filesforever")) && !usedUrls.has(s.url || "")
   );
   const s4 = s4Abyss || rawSources.find(
-    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !usedUrls.has(s.url || "")
+    (s) => !isBlockedSource(s) && isHindi(s) && !isDirect(s) && !isToonStreamSource(s) && !usedUrls.has(s.url || "")
   );
   if (s4) {
     add(buildTokoItem(s4), "Server 4 · 🇮🇳 Abyss");
@@ -618,11 +623,19 @@ function assembleServers(
     add(s7Salt, "Server 7 · 🇬🇧 English");
   }
 
-  // ── Slot 8: Japanese direct HLS (Toko) ───────────────────────────────────
-  const s8 = rawSources.find(
-    (s) => !isBlockedSource(s) && isJapanese(s) && isDirect(s) && !usedUrls.has(s.url || "")
+  // Keep Japanese HLS out of the server list and reserve slot 8 for ToonStream.
+  for (const source of rawSources) {
+    if (isJapanese(source) && isHlsSource(source) && source.url) usedUrls.add(source.url);
+  }
+
+  // ── Slot 8: Toko ToonStream embed ─────────────────────────────────────────
+  const toonStream = rawSources.find(
+    (s) => !isBlockedSource(s) && isToonStreamSource(s) && !isDirect(s) && !usedUrls.has(s.url || "")
   );
-  if (s8) add(buildTokoItem(s8), "Server 8 · 🇯🇵 Japanese HLS ⚡");
+  if (toonStream) {
+    add(buildTokoItem(toonStream), "Server 8 · 📺 ToonStream");
+    if (toonStream.url) usedUrls.add(toonStream.url);
+  }
 
   // ── Slot 9: AnimeSalt Japanese (Abyss) ────────────────────────────────────
   const s9Salt = animeSaltItems.find((s) => isJapanese(s) && !usedUrls.has(s.embed));
@@ -639,7 +652,7 @@ function assembleServers(
   }
   for (const s of rawSources) {
     if (list.length >= 9) break;
-    if (!isBlockedSource(s) && !usedUrls.has(s.url || "")) {
+    if (!isBlockedSource(s) && !isToonStreamSource(s) && !usedUrls.has(s.url || "")) {
       add(buildTokoItem(s), `Server ${list.length + 1} · ${s.languageLabel || s.language || "Alternative"}`);
     }
   }
@@ -746,6 +759,7 @@ async function fetchAnimeSaltSources(
                   const isJa = /japanese/i.test(lang);
                   items.push({
                     server: `AnimeSalt ${lang}`,
+                    sourceProvider: "AnimeSalt",
                     label: `AnimeSalt · ${isHi ? "🇮🇳 Hindi" : isJa ? "🇯🇵 Japanese" : "🌐 " + lang} (Abyss)`,
                     embed: p.link,
                     type: "embed",
@@ -771,6 +785,7 @@ async function fetchAnimeSaltSources(
             const isRavok = src.includes("ravok.buzz");
             items.push({
               server: isRavok ? "AnimeSalt MyStream" : "AnimeSalt Embed",
+              sourceProvider: "AnimeSalt",
               label: isRavok ? "AnimeSalt · 🇮🇳 MyStream" : "AnimeSalt · Embed",
               embed: src,
               type: "embed",
