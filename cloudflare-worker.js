@@ -387,7 +387,7 @@
 
       // ── Route: /hls-proxy — proxy HLS/M3U8 streams with required headers ───────
       if (url.pathname === "/hls-proxy") {
-        return handleHlsProxy(url, request);
+        return handleHlsProxy(url, request, env);
       }
 
       // ── Route: / — general CORS proxy via ?url= ───────────────────────────────
@@ -1989,6 +1989,8 @@
   const ALLOWED_HLS_BASE_DOMAINS = new Set([
     "vmpx.online",
     "vmeas.cloud",
+    "vmnow.online",
+    "fastream.to",
     "vidmoly.to",
     "vidmoly.net",
     "vidmoly.me",
@@ -2005,7 +2007,9 @@
 
   const PROVIDER_CLUSTER_GROUPS = [
     // Vidmoly cluster: master/variants/segments spread across these domains
-    new Set(["vidmoly.to", "vidmoly.net", "vidmoly.me", "vmpx.online", "vmeas.cloud"]),
+    new Set(["vidmoly.to", "vidmoly.net", "vidmoly.me", "vmpx.online", "vmeas.cloud", "vmnow.online"]),
+    // Fastream cluster
+    new Set(["fastream.to"]),
     // Hakunamatata cluster
     new Set(["hakunaymatata.com", "hakuna.my"]),
     // Sibnet cluster
@@ -2161,7 +2165,7 @@
     }
   }
 
-  async function handleHlsProxy(url, request) {
+  async function handleHlsProxy(url, request, env) {
     const targetUrl = url.searchParams.get("url");
     const parentUrl = url.searchParams.get("parent");
     const referer = url.searchParams.get("referer") || "";
@@ -2259,6 +2263,13 @@
       if (!res) {
         return new Response(JSON.stringify({ error: blockedRedirect ? "Redirect target not allowed" : "URL type not allowed" }), {
           status: 403,
+          headers: { "Content-Type": "application/json", ...corsHeaders(request) },
+        });
+      }
+
+      if (!res.ok) {
+        return new Response(JSON.stringify({ error: `Upstream media server returned HTTP ${res.status}` }), {
+          status: res.status,
           headers: { "Content-Type": "application/json", ...corsHeaders(request) },
         });
       }

@@ -30,10 +30,11 @@ export function isValidAnimeSaltHtml(html: string): boolean {
     !html.includes("404 Not Found") &&
     !html.includes("Just a moment...") &&
     !html.includes("cf-chl-widget") &&
-    !html.includes("challenge-platform") &&
+    !html.includes("id=\"challenge-stage\"") &&
+    !html.includes("id=\"challenge-form\"") &&
+    !html.includes("_cf_chl_opt") &&
     !html.includes("cf-browser-verification") &&
     !html.includes("Attention Required! | Cloudflare") &&
-    !html.includes("enable-javascript") &&
     !html.includes("security check")
   );
 }

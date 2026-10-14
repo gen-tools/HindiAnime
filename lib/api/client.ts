@@ -2500,10 +2500,11 @@ function is404Html(text: string): boolean {
   if (
     text.includes("Just a moment...") ||
     text.includes("cf-chl-widget") ||
-    text.includes("challenge-platform") ||
+    text.includes("id=\"challenge-stage\"") ||
+    text.includes("id=\"challenge-form\"") ||
+    text.includes("_cf_chl_opt") ||
     text.includes("cf-browser-verification") ||
     text.includes("Attention Required! | Cloudflare") ||
-    text.includes("enable-javascript") ||
     text.includes("security check")
   ) {
     return true;

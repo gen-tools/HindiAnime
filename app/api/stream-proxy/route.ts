@@ -10,10 +10,11 @@ function isCloudflareChallenge(text: string): boolean {
   return (
     text.includes("Just a moment...") ||
     text.includes("cf-chl-widget") ||
-    text.includes("challenge-platform") ||
+    text.includes("id=\"challenge-stage\"") ||
+    text.includes("id=\"challenge-form\"") ||
+    text.includes("_cf_chl_opt") ||
     text.includes("cf-browser-verification") ||
     text.includes("Attention Required! | Cloudflare") ||
-    text.includes("enable-javascript") ||
     text.includes("security check")
   );
 }
@@ -421,6 +422,17 @@ function isEnglish(s: { audioLanguage?: string; language?: string; languageLabel
 }
 
 function isDirect(s: TokoSource): boolean {
+  const url = (s.url || "").toLowerCase();
+  const provider = (s.providerKey || s.providerName || s.source || "").toLowerCase();
+  // Vidmoly direct HLS links (vmnow.online, etc.) are ASN-locked to Toko's scrape IP
+  // and return 403 Forbidden on segments when proxied. They must be played via embed.
+  if (
+    url.includes("vmnow.online") ||
+    url.includes("vidmoly") ||
+    provider.includes("vidmoly")
+  ) {
+    return false;
+  }
   return s.type === "hls" || s.type === "mp4" || Boolean(s.isM3U8);
 }
 
