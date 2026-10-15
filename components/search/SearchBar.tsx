@@ -93,11 +93,9 @@ export function SearchBar({
   useEffect(() => {
     const q = normalizeSearchQuery(debouncedValue);
     if (q.length < 3) {
-      abortSearchRequest(abortRef.current, "Search query is too short");
       abortRef.current = null;
       return;
     }
-    abortSearchRequest(abortRef.current, "Search query changed");
     const requestId = ++searchRequestIdRef.current;
     const controller = new AbortController();
     abortRef.current = controller;
@@ -129,7 +127,10 @@ export function SearchBar({
         setActiveIndex(-1);
         setHasSearched(true);
       } catch (error) {
-        if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
+        if (
+          controller.signal.aborted ||
+          (error && typeof error === "object" && "name" in error && error.name === "AbortError")
+        ) return;
         if (searchRequestIdRef.current === requestId) {
           setRequestFailed(true);
           setHasSearched(true);
@@ -145,7 +146,8 @@ export function SearchBar({
 
     void loadSuggestions();
     return () => {
-      abortSearchRequest(controller, "Search effect cleaned up");
+      // A new keystroke invalidates this response by request ID. Letting the
+      // fetch settle avoids surfacing browser AbortErrors while typing.
       if (searchRequestIdRef.current === requestId) searchRequestIdRef.current += 1;
       if (abortRef.current === controller) abortRef.current = null;
     };
@@ -242,8 +244,6 @@ export function SearchBar({
           aria-activedescendant={dropdownOpen && activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
           value={value}
           onChange={(e) => {
-            abortSearchRequest(abortRef.current, "Search query changed");
-            abortRef.current = null;
             searchRequestIdRef.current += 1;
             setLoading(false);
             setInputState({ defaultValue, value: e.target.value });

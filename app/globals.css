@@ -267,6 +267,12 @@ body {
   animation: section-enter 220ms ease-out both;
 }
 
+@media (max-width: 767px) {
+  .section-reveal {
+    animation: none;
+  }
+}
+
 @keyframes hero-enter {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

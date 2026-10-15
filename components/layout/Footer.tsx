@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Logo } from "./Logo";
 import { genres } from "@/lib/mock/genres";
-import { languages } from "@/lib/mock/languages";
 
 const platformLinks = [
   { label: "Home", href: "/" },
@@ -90,6 +89,38 @@ export function Footer() {
               </li>
             ))}
           </ul>
+        </div>
+
+        <div>
+          <h3 className="mb-4 text-sm font-semibold text-text-primary">Follow Us</h3>
+          <nav aria-label="Social media" className="flex items-center gap-2.5">
+            <a
+              href="https://x.com/HindiAnimecom"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Hindi Anime on X (opens in a new tab)"
+              title="Follow Hindi Anime on X"
+              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-full border border-border-line text-text-muted transition-colors hover:border-green-primary/60 hover:bg-green-primary/10 hover:text-green-light"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+                <path d="M18.9 2H22l-6.8 7.8L23.2 22h-6.3L12 14.6 5.6 22H2.5l7.3-8.4L1.9 2h6.5l4.5 6.7L18.9 2Zm-1.1 18h1.7L7.4 3.9H5.6L17.8 20Z" />
+              </svg>
+            </a>
+            <a
+              href="https://www.instagram.com/hindi_animecom"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Hindi Anime on Instagram (opens in a new tab)"
+              title="Follow Hindi Anime on Instagram"
+              className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-full border border-border-line text-text-muted transition-colors hover:border-green-primary/60 hover:bg-green-primary/10 hover:text-green-light"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8">
+                <rect x="3" y="3" width="18" height="18" rx="5" />
+                <circle cx="12" cy="12" r="4" />
+                <circle cx="18" cy="6" r=".8" className="fill-current stroke-none" />
+              </svg>
+            </a>
+          </nav>
         </div>
       </div>
 

@@ -167,7 +167,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
 
         <div className="hidden w-52 shrink-0 self-center md:block lg:w-64 xl:w-72">
           <div className="group relative overflow-hidden rounded-2xl border-2 border-border-line ring-1 ring-green-primary/30 transition-transform duration-200 hover:scale-[1.02]">
-            <PosterArt seed={item.poster} title={item.title} orientation="portrait" priority />
+            <PosterArt seed={item.poster} title={item.title} orientation="portrait" loading="lazy" />
             <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
               <Link href={watchHref} aria-label={`Watch ${item.title}`} className="flex h-14 w-14 items-center justify-center rounded-full bg-green-bright text-black transition-transform hover:scale-110 active:scale-95">
                 <Play className="h-6 w-6 translate-x-0.5 fill-black" />
