@@ -1337,6 +1337,23 @@ export async function getCatalog(
     console.error(`getCatalog ${kind} API error:`, err);
   }
 
+  // Use the authenticated Worker-backed scraper on the server when the API
+  // has no entries. Keep this scoped to the requested page so pagination does
+  // not trigger a full-catalog scan.
+  if (typeof window === "undefined" && !options.signal?.aborted) {
+    const scraped = await scrapeAnimeSaltCatalog(kind, page);
+    if (scraped?.results.length) {
+      return {
+        success: true,
+        results: {
+          currentPage: scraped.currentPage,
+          totalPages: scraped.totalPages,
+          results: scraped.results,
+        },
+      };
+    }
+  }
+
   // Last resort: the catalog API's own homepage feed (page 1 only, limited set).
   if (page === 1 && options.allowHomepageFallback !== false) {
     try {
@@ -1469,6 +1486,7 @@ type SearchSuggestion = {
   poster: string;
   year: number;
   type: string;
+  languages: LanguageCode[];
   score: number;
 };
 
@@ -1511,6 +1529,7 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
           poster: item.poster,
           year: item.year,
           type: item.type,
+          languages: item.languages,
           score: Math.max(titleScore, slugScore),
         });
       }

@@ -17,6 +17,7 @@ export function Pagination({
     <nav className="mt-10 flex items-center justify-center gap-2" aria-label="Pagination">
       <Link
         href={buildHref(Math.max(1, page - 1))}
+        prefetch={false}
         aria-disabled={page === 1}
         className={cn(
           "focus-ring flex items-center gap-1 rounded-lg border border-border-line px-3 py-2 text-sm text-text-secondary hover:border-green-primary/60 hover:text-white",
@@ -33,6 +34,7 @@ export function Pagination({
 
       <Link
         href={buildHref(Math.min(totalPages, page + 1))}
+        prefetch={false}
         aria-disabled={page === totalPages}
         className={cn(
           "focus-ring flex items-center gap-1 rounded-lg border border-border-line px-3 py-2 text-sm text-text-secondary hover:border-green-primary/60 hover:text-white",

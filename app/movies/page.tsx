@@ -4,12 +4,12 @@ import { redirect } from "next/navigation";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
 import Link from "next/link";
-import { Play, Info, Sparkles, Clock } from "lucide-react";
+import { Play, Clock } from "lucide-react";
+import { MovieSpotlight } from "@/components/anime/MovieSpotlight";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { BrowserCatalogFallback } from "@/components/catalog/BrowserCatalogFallback";
 import { RatingBadge } from "@/components/ui/RatingBadge";
 import { LanguageBadges } from "@/components/anime/LanguageBadges";
-import { ButtonLink } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Badge } from "@/components/ui/Badge";
 import { CatalogUnavailableState, NoResultsState } from "@/components/search/SearchStates";
@@ -99,68 +99,7 @@ export default async function MoviesPage({
     <div>
       {/* Featured Movie Spotlight Hero */}
       {showSpotlight && (
-        <section className="relative overflow-hidden border-b border-border-line">
-          <div className="absolute inset-0">
-            <PosterArt
-              seed={featured.backdrop}
-              title={featured.title}
-              orientation="landscape"
-              className="h-full w-full object-cover"
-              priority
-            />
-          </div>
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-background/30" />
-          <div className="absolute inset-0 bg-gradient-to-r from-background via-background/60 to-transparent" />
-
-          <div className="container-page relative flex min-h-[460px] flex-col justify-end gap-4 py-16">
-            <div className="inline-flex items-center gap-2 rounded-full border border-green-primary/40 bg-green-primary/20 px-3 py-1 text-xs font-semibold text-green-light w-fit backdrop-blur-md">
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>PREMIERE SPOTLIGHT</span>
-            </div>
-
-            <h1 className="font-display max-w-2xl text-3xl font-extrabold text-white sm:text-5xl md:text-6xl drop-shadow-md">
-              {featured.title}
-            </h1>
-
-            <div className="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
-              <RatingBadge rating={featured.rating} />
-              <Badge tone="green">HD 1080p</Badge>
-              <span>{featured.year}</span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3.5 w-3.5 text-text-muted" />
-                {formatDuration(featured.durationMinutes)}
-              </span>
-              <div className="hidden sm:block">
-                <LanguageBadges languages={featured.languages} max={4} />
-              </div>
-            </div>
-
-            {featured.synopsis && featured.synopsis !== SYNOPSIS_FALLBACK && (
-              <p className="max-w-xl text-sm leading-relaxed text-text-secondary line-clamp-3">
-                {featured.synopsis}
-              </p>
-            )}
-
-            <div className="mt-3 flex flex-wrap gap-3">
-              <ButtonLink
-                href={`/anime/${featured.slug}`}
-                size="lg"
-                icon={<Play className="h-4 w-4 fill-white" />}
-                className="shadow-[0_0_20px_rgba(34,197,94,0.4)]"
-              >
-                Watch Movie
-              </ButtonLink>
-              <ButtonLink
-                href={`/anime/${featured.slug}`}
-                variant="secondary"
-                size="lg"
-                icon={<Info className="h-4 w-4" />}
-              >
-                Details &amp; Cast
-              </ButtonLink>
-            </div>
-          </div>
-        </section>
+        <MovieSpotlight items={apiMovies.slice(0, 6)} />
       )}
 
       {/* Main Movies Catalog Section */}
@@ -346,7 +285,7 @@ function MoviesFilterBar({
   return (
     <form className="grid grid-cols-2 gap-3 sm:grid-cols-4" action="/movies" method="get">
       {category !== "all" && <input type="hidden" name="category" value={category} />}
-      <Select name="genre" value={genre} aria-label="Filter by genre">
+      <Select name="genre" defaultValue={genre} aria-label="Filter by genre">
         <option value="">All Genres</option>
         {genres.map((g) => (
           <option key={g.slug} value={g.slug}>
@@ -354,7 +293,7 @@ function MoviesFilterBar({
           </option>
         ))}
       </Select>
-      <Select name="language" value={language} aria-label="Filter by language">
+      <Select name="language" defaultValue={language} aria-label="Filter by language">
         <option value="">All Languages</option>
         {languages.map((l) => (
           <option key={l.code} value={l.code}>
@@ -362,7 +301,7 @@ function MoviesFilterBar({
           </option>
         ))}
       </Select>
-      <Select name="sort" value={sort} aria-label="Sort movies">
+      <Select name="sort" defaultValue={sort} aria-label="Sort movies">
         <option value="rating">Top Rated</option>
         <option value="year">Newest Year</option>
         <option value="title">A–Z</option>

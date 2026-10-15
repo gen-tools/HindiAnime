@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
+import { ReadMoreText } from "@/components/ui/ReadMoreText";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { getAnimeBySlug } from "@/lib/mock/anime";
@@ -157,7 +158,12 @@ export default async function MovieWatchPage({
           <div>
             <h1 className="font-display text-xl font-bold text-text-primary md:text-2xl">{title}</h1>
             <p className="mt-1 text-sm text-text-secondary">Full Movie</p>
-            {synopsis && <p className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary">{synopsis}</p>}
+            {synopsis && (
+              <ReadMoreText
+                text={synopsis}
+                className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary"
+              />
+            )}
           </div>
         </div>
       </div>

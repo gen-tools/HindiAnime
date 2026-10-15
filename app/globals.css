@@ -293,6 +293,24 @@ body {
   animation: hero-enter 220ms ease-out both;
 }
 
+@keyframes movie-spotlight-image-enter {
+  from { opacity: 0; transform: scale(1.035); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes movie-spotlight-copy-enter {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.movie-spotlight-image {
+  animation: movie-spotlight-image-enter 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.movie-spotlight-copy {
+  animation: movie-spotlight-copy-enter 500ms cubic-bezier(0.2, 0.7, 0.2, 1) 80ms both;
+}
+
 .hero-progress-fill {
   animation: hero-progress 7500ms linear both;
 }
@@ -310,6 +328,8 @@ body {
   .hero-slide-enter,
   .hero-copy-enter,
   .hero-progress-fill,
+  .movie-spotlight-image,
+  .movie-spotlight-copy,
   .mobile-menu-backdrop-enter,
   .mobile-menu-panel-enter {
     animation: none;

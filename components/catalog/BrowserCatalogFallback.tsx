@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import type { Anime } from "@/types/anime";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Pagination } from "@/components/ui/Pagination";
-import { getCatalog, mapSearchItemToAnime } from "@/lib/api/client";
+import type { AnimeCatalogResponse } from "@/types/api";
+import { mapSearchItemToAnime } from "@/lib/api/client";
 
 type CatalogKind = "series" | "movies";
 type LoadState = "loading" | "ready" | "error";
@@ -28,17 +29,19 @@ export function BrowserCatalogFallback({
     const load = async () => {
       setState("loading");
       setItems([]);
-      const response = await getCatalog(kind, page, {
-        allowHomepageFallback: false,
+      const response = await fetch(`/api/catalog?kind=${kind}&page=${page}`, {
         signal: controller.signal,
+        cache: "no-store",
       });
-      const rawItems = response?.results?.results ?? [];
+      if (!response.ok) throw new Error(`Catalog request failed (${response.status})`);
+      const catalog = await response.json() as AnimeCatalogResponse;
+      const rawItems = catalog?.results?.results ?? [];
       if (rawItems.length === 0) throw new Error("Catalog feed had no valid entries");
       if (!active) return;
       setItems(rawItems.map((item) =>
         mapSearchItemToAnime(item, kind === "movies" ? "Movie" : "TV")
       ));
-      setTotalPages(response?.results?.totalPages ?? null);
+      setTotalPages(catalog.results.totalPages ?? null);
       setState("ready");
     };
 

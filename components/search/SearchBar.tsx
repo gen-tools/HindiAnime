@@ -83,6 +83,7 @@ export function SearchBar({
     searchRequestIdRef.current += 1;
     abortSearchRequest(abortRef.current, "Search route changed");
     abortRef.current = null;
+    inputRef.current?.blur();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setOpen(false);
     setActiveIndex(-1);
@@ -167,6 +168,7 @@ export function SearchBar({
   function navigateTo(slug: string) {
     setOpen(false);
     setSuggestions([]);
+    inputRef.current?.blur();
     const clean = cleanAnimeSlug(slug) || slug;
     router.push(`/anime/${clean}`);
   }
@@ -183,6 +185,7 @@ export function SearchBar({
     }
 
     setOpen(false);
+    inputRef.current?.blur();
     const params = new URLSearchParams();
     params.set("q", trimmed);
     router.push(`/search?${params.toString()}`);

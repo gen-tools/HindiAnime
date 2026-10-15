@@ -156,6 +156,20 @@ function hasAnimeSaltResult(data: { results?: StreamItem[] } | null): boolean {
   ));
 }
 
+interface DocumentPictureInPictureController {
+  window: Window | null;
+  requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
+}
+
+type PictureInPictureCapableWindow = Window & {
+  documentPictureInPicture?: DocumentPictureInPictureController;
+};
+
+type WebkitPictureInPictureVideo = HTMLVideoElement & {
+  webkitSupportsPresentationMode?: (mode: string) => boolean;
+  webkitSetPresentationMode?: (mode: string) => void;
+};
+
 // Stream aggregation runs through /api/stream-proxy. If its server-side
 // AnimeSalt fetch is missing, the browser fetches AnimeSalt through the public
 // Worker proxy and submits the HTML back to that same route for parsing.
@@ -191,31 +205,46 @@ export function StreamPlayer({
   const [showExitButton, setShowExitButton] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const playerFrameRef = useRef<HTMLDivElement>(null);
+  const embedPictureInPictureRef = useRef<Window | null>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    setPictureInPictureSupported(document.pictureInPictureEnabled);
-  }, []);
 
   useEffect(() => {
     const video = playerFrameRef.current?.querySelector("video");
     if (!video) {
       setIsPictureInPicture(false);
+      const embedPiP = (window as PictureInPictureCapableWindow).documentPictureInPicture;
+      setPictureInPictureSupported(activeServer?.type === "embed" && Boolean(embedPiP));
       return;
     }
 
     const onEnter = () => setIsPictureInPicture(true);
     const onLeave = () => setIsPictureInPicture(false);
+    const onWebkitModeChange = () => {
+      const webkitMode = (video as WebkitPictureInPictureVideo & { webkitPresentationMode?: string })
+        .webkitPresentationMode;
+      setIsPictureInPicture(webkitMode === "picture-in-picture");
+    };
+    const webkitVideo = video as WebkitPictureInPictureVideo;
+    const supportsWebkitPiP = Boolean(
+      webkitVideo.webkitSupportsPresentationMode?.("picture-in-picture")
+    );
+    setPictureInPictureSupported(Boolean(document.pictureInPictureEnabled) || supportsWebkitPiP);
     video.addEventListener("enterpictureinpicture", onEnter);
     video.addEventListener("leavepictureinpicture", onLeave);
+    video.addEventListener("webkitpresentationmodechanged", onWebkitModeChange);
     return () => {
       video.removeEventListener("enterpictureinpicture", onEnter);
       video.removeEventListener("leavepictureinpicture", onLeave);
+      video.removeEventListener("webkitpresentationmodechanged", onWebkitModeChange);
     };
-  }, [activeServer?.id, state]);
+  }, [activeServer?.id, activeServer?.type, state, reloadKey]);
 
   const handleNextServer = useCallback(() => {
     if (servers.length <= 1) return;
+    if (embedPictureInPictureRef.current && !embedPictureInPictureRef.current.closed) {
+      embedPictureInPictureRef.current.close();
+      embedPictureInPictureRef.current = null;
+    }
     const currentIndex = servers.findIndex((s) => s.id === activeServer?.id);
     const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % servers.length;
     const next = servers[nextIndex];
@@ -270,18 +299,67 @@ export function StreamPlayer({
 
   const togglePictureInPicture = useCallback(async () => {
     const video = playerFrameRef.current?.querySelector("video");
-    if (!video || !document.pictureInPictureEnabled) return;
-
     try {
+      if (activeServer?.type === "embed") {
+        const activePiPWindow = embedPictureInPictureRef.current;
+        if (activePiPWindow && !activePiPWindow.closed) {
+          activePiPWindow.close();
+          embedPictureInPictureRef.current = null;
+          setIsPictureInPicture(false);
+          return;
+        }
+
+        const controller = (window as PictureInPictureCapableWindow).documentPictureInPicture;
+        const sourceFrame = playerFrameRef.current?.querySelector("iframe");
+        if (!controller || !sourceFrame) return;
+
+        const pipWindow = await controller.requestWindow({ width: 480, height: 270 });
+        embedPictureInPictureRef.current = pipWindow;
+        pipWindow.document.title = `${episodeTitle} — Hindi Anime`;
+        pipWindow.document.documentElement.style.cssText = "width:100%;height:100%;background:#000";
+        pipWindow.document.body.style.cssText = "width:100%;height:100%;margin:0;overflow:hidden;background:#000";
+        const style = pipWindow.document.createElement("style");
+        style.textContent = "*{box-sizing:border-box}iframe{display:block;width:100%;height:100%;border:0;background:#000}";
+        pipWindow.document.head.append(style);
+
+        const pipFrame = pipWindow.document.createElement("iframe");
+        pipFrame.src = sourceFrame.src;
+        pipFrame.title = episodeTitle;
+        pipFrame.allow = sourceFrame.allow;
+        pipFrame.allowFullscreen = true;
+        pipFrame.referrerPolicy = sourceFrame.referrerPolicy;
+        if (sourceFrame.hasAttribute("sandbox")) {
+          pipFrame.setAttribute("sandbox", sourceFrame.getAttribute("sandbox") || "");
+        }
+        pipWindow.document.body.append(pipFrame);
+        const originalEmbedUrl = sourceFrame.src;
+        sourceFrame.src = "about:blank";
+        pipWindow.addEventListener("pagehide", () => {
+          embedPictureInPictureRef.current = null;
+          if (sourceFrame.isConnected) sourceFrame.src = originalEmbedUrl;
+          setIsPictureInPicture(false);
+        }, { once: true });
+        setIsPictureInPicture(true);
+        return;
+      }
+
+      if (!video) return;
+      const webkitVideo = video as WebkitPictureInPictureVideo;
       if (document.pictureInPictureElement === video) {
         await document.exitPictureInPicture();
-      } else {
+      } else if (document.pictureInPictureEnabled && video.requestPictureInPicture) {
         await video.requestPictureInPicture();
+      } else if (webkitVideo.webkitSupportsPresentationMode?.("picture-in-picture")) {
+        const isInWebkitPiP = (video as WebkitPictureInPictureVideo & { webkitPresentationMode?: string })
+          .webkitPresentationMode === "picture-in-picture";
+        webkitVideo.webkitSetPresentationMode?.(isInWebkitPiP ? "inline" : "picture-in-picture");
+      } else {
+        return;
       }
     } catch (error) {
       console.warn("Picture-in-picture toggle error:", error);
     }
-  }, []);
+  }, [activeServer, episodeTitle]);
 
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -458,6 +536,10 @@ export function StreamPlayer({
   }, [handleNextServer]);
 
   const handleServerSelect = useCallback((server: ValidServer) => {
+    if (embedPictureInPictureRef.current && !embedPictureInPictureRef.current.closed) {
+      embedPictureInPictureRef.current.close();
+      embedPictureInPictureRef.current = null;
+    }
     setActiveServer(server);
   }, []);
 
@@ -521,6 +603,19 @@ export function StreamPlayer({
 
           </>
         )}
+        {isPictureInPicture && activeServer?.type === "embed" && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black px-4 text-center">
+            <PictureInPicture2 className="h-8 w-8 text-green-bright" />
+            <p className="text-sm text-text-secondary">Playing in the floating picture-in-picture window.</p>
+            <button
+              type="button"
+              onClick={togglePictureInPicture}
+              className="focus-ring min-h-11 rounded-lg border border-border-line px-4 text-sm font-semibold text-text-primary hover:border-green-primary/60 hover:text-green-light"
+            >
+              Return to player
+            </button>
+          </div>
+        )}
         {/* Fullscreen exit controls */}
         {isFullscreen && (
           <>
@@ -580,7 +675,7 @@ export function StreamPlayer({
         <div className="flex flex-col gap-2.5 rounded-xl border border-border-line bg-surface p-3 sm:px-4 sm:py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Server dropdown */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
                 <Server className="h-3.5 w-3.5 text-green-bright" />
                 <span>Server:</span>
@@ -593,8 +688,7 @@ export function StreamPlayer({
                   const srv = servers.find((s) => s.id === e.target.value);
                   if (srv) handleServerSelect(srv);
                 }}
-                className="focus-ring rounded-lg border border-border-line bg-surface-elevated/60 px-2.5 py-1.5 text-xs font-semibold text-text-primary transition-colors hover:border-green-primary/50 hover:text-white cursor-pointer"
-                style={{ minWidth: "9rem" }}
+                className="focus-ring min-h-11 min-w-0 flex-1 cursor-pointer rounded-lg border border-border-line bg-surface-elevated/60 px-2.5 text-xs font-semibold text-text-primary transition-colors hover:border-green-primary/50 hover:text-white sm:min-w-36 sm:flex-none"
               >
                 {servers.map((srv) => (
                   <option key={srv.id} value={srv.id}>
@@ -607,7 +701,7 @@ export function StreamPlayer({
                   type="button"
                   onClick={handleNextServer}
                   title="Switch to next server if video is blank or not working"
-                  className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
+                  className="focus-ring inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
                 >
                   <Server className="h-3.5 w-3.5 text-green-bright" />
                   <span>Change Server</span>
@@ -617,7 +711,7 @@ export function StreamPlayer({
                 type="button"
                 onClick={() => setReloadKey((k) => k + 1)}
                 title="Reload current player"
-                className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
+                className="focus-ring inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-line bg-surface-elevated/40 px-2.5 text-xs font-medium text-text-secondary transition-[color,background-color,border-color,transform] duration-200 hover:-translate-y-px hover:border-green-primary/50 hover:bg-green-primary/10 hover:text-green-light active:translate-y-0 active:scale-[0.98] cursor-pointer"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-green-bright" />
                 <span>Reload</span>
@@ -625,23 +719,25 @@ export function StreamPlayer({
             </div>
 
             {/* Picture-in-picture & Fullscreen controls */}
-            <div className="flex items-center gap-2">
+            <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
               <button
                 type="button"
                 onClick={togglePictureInPicture}
-                disabled={!pictureInPictureSupported || state !== "ready" || activeServer?.type === "embed"}
+                disabled={!pictureInPictureSupported || state !== "ready"}
                 title={isPictureInPicture ? "Exit picture-in-picture" : "Picture-in-picture"}
                 aria-label={isPictureInPicture ? "Exit picture-in-picture" : "Picture-in-picture"}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                aria-pressed={isPictureInPicture}
+                className="focus-ring inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-line px-3 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <PictureInPicture2 className="h-4 w-4" />
                 <span className="hidden sm:inline">PiP</span>
               </button>
               <button
+                type="button"
                 onClick={toggleFullscreen}
                 title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
                 aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border-line px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
+                className="focus-ring inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-line px-3 text-xs font-medium text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
               >
                 {isFullscreen ? (
                   <>

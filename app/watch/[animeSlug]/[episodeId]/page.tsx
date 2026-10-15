@@ -3,6 +3,7 @@ import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
+import { ReadMoreText } from "@/components/ui/ReadMoreText";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { EpisodeNavigation } from "@/components/episodes/EpisodeNavigation";
 import { EpisodeList } from "@/components/episodes/EpisodeList";
@@ -650,11 +651,12 @@ export default async function WatchPage({
             )}
           </h1>
           <p className="mt-1 text-sm text-text-secondary">{episode.title}</p>
-          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary">
-            {anime.synopsis && anime.synopsis !== SYNOPSIS_FALLBACK
+          <ReadMoreText
+            text={anime.synopsis && anime.synopsis !== SYNOPSIS_FALLBACK
               ? anime.synopsis
               : `Watch ${anime.title} ${isMovie ? "Full Movie" : `Season ${episode.season} Episode ${episode.number}`} on Hindi Anime.`}
-          </p>
+            className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary"
+          />
           <div className="mt-3 flex flex-wrap items-center gap-2.5">
             <Badge tone="outline">{isMovie ? "Movie" : `Season ${episode.season}`}</Badge>
             <Badge tone="green">{anime.status}</Badge>

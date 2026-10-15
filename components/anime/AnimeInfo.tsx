@@ -9,6 +9,7 @@ import Link from "next/link";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
 import { FavoriteButton } from "./FavoriteButton";
 import { buildWatchHref } from "@/lib/watch-routing";
+import { ReadMoreText } from "@/components/ui/ReadMoreText";
 
 export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeId?: string }) {
   const isMovie = item.type === "Movie" || firstEpisodeId === "movie";
@@ -73,11 +74,12 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
           <LanguageBadges languages={item.languages} max={item.languages.length} />
         )}
 
-        <p className="max-w-3xl text-sm leading-relaxed text-text-secondary md:text-[15px]">
-          {item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK
+        <ReadMoreText
+          text={item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK
             ? item.synopsis
             : `Stream ${item.title} on Hindi Anime.`}
-        </p>
+          className="max-w-3xl text-sm leading-relaxed text-text-secondary md:text-[15px]"
+        />
 
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <ButtonLink
