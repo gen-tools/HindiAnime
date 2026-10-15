@@ -1,13 +1,15 @@
 "use client";
 
 import { Search, Loader2 } from "lucide-react";
+import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useState, useRef, useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useRef, useEffect, useId } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { cleanAnimeSlug } from "@/lib/api/client";
 import type { Anime } from "@/types/anime";
+import type { LanguageCode } from "@/types/language";
 
 interface Suggestion {
   slug: string;
@@ -15,7 +17,29 @@ interface Suggestion {
   poster: string;
   year: number;
   type: string;
+  languages: LanguageCode[];
   score?: number;
+}
+
+function normalizeSearchQuery(query: string) {
+  return query.normalize("NFKC").trim().replace(/\s+/g, " ");
+}
+
+function getSuggestionPosterUrl(poster: string) {
+  if (!poster) return "";
+  if (poster.startsWith("/") && !poster.startsWith("//")) {
+    return `https://image.tmdb.org/t/p/w92${poster}`;
+  }
+  return poster.replace(
+    /(https?:\/\/image\.tmdb\.org\/t\/p\/)w\d+\//i,
+    "$1w92/"
+  );
+}
+
+function abortSearchRequest(controller: AbortController | null, reason: string) {
+  if (controller && !controller.signal.aborted) {
+    controller.abort(new DOMException(reason, "AbortError"));
+  }
 }
 
 export function SearchBar({
@@ -30,74 +54,99 @@ export function SearchBar({
   autoFocus?: boolean;
 }) {
   const router = useRouter();
-  const [value, setValue] = useState(defaultValue);
+  const pathname = usePathname();
+  const [inputState, setInputState] = useState({ defaultValue, value: defaultValue });
+  const value = inputState.defaultValue === defaultValue ? inputState.value : defaultValue;
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(false);
+  const [requestFailed, setRequestFailed] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const searchRequestIdRef = useRef(0);
+  const listboxId = useId();
 
   const debouncedValue = useDebounce(value, 600);
+  const normalizedQuery = normalizeSearchQuery(value);
+  const normalizedDebouncedQuery = normalizeSearchQuery(debouncedValue);
+  const hasValidQuery = normalizedQuery.length >= 3;
+  const isWaitingForDebounce = hasValidQuery && normalizedQuery !== normalizedDebouncedQuery;
+  const isSearching = hasValidQuery && (loading || isWaitingForDebounce);
+  const dropdownOpen = open && hasValidQuery;
 
   useEffect(() => {
-    setValue(defaultValue);
-  }, [defaultValue]);
+    // Close the popup after client-side navigation.
+    searchRequestIdRef.current += 1;
+    abortSearchRequest(abortRef.current, "Search route changed");
+    abortRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpen(false);
+    setActiveIndex(-1);
+    setLoading(false);
+  }, [pathname]);
 
   // Fetch suggestions whenever debounced value changes
   useEffect(() => {
-    const q = debouncedValue.trim();
+    const q = normalizeSearchQuery(debouncedValue);
     if (q.length < 3) {
-      abortRef.current?.abort();
+      abortSearchRequest(abortRef.current, "Search query is too short");
       abortRef.current = null;
-      setSuggestions([]);
-      setOpen(false);
-      setLoading(false);
       return;
     }
-
-    // Abort any in-flight request
-    abortRef.current?.abort();
+    abortSearchRequest(abortRef.current, "Search query changed");
+    const requestId = ++searchRequestIdRef.current;
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setSuggestions([]);
-    setOpen(false);
-    setActiveIndex(-1);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     const loadSuggestions = async () => {
       try {
         const res = await fetch(`/api/suggestions?q=${encodeURIComponent(q)}`, {
           signal: controller.signal,
         });
-        if (controller.signal.aborted || abortRef.current !== controller) return;
-        if (!res.ok) return;
+        if (controller.signal.aborted || searchRequestIdRef.current !== requestId) return;
+        if (!res.ok) {
+          setRequestFailed(true);
+          setHasSearched(true);
+          return;
+        }
         const data = await res.json() as { results?: Anime[] };
-        if (controller.signal.aborted || abortRef.current !== controller) return;
-        setSuggestions((data.results ?? []).slice(0, 8).map((item: Anime) => ({
+        if (controller.signal.aborted || searchRequestIdRef.current !== requestId) return;
+        setSuggestions((data.results ?? []).slice(0, 6).map((item: Anime) => ({
           slug: item.slug,
           title: item.title,
           poster: item.poster,
           year: item.year,
           type: item.type,
+          languages: item.languages ?? [],
         })));
         setOpen(true);
         setActiveIndex(-1);
+        setHasSearched(true);
       } catch (error) {
         if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
-        if (abortRef.current === controller) {
+        if (searchRequestIdRef.current === requestId) {
+          setRequestFailed(true);
+          setHasSearched(true);
           console.error("[SearchBar] Suggestions request failed:", error);
         }
       } finally {
-        if (abortRef.current === controller) setLoading(false);
+        if (searchRequestIdRef.current === requestId && abortRef.current === controller) {
+          setLoading(false);
+          abortRef.current = null;
+        }
       }
     };
 
     void loadSuggestions();
     return () => {
-      controller.abort();
+      abortSearchRequest(controller, "Search effect cleaned up");
+      if (searchRequestIdRef.current === requestId) searchRequestIdRef.current += 1;
       if (abortRef.current === controller) abortRef.current = null;
     };
   }, [debouncedValue]);
@@ -122,7 +171,7 @@ export function SearchBar({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = value.trim();
+    const trimmed = normalizedQuery;
     if (!trimmed) return;
 
     // If there's an active suggestion, navigate directly to it
@@ -138,19 +187,17 @@ export function SearchBar({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!open || suggestions.length === 0) return;
-
     if (e.key === "ArrowDown") {
+      if (!dropdownOpen || suggestions.length === 0) return;
       e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
+      setActiveIndex((i) => i < 0 ? 0 : (i + 1) % suggestions.length);
     } else if (e.key === "ArrowUp") {
+      if (!dropdownOpen || suggestions.length === 0) return;
       e.preventDefault();
-      setActiveIndex((i) => Math.max(i - 1, -1));
+      setActiveIndex((i) => i < 0 ? suggestions.length - 1 : (i - 1 + suggestions.length) % suggestions.length);
     } else if (e.key === "Escape") {
       setOpen(false);
       setActiveIndex(-1);
-    } else if (e.key === "Enter") {
-      // handled by handleSubmit
     }
   }
 
@@ -169,7 +216,7 @@ export function SearchBar({
   return (
     <div ref={containerRef} className={cn("relative w-full", className)}>
       <form onSubmit={handleSubmit} role="search" className="relative w-full">
-        {loading ? (
+        {isSearching ? (
           <Loader2
             className={cn(
               "pointer-events-none absolute top-1/2 -translate-y-1/2 animate-spin text-green-bright",
@@ -188,19 +235,34 @@ export function SearchBar({
           ref={inputRef}
           type="search"
           role="combobox"
-          aria-expanded={open}
+          aria-expanded={dropdownOpen}
+          aria-haspopup="listbox"
           aria-autocomplete="list"
-          aria-activedescendant={activeIndex >= 0 ? `suggestion-${activeIndex}` : undefined}
+          aria-controls={listboxId}
+          aria-activedescendant={dropdownOpen && activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
           value={value}
           onChange={(e) => {
-            setValue(e.target.value);
-            if (e.target.value.trim().length < 2) {
+            abortSearchRequest(abortRef.current, "Search query changed");
+            abortRef.current = null;
+            searchRequestIdRef.current += 1;
+            setLoading(false);
+            setInputState({ defaultValue, value: e.target.value });
+            const nextQuery = normalizeSearchQuery(e.target.value);
+            if (nextQuery.length < 3) {
               setOpen(false);
               setSuggestions([]);
+              setHasSearched(false);
+              setRequestFailed(false);
+            } else {
+              setOpen(true);
+              setActiveIndex(-1);
+              setSuggestions([]);
+              setHasSearched(false);
+              setRequestFailed(false);
             }
           }}
           onFocus={() => {
-            if (suggestions.length > 0) setOpen(true);
+            if (hasValidQuery) setOpen(true);
           }}
           onKeyDown={handleKeyDown}
           autoFocus={autoFocus}
@@ -210,91 +272,103 @@ export function SearchBar({
           className={cn(
             "focus-ring w-full rounded-full border border-border-line bg-surface pr-4 text-text-primary placeholder:text-text-muted transition-colors focus:border-green-bright/70 focus:shadow-[0_0_0_4px_rgba(34,197,94,0.12)]",
             sizeClass,
-            open && suggestions.length > 0 ? "rounded-b-none border-b-0 rounded-t-2xl" : ""
+            dropdownOpen ? "rounded-b-none border-b-0 rounded-t-2xl" : ""
           )}
         />
       </form>
 
-      {/* Suggestions Dropdown */}
-      {open && suggestions.length > 0 && (
-        <ul
-          role="listbox"
-          aria-label="Search suggestions"
-          className="search-suggestions-enter absolute left-0 right-0 z-50 max-h-80 overflow-y-auto rounded-b-2xl border border-t-0 border-border-line bg-surface shadow-xl"
-        >
-          {suggestions.map((item, idx) => {
-            const isActive = idx === activeIndex;
-            return (
-              <li
-                key={item.slug}
-                id={`suggestion-${idx}`}
-                role="option"
-                aria-selected={isActive}
-              >
-                <button
-                  type="button"
-                  onPointerDown={(e) => {
-                    // pointerdown fires before blur so we prevent blur first
-                    e.preventDefault();
-                    navigateTo(item.slug);
-                  }}
-                  className={cn(
-                    "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
-                    isActive
-                      ? "bg-green-primary/10 text-white"
-                      : "text-text-secondary hover:bg-surface-elevated hover:text-white"
-                  )}
-                >
-                  {/* Poster thumbnail */}
-                  <div className="relative h-10 w-7 shrink-0 overflow-hidden rounded border border-border-line bg-surface-elevated">
-                    {item.poster.startsWith("http") ? (
-                      <Image
-                        src={item.poster}
-                        alt={item.title}
-                        fill
-                        sizes="28px"
-                        className="object-cover"
-                        unoptimized
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-[8px] font-bold text-green-bright">
-                        {item.title.slice(0, 2).toUpperCase()}
-                      </div>
+      {dropdownOpen && (
+        <div className="search-suggestions-enter absolute left-0 right-0 top-full z-[100] mt-2 overflow-hidden rounded-xl border border-emerald-500/20 bg-black/90 shadow-2xl backdrop-blur-xl">
+          <ul
+            id={listboxId}
+            role="listbox"
+            aria-label="Search suggestions"
+            className="max-h-[min(60vh,22rem)] overflow-y-auto py-1"
+          >
+            {isSearching ? (
+              Array.from({ length: 3 }, (_, idx) => (
+                <li key={`search-skeleton-${idx}`} aria-hidden="true" className="flex items-center gap-3 px-3 py-2.5">
+                  <span className="h-12 w-9 shrink-0 animate-pulse rounded bg-emerald-950/70" />
+                  <span className="min-w-0 flex-1 space-y-2">
+                    <span className="block h-3 w-3/5 animate-pulse rounded bg-white/10" />
+                    <span className="block h-2.5 w-2/5 animate-pulse rounded bg-white/5" />
+                  </span>
+                </li>
+              ))
+            ) : suggestions.map((item, idx) => {
+                const isActive = idx === activeIndex;
+                const posterUrl = getSuggestionPosterUrl(item.poster);
+                const languageBadges = [
+                  ["hindi", "Hindi"],
+                  ["tamil", "Tamil"],
+                  ["telugu", "Telugu"],
+                ].filter(([language]) => item.languages.includes(language as LanguageCode));
+
+                return (
+                  <li
+                    key={item.slug}
+                    id={`${listboxId}-option-${idx}`}
+                    role="option"
+                    aria-selected={isActive}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      navigateTo(item.slug);
+                    }}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors",
+                      isActive ? "bg-emerald-500/15" : "hover:bg-white/5"
                     )}
-                  </div>
-
-                  {/* Info */}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-text-primary">{item.title}</p>
-                    <p className="text-xs text-text-muted">
-                      {item.year} · {item.type}
-                      {typeof item.score === "number" && item.score < 0.85 && (
-                        <span className="ml-1.5 text-green-bright/60">~similar</span>
+                  >
+                    <div className="relative h-12 w-9 shrink-0 overflow-hidden rounded-md border border-emerald-500/15 bg-emerald-950/60">
+                      {posterUrl.startsWith("http") ? (
+                        <Image
+                          src={posterUrl}
+                          alt={item.title}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-[9px] font-bold text-emerald-300">
+                          {item.title.slice(0, 2).toUpperCase()}
+                        </div>
                       )}
-                    </p>
-                  </div>
+                    </div>
 
-                </button>
-              </li>
-            );
-          })}
-
-          {/* Search all results footer */}
-          <li>
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                setOpen(false);
-                router.push(`/search?q=${encodeURIComponent(value.trim())}`);
-              }}
-              className="flex w-full items-center gap-2 border-t border-border-line px-4 py-2.5 text-sm text-text-muted transition-colors hover:text-green-light"
-            >
-              <Search className="h-3.5 w-3.5" />
-              Search all results for &quot;{value}&quot;
-            </button>
-          </li>
-        </ul>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-white">{item.title}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-white/55">
+                        <span>{item.type}{item.year ? ` · ${item.year}` : ""}</span>
+                        {languageBadges.map(([, label]) => (
+                          <span key={label} className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium leading-none text-emerald-200">
+                            {label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+          </ul>
+          {!isSearching && suggestions.length === 0 && (
+            <p className="px-4 py-4 text-sm text-white/60" role="status">
+              {requestFailed
+                ? "Suggestions could not be loaded."
+                : hasSearched
+                  ? `No results for '${normalizedQuery}'`
+                  : "Searching…"}
+            </p>
+          )}
+          <Link
+            href={`/search?q=${encodeURIComponent(normalizedQuery)}`}
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 border-t border-emerald-500/15 px-4 py-3 text-left text-sm text-emerald-200/80 transition-colors hover:bg-emerald-500/10 hover:text-emerald-100"
+          >
+            <Search className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">See all results for &apos;{normalizedQuery}&apos;</span>
+          </Link>
+        </div>
       )}
     </div>
   );

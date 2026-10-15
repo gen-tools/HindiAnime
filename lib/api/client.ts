@@ -1382,8 +1382,9 @@ export async function getCatalog(
 }
 
 /**
- * Searches through the API's query endpoint. Falling back to a full multi-page
- * catalog scan on a no-match query multiplied one search into dozens of calls.
+ * Searches the API first, then AnimeSalt's single search-results page if the
+ * API is unavailable or returns no matches. Autocomplete uses its own bounded
+ * one-page fallback and does not scan the full catalog.
  */
 export async function searchGlobalAnime(
   query: string,
@@ -1398,9 +1399,9 @@ export async function searchGlobalAnime(
 
   // 1. Query live search for both query and alias (e.g. jjk -> jujutsu kaisen)
   const [searchResp, aliasResp] = await Promise.all([
-    searchAnime(cleanQ, page, { allowScraperFallback: false }),
+    searchAnime(cleanQ, page),
     aliasTerm && aliasTerm !== cleanQ.toLowerCase()
-      ? searchAnime(aliasTerm, page, { allowScraperFallback: false })
+      ? searchAnime(aliasTerm, page)
       : Promise.resolve(null),
   ]);
 
@@ -1448,7 +1449,7 @@ export async function searchGlobalAnime(
     };
   }
 
-  // Keep no-match/error fallback local; never turn one query into a full catalog sweep.
+  // Keep typo/no-match fallback local if both the API and AnimeSalt search fail.
   const ranked = fuzzySearch(cleanQ, anime, 0.4);
   const currentPage = Math.max(1, page);
   const start = (currentPage - 1) * GLOBAL_SEARCH_PAGE_SIZE;
@@ -1471,7 +1472,7 @@ type SearchSuggestion = {
   score: number;
 };
 
-/** Typeahead is a bounded API-only lookup; it never scans the full catalog. */
+/** Typeahead uses the search API, with one AnimeSalt results-page fallback on a miss. */
 export async function getSearchSuggestions(query: string): Promise<SearchSuggestion[]> {
   const state = getSearchSuggestions as typeof getSearchSuggestions & {
     cache?: Map<string, { results: SearchSuggestion[]; timestamp: number }>;
@@ -1492,7 +1493,7 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
     const alias = COMMON_ACRONYMS[cacheKey];
     const queries = alias && alias !== cacheKey ? [cleanQuery, alias] : [cleanQuery];
     const responses = await Promise.all(
-      queries.map((term) => searchAnime(term, 1, { allowScraperFallback: false }))
+      queries.map((term) => searchAnime(term, 1))
     );
     const seen = new Set<string>();
     const scored: SearchSuggestion[] = [];
@@ -2053,11 +2054,10 @@ export async function searchAnime(
     console.error("searchAnime API error:", err);
   }
 
-  // Typeahead suggestions must stay a single bounded API lookup. A no-match
-  // keystroke must not trigger a full AnimeSalt search/catalog scrape.
+  // Callers can disable scraping when they need an API-only lookup.
   if (options.allowScraperFallback === false) return null;
 
-  // 2. Direct search scraper fallback across full AnimeSalt database (2,500+ titles)
+  // 2. Search one AnimeSalt results page; do not scan the full catalog.
   try {
     const scraped = await scrapeAnimeSaltSearch(cleanKeyword, page);
     if (scraped && scraped.results.length > 0) {
