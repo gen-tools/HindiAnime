@@ -26,7 +26,7 @@ export const maxDuration = 60;
 
 /** Toko streaming aggregator backend */
 const TOKO_API_URL = (
-  process.env.TOKO_API_URL || "https://api-delta-taupe-46.vercel.app"
+  process.env.TOKO_API_URL || "https://anime-api2-nine.vercel.app"
 ).replace(/\/+$/, "");
 
 const TOKO_TIMEOUT_MS = 25_000;
