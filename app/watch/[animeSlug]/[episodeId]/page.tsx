@@ -42,13 +42,6 @@ import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 
-export const revalidate = 300;
-export const dynamicParams = true;
-
-export function generateStaticParams() {
-  return [];
-}
-
 const getWatchPageBaseData = cache(async (slug: string) => {
   const searchKeyword = formatDisplayTitle(slug).toLowerCase();
   return Promise.all([

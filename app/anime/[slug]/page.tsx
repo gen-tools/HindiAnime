@@ -66,13 +66,6 @@ const getAnimePageBaseData = cache(async (slug: string) => {
 const getAnimePageEpisodes = cache((slug: string, season: number) => getEpisodes(slug, season));
 const getAnimePageSeasons = cache((slug: string) => getAvailableSeasons(slug));
 
-export const revalidate = 300;
-export const dynamicParams = true;
-
-export function generateStaticParams() {
-  return [];
-}
-
 export async function generateMetadata({
   params,
 }: {

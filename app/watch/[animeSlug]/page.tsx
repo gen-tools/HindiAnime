@@ -25,13 +25,6 @@ import {
   SYNOPSIS_FALLBACK,
 } from "@/lib/api/client";
 
-export const revalidate = 300;
-export const dynamicParams = true;
-
-export function generateStaticParams() {
-  return [];
-}
-
 const getMovieWatchPageData = cache(async (slug: string) => {
   const keyword = formatDisplayTitle(slug).toLowerCase();
   return Promise.all([
