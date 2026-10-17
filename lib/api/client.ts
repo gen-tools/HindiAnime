@@ -41,12 +41,39 @@ function rethrowNextControlFlow(error: unknown): void {
 }
 
 type CachedCatalogFetch = (kind: "series" | "movies", page: number) => Promise<AnimeCatalogResponse>;
+type CachedSearchFetch = (query: string, page: number) => Promise<AnimeSearchResponse>;
 let cachedCatalogApiFetch: CachedCatalogFetch | undefined;
+let cachedAnimeSearchFetch: CachedSearchFetch | undefined;
 const animeSearchResultCache = new Map<
   string,
   { expiresAt: number; data: AnimeSearchResponse }
 >();
 const animeSearchInFlight = new Map<string, Promise<AnimeSearchResponse | null>>();
+
+function getCachedAnimeSearchFetch(): CachedSearchFetch {
+  if (!cachedAnimeSearchFetch) {
+    // Cache the validated, parsed search result. Failed and empty responses throw
+    // before Next.js stores an entry; normalized query + page form the key.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
+    cachedAnimeSearchFetch = unstable_cache(
+      async (query: string, page: number) => {
+        const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(query)}&page=${page}`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Search API returned ${response.status}`);
+
+        const data = (await response.json()) as AnimeSearchResponse;
+        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
+          throw new Error("Search API returned no entries");
+        }
+        return data;
+      },
+      ["validated-anime-search-v2"],
+      { revalidate: SEARCH_CACHE_SECONDS }
+    ) as CachedSearchFetch;
+  }
+  return cachedAnimeSearchFetch;
+}
 
 function getCachedCatalogApiFetch(): CachedCatalogFetch {
   if (!cachedCatalogApiFetch) {
@@ -77,8 +104,8 @@ async function fetchCachedAnimeSearch(
   query: string,
   page: number
 ): Promise<AnimeSearchResponse | null> {
-  // Cache only validated successes. An in-memory cache avoids Next's background
-  // revalidation error when the upstream responds with an HTTP error such as 402.
+  // Keep a bounded process cache and share concurrent misses; Next's persistent
+  // cache below stores only validated, nonempty API results.
   const key = `${query}\u0000${page}`;
   const cached = animeSearchResultCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
@@ -89,14 +116,7 @@ async function fetchCachedAnimeSearch(
 
   const request = (async () => {
     try {
-      const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(query)}&page=${page}`;
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) return null;
-
-      const data = (await response.json()) as AnimeSearchResponse;
-      if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
-        return null;
-      }
+      const data = await getCachedAnimeSearchFetch()(query, page);
 
       if (animeSearchResultCache.size >= 200) {
         const oldestKey = animeSearchResultCache.keys().next().value;
