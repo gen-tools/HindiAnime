@@ -13,8 +13,8 @@ export const runtime = "nodejs";
  * Responses are cached by the browser for 60 s (stale-while-revalidate: 120).
  */
 export async function GET(req: NextRequest) {
-  const rawQ = req.nextUrl.searchParams.get("q")?.trim() ?? "";
-  const q = rawQ.slice(0, 100);
+  const rawQ = req.nextUrl.searchParams.get("q") ?? "";
+  const q = rawQ.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 100);
 
   // 3-character minimum — reject shorter queries without hitting the Worker
   if (!q || q.length < 3) {

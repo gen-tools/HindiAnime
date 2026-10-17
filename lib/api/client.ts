@@ -28,6 +28,67 @@ import { shareInFlightRequest } from "@/lib/api/in-flight";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
 
+const CATALOG_CACHE_SECONDS = 300;
+const SEARCH_CACHE_SECONDS = 60;
+
+function normalizeApiSearchQuery(query: string): string {
+  return query.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+type CachedCatalogFetch = (kind: "series" | "movies", page: number) => Promise<AnimeCatalogResponse>;
+type CachedSearchFetch = (query: string, page: number) => Promise<AnimeSearchResponse>;
+let cachedCatalogApiFetch: CachedCatalogFetch | undefined;
+let cachedAnimeSearchFetch: CachedSearchFetch | undefined;
+
+function getCachedCatalogApiFetch(): CachedCatalogFetch {
+  if (!cachedCatalogApiFetch) {
+    // The persistent cache surrounds validation, so failed and empty payloads
+    // throw before Next.js stores a cache entry. Arguments key by kind + page.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
+    cachedCatalogApiFetch = unstable_cache(
+      async (kind: "series" | "movies", page: number) => {
+        const response = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`Catalog API returned ${response.status}`);
+        const data = (await response.json()) as AnimeCatalogResponse;
+        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
+          throw new Error("Catalog API returned no entries");
+        }
+        return data;
+      },
+      ["validated-anime-catalog-v1"],
+      { revalidate: CATALOG_CACHE_SECONDS }
+    ) as CachedCatalogFetch;
+  }
+  return cachedCatalogApiFetch;
+}
+
+function getCachedAnimeSearchFetch(): CachedSearchFetch {
+  if (!cachedAnimeSearchFetch) {
+    // The normalized query + page are the cache arguments. Only nonempty,
+    // successful API responses are stored.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
+    cachedAnimeSearchFetch = unstable_cache(
+      async (query: string, page: number) => {
+        const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(query)}&page=${page}`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Search API returned ${response.status}`);
+        const data = (await response.json()) as AnimeSearchResponse;
+        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
+          throw new Error("Search API returned no entries");
+        }
+        return data;
+      },
+      ["validated-anime-search-v1"],
+      { revalidate: SEARCH_CACHE_SECONDS }
+    ) as CachedSearchFetch;
+  }
+  return cachedAnimeSearchFetch;
+}
+
 const KNOWN_LANGUAGES: Record<string, LanguageCode> = {
   hindi: "hindi",
   english: "english",
@@ -1320,19 +1381,20 @@ export async function getCatalog(
 ): Promise<AnimeCatalogResponse | null> {
   // 1. Try upstream JSON API first
   try {
-    // The catalog API uses its existing persistent last-good cache when Redis
-    // is configured. Avoid caching an upstream failure in Next.js so a retry
-    // can recover as soon as the source/API is available again.
-    const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
-      cache: "no-store",
-      signal: options.signal,
-    });
-    if (res.ok) {
-      const data = (await res.json()) as AnimeCatalogResponse;
-      if (data?.results?.results && Array.isArray(data.results.results) && data.results.results.length > 0) {
-        return data;
-      }
-    }
+    const data = typeof window === "undefined" && !options.signal
+      ? await getCachedCatalogApiFetch()(kind, page)
+      : await (async () => {
+          const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
+            cache: "no-store",
+            signal: options.signal,
+          });
+          if (!res.ok) return null;
+          const responseData = (await res.json()) as AnimeCatalogResponse;
+          return Array.isArray(responseData?.results?.results) && responseData.results.results.length > 0
+            ? responseData
+            : null;
+        })();
+    if (data) return data;
   } catch (err) {
     console.error(`getCatalog ${kind} API error:`, err);
   }
@@ -2050,24 +2112,19 @@ export async function searchAnime(
   page: number = 1,
   options: { allowScraperFallback?: boolean } = {}
 ): Promise<AnimeSearchResponse | null> {
-  const cleanKeyword = keyword?.trim();
+  const cleanKeyword = normalizeApiSearchQuery(keyword || "");
   if (!cleanKeyword) return null;
 
   // 1. Try upstream API
   try {
+    if (typeof window === "undefined") {
+      return await getCachedAnimeSearchFetch()(cleanKeyword, page);
+    }
     const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`;
-    const res = await fetch(url, {
-      next: { revalidate: 60 },
-    });
+    const res = await fetch(url, { cache: "no-store" });
     if (res.ok) {
       const data: AnimeSearchResponse = await res.json();
-      if (
-        data?.results?.results &&
-        Array.isArray(data.results.results) &&
-        data.results.results.length > 0
-      ) {
-        return data;
-      }
+      if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
     }
   } catch (err) {
     console.error("searchAnime API error:", err);
