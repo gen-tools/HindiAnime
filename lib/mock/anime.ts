@@ -1,17 +1,19 @@
 import type { Anime } from "@/types/anime";
 import { matchesCountry } from "./countries";
+import { MOCK_ARTWORK_URL } from "./artwork";
 
 export const anime: Anime[] = [
   // --- POPULAR & TRENDING TV SERIES ---
   {
     id: "a01",
     slug: "ashfall-requiem",
+    isMock: true,
     title: "Ashfall Requiem",
     alternativeTitle: "灰塵鎮魂歌",
     synopsis:
       "When a volcanic empire collapses overnight, an exiled swordwright and a rogue oracle race across the ashlands to stop a second, deadlier eruption engineered by the empire's last general.",
-    poster: "https://image.tmdb.org/t/p/w500/EwgegTmDUuf71tjZCswhJGo79F.jpg",
-    backdrop: "ashfall-requiem-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.8,
     year: 2026,
     type: "TV",
@@ -194,11 +196,12 @@ export const anime: Anime[] = [
   {
     id: "a09",
     slug: "glasshour",
+    isMock: true,
     title: "Glasshour",
     synopsis:
       "A clockmaker's apprentice discovers she can rewind exactly sixty seconds — and must use it to keep a floating city from shattering apart, one repeated minute at a time.",
-    poster: "https://image.tmdb.org/t/p/w500/723NT7KY9xBFLYNNBaEEREbLaPC.jpg",
-    backdrop: "glasshour-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.5,
     year: 2026,
     type: "TV",
@@ -216,11 +219,12 @@ export const anime: Anime[] = [
   {
     id: "a10",
     slug: "crimson-net-academy",
+    isMock: true,
     title: "Crimson Net Academy",
     synopsis:
       "Six strangers are enrolled in a school that doesn't exist on any map, competing in a deadly volleyball-like sport where losing a match erases a memory.",
-    poster: "https://image.tmdb.org/t/p/w500/e0B6i48kxdRkMcK4tR4YNfXGWOc.jpg",
-    backdrop: "crimson-net-academy-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.2,
     year: 2025,
     type: "TV",
@@ -238,11 +242,12 @@ export const anime: Anime[] = [
   {
     id: "a11",
     slug: "the-last-lantern-keeper",
+    isMock: true,
     title: "The Last Lantern Keeper",
     synopsis:
       "In a world where night is a physical predator, one boy inherits his grandmother's lantern and the impossible job of walking villages safely till dawn.",
-    poster: "https://image.tmdb.org/t/p/w500/fkZ19fifxAOAxbE2ZJvXGVvDDGs.jpg",
-    backdrop: "the-last-lantern-keeper-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 9.0,
     year: 2025,
     type: "TV",
@@ -260,11 +265,12 @@ export const anime: Anime[] = [
   {
     id: "a12",
     slug: "static-bloom",
+    isMock: true,
     title: "Static Bloom",
     synopsis:
       "A synth-pop idol group discovers their newest member can hear the emotions hidden inside broken radios — and the static is trying to warn them of something.",
-    poster: "https://image.tmdb.org/t/p/w500/wVJjyUbns2USXo1bolF2vGanvf6.jpg",
-    backdrop: "static-bloom-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 7.9,
     year: 2026,
     type: "TV",
@@ -281,11 +287,12 @@ export const anime: Anime[] = [
   {
     id: "a13",
     slug: "ironroot",
+    isMock: true,
     title: "Ironroot",
     synopsis:
       "A tree that grows machinery instead of branches has been sealed for a thousand years. When it wakes, only a disgraced blacksmith knows how to speak to it.",
-    poster: "https://image.tmdb.org/t/p/w500/jQb1ztdko9qc4aCdnMXShcIHXRG.jpg",
-    backdrop: "ironroot-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.4,
     year: 2025,
     type: "TV",
@@ -301,11 +308,12 @@ export const anime: Anime[] = [
   {
     id: "a14",
     slug: "nine-tail-transit",
+    isMock: true,
     title: "Nine Tail Transit",
     synopsis:
       "A part-time train conductor moonlights as a spirit courier, delivering lost souls between stations that only appear at 3:33 in the morning.",
-    poster: "https://image.tmdb.org/t/p/w500/4LaPshxWTFcBhc5ib8xOfYeD9tH.jpg",
-    backdrop: "nine-tail-transit-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.1,
     year: 2025,
     type: "TV",
@@ -321,11 +329,12 @@ export const anime: Anime[] = [
   {
     id: "a15",
     slug: "velvet-orbit",
+    isMock: true,
     title: "Velvet Orbit",
     synopsis:
       "The crew of a bankrupt cargo ship accepts one impossible job: smuggle a sentient nebula across three hostile star systems before it's weaponized.",
-    poster: "https://image.tmdb.org/t/p/w500/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg",
-    backdrop: "velvet-orbit-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.6,
     year: 2026,
     type: "TV",
@@ -341,11 +350,12 @@ export const anime: Anime[] = [
   {
     id: "a16",
     slug: "chalkline",
+    isMock: true,
     title: "Chalkline",
     synopsis:
       "A detective who can only see the ghosts of people who died mid-sentence partners with the one witness stubborn enough to keep talking to her.",
-    poster: "https://image.tmdb.org/t/p/w500/gHVfuuOXPVs0ltFbOZQjxpXtSSH.jpg",
-    backdrop: "chalkline-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.4,
     year: 2026,
     type: "TV",
@@ -361,11 +371,12 @@ export const anime: Anime[] = [
   {
     id: "a17",
     slug: "sundial-hearts",
+    isMock: true,
     title: "Sundial Hearts",
     synopsis:
       "Two rival campus radio DJs are forced to co-host the graveyard shift and slowly realize their playlists have been talking to each other for months.",
-    poster: "https://image.tmdb.org/t/p/w500/bADzMfofNWYdxLnlqNuMkO6du34.jpg",
-    backdrop: "sundial-hearts-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 7.8,
     year: 2026,
     type: "TV",
@@ -381,11 +392,12 @@ export const anime: Anime[] = [
   {
     id: "a18",
     slug: "hollow-court",
+    isMock: true,
     title: "Hollow Court",
     synopsis:
       "Reborn as the least important prince in a kingdom of ice, one boy must win a game of political chess where every piece is trying to poison him.",
-    poster: "https://image.tmdb.org/t/p/w500/kqeKlSd7o9BCbTraZsDnksRSfxm.jpg",
-    backdrop: "hollow-court-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 7.7,
     year: 2026,
     type: "TV",
@@ -401,11 +413,12 @@ export const anime: Anime[] = [
   {
     id: "a19",
     slug: "moth-and-machine",
+    isMock: true,
     title: "Moth & Machine",
     synopsis:
       "A repair drone imprinted with the memories of a dead pilot must decide whether to finish her final mission or protect the child who rebuilt it.",
-    poster: "https://image.tmdb.org/t/p/w500/qx3SJlAp2RK656TusqKx1qEqVMW.jpg",
-    backdrop: "moth-and-machine-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.7,
     year: 2026,
     type: "TV",
@@ -421,11 +434,12 @@ export const anime: Anime[] = [
   {
     id: "a20",
     slug: "the-rooftop-league",
+    isMock: true,
     title: "The Rooftop League",
     synopsis:
       "Underdog rooftop basketball players in a rain-soaked megacity chase a shot at the one tournament that could get them off the block for good.",
-    poster: "https://image.tmdb.org/t/p/w500/1TfdgQbZXuEswjqLYlsVvhHw0Py.jpg",
-    backdrop: "the-rooftop-league-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.3,
     year: 2025,
     type: "TV",
@@ -441,11 +455,12 @@ export const anime: Anime[] = [
   {
     id: "a21",
     slug: "wolftide",
+    isMock: true,
     title: "Wolftide",
     synopsis:
       "A fishing village cursed to turn wolf at high tide finds an unlikely protector in the outsider hired to fix their lighthouse.",
-    poster: "https://image.tmdb.org/t/p/w500/q719jXXEzOoYaps6babgKnONONX.jpg",
-    backdrop: "wolftide-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.5,
     year: 2024,
     type: "TV",
@@ -461,11 +476,12 @@ export const anime: Anime[] = [
   {
     id: "a22",
     slug: "the-quiet-apocalypse",
+    isMock: true,
     title: "The Quiet Apocalypse",
     synopsis:
       "The world ended without a sound six months ago. A shut-in gamer and his elderly neighbor may be the last two people who haven't noticed yet.",
-    poster: "https://image.tmdb.org/t/p/w500/qgrk7r1fV4IjuoeiGS5HOhXNdLJ.jpg",
-    backdrop: "the-quiet-apocalypse-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.9,
     year: 2026,
     type: "TV",
@@ -679,11 +695,12 @@ export const anime: Anime[] = [
   {
     id: "m10",
     slug: "paperskin",
+    isMock: true,
     title: "Paperskin",
     synopsis:
       "An origami artisan folds a paper soldier so precisely it comes to life — loyal, obedient, and one rainstorm away from falling apart forever.",
-    poster: "https://image.tmdb.org/t/p/w500/beZGic7PCVEUW06Y9cOmhiQZZRj.jpg",
-    backdrop: "paperskin-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.9,
     year: 2025,
     type: "Movie",
@@ -699,11 +716,12 @@ export const anime: Anime[] = [
   {
     id: "m11",
     slug: "brassbound",
+    isMock: true,
     title: "Brassbound",
     synopsis:
       "An orchestra of mechanical soldiers is the only thing standing between a walled city and a war that ended everywhere else fifty years ago.",
-    poster: "https://image.tmdb.org/t/p/w500/pbcpCQ8sHRUhNCeCnBTgdver4N6.jpg",
-    backdrop: "brassbound-backdrop",
+    poster: MOCK_ARTWORK_URL,
+    backdrop: MOCK_ARTWORK_URL,
     rating: 8.6,
     year: 2024,
     type: "Movie",

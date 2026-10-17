@@ -25,5 +25,7 @@ export interface Anime {
   popularityRank?: number;
   trendingRank?: number;
   isFeatured?: boolean;
+  /** Marks curated placeholder records that are not verified real catalog entries. */
+  isMock?: boolean;
   updatedAt: string;
 }

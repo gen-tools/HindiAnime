@@ -13,4 +13,5 @@ export interface Episode {
   languages: LanguageCode[];
   releasedAt: string;
   isNew?: boolean;
+  isMock?: boolean;
 }

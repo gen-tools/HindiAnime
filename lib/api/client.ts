@@ -24,6 +24,7 @@ import { fuzzySearch, fuzzyScore, COMMON_ACRONYMS } from "@/lib/fuzzy-search";
 import { anime, getAnimeBySlug, getAnimeByGenre, getAnimeByLanguage, getAnimeByCountry } from "@/lib/mock/anime";
 import { matchesCountry } from "@/lib/mock/countries";
 import { shareInFlightRequest } from "@/lib/api/in-flight";
+import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -450,12 +451,18 @@ export function mapSearchItemToAnime(
   const cleanSlug =
     cleanAnimeSlug(item.anime_id) ||
     item.title.toLowerCase().replace(/\s+/g, "-");
+  const mock = getAnimeBySlug(cleanSlug);
 
   // poster may be null from API — only use if it's a real http URL
-  const poster = isUsableImageUrl(item.poster) ? item.poster : "";
+  const poster = mock?.isMock
+    ? MOCK_ARTWORK_URL
+    : isUsableImageUrl(item.poster)
+    ? item.poster
+    : "";
 
-  const backdrop = getAnimeBackdrop(cleanSlug, poster || undefined);
-  const mock = getAnimeBySlug(cleanSlug);
+  const backdrop = mock?.isMock
+    ? MOCK_ARTWORK_URL
+    : getAnimeBackdrop(cleanSlug, poster || undefined);
   const genres = mock?.genres && mock.genres.length > 0 ? [...mock.genres] : [];
 
   const rawTitleLower = (item.title || "").toLowerCase();
@@ -496,7 +503,7 @@ export function mapSearchItemToAnime(
     title: item.title || cleanSlug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
     synopsis: mock?.synopsis || SYNOPSIS_FALLBACK,
     poster,
-    backdrop,
+    backdrop: mock?.isMock ? MOCK_ARTWORK_URL : backdrop,
     rating: mock?.rating || 0,
     year: mock?.year || 0,
     type,
@@ -509,6 +516,7 @@ export function mapSearchItemToAnime(
     seasons: mock?.seasons || 0,
     studio: mock?.studio || "",
     updatedAt: mock?.updatedAt || "",
+    ...(mock?.isMock ? { isMock: true } : {}),
   };
 }
 
@@ -610,13 +618,18 @@ export function mapApiInfoToAnime(
       .replace(/\b\w/g, (c) => c.toUpperCase());
 
   // Poster: API often returns "https:data:image/svg..." — only use real http URL
-  const poster = isUsableImageUrl(data.poster)
+  const mock = getAnimeBySlug(cleanSlug);
+  const poster = mock?.isMock
+    ? MOCK_ARTWORK_URL
+    : isUsableImageUrl(data.poster)
     ? data.poster
     : isUsableImageUrl(fallbackPoster)
     ? fallbackPoster
     : "";
 
-  const backdrop = getAnimeBackdrop(cleanSlug, poster || undefined);
+  const backdrop = mock?.isMock
+    ? MOCK_ARTWORK_URL
+    : getAnimeBackdrop(cleanSlug, poster || undefined);
 
   // Genres: API returns [] when it fails — use action as default
   const genres =
@@ -650,6 +663,7 @@ export function mapApiInfoToAnime(
     seasons: parsedSeasons,
     studio: "",
     updatedAt: "",
+    ...(mock?.isMock ? { isMock: true } : {}),
   };
 }
 
@@ -660,7 +674,10 @@ export function mapMovieInfoToAnime(
 ): Anime {
   const slug = cleanAnimeSlug(data.anime_id);
   const title = data.title?.trim() || fallbackTitle || slug.replace(/-/g, " ");
-  const poster = isUsableImageUrl(data.poster)
+  const mock = getAnimeBySlug(slug);
+  const poster = mock?.isMock
+    ? MOCK_ARTWORK_URL
+    : isUsableImageUrl(data.poster)
     ? data.poster
     : isUsableImageUrl(fallbackPoster)
     ? fallbackPoster
@@ -672,7 +689,7 @@ export function mapMovieInfoToAnime(
     title,
     synopsis: getApiSynopsis(data),
     poster,
-    backdrop: getAnimeBackdrop(slug, poster || undefined),
+    backdrop: mock?.isMock ? MOCK_ARTWORK_URL : getAnimeBackdrop(slug, poster || undefined),
     rating: Number(data.rating) || 0,
     year: Number(data.year) || 0,
     type: "Movie",
@@ -684,6 +701,7 @@ export function mapMovieInfoToAnime(
     seasons: 1,
     studio: "",
     updatedAt: "",
+    ...(mock?.isMock ? { isMock: true } : {}),
   };
 }
 
@@ -706,6 +724,8 @@ export function mapApiEpisodeToEpisode(
   seasonOverride: number = 1,
   arrayIndex: number = 0
 ): Episode {
+  const mock = getAnimeBySlug(animeSlug);
+  if (mock?.isMock) animePoster = MOCK_ARTWORK_URL;
   // item.episode does not exist in the real API — item.season is the episode number
   // If parsed number is 0 or NaN, fall back to 1-based array index
   const parsedNum = parseInt(item.episode || item.season, 10);
@@ -716,7 +736,9 @@ export function mapApiEpisodeToEpisode(
 
   // Use the episode image if it's a real URL, otherwise fall back to animePoster
   const thumbnail =
-    isUsableImageUrl(item.image)
+    mock?.isMock
+      ? MOCK_ARTWORK_URL
+      : isUsableImageUrl(item.image)
       ? item.image
       : animePoster;
 
@@ -732,6 +754,7 @@ export function mapApiEpisodeToEpisode(
     durationMinutes: 24,
     languages,
     releasedAt: "",
+    ...(mock?.isMock ? { isMock: true } : {}),
   };
 }
 
@@ -2217,7 +2240,12 @@ function mapFreshDropToEpisode(item: HomepageFreshDropItem): Episode {
     .filter((number) => Number.isFinite(number));
   const episodeNumber = episodeNumbers.length ? Math.max(...episodeNumbers) : 1;
   const season = Number(item.season) || 1;
-  const poster = isUsableImageUrl(item.poster) ? item.poster : "";
+  const mock = getAnimeBySlug(animeSlug);
+  const poster = mock?.isMock
+    ? MOCK_ARTWORK_URL
+    : isUsableImageUrl(item.poster)
+    ? item.poster
+    : "";
 
   return {
     id: `ep-${season}-${episodeNumber}`,
@@ -2232,6 +2260,7 @@ function mapFreshDropToEpisode(item: HomepageFreshDropItem): Episode {
     languages: [],
     releasedAt: "",
     isNew: true,
+    ...(mock?.isMock ? { isMock: true } : {}),
   };
 }
 
@@ -2252,7 +2281,12 @@ export function mapLatestEpisodeToEpisode(item: LatestEpisodeItem): Episode {
     .filter((number) => Number.isFinite(number));
   const episodeNumber = episodeNumbers.length ? Math.max(...episodeNumbers) : 1;
   const season = Number(item.season) || 1;
-  const poster = isUsableImageUrl(item.poster) ? item.poster : "";
+  const mock = getAnimeBySlug(animeSlug);
+  const poster = mock?.isMock
+    ? MOCK_ARTWORK_URL
+    : isUsableImageUrl(item.poster)
+    ? item.poster
+    : "";
   const displayTitle = item.episode ? `Episode ${item.episode}` : `Episode ${episodeNumber}`;
   return {
     id: `ep-${season}-${episodeNumber}`,
@@ -2267,6 +2301,7 @@ export function mapLatestEpisodeToEpisode(item: LatestEpisodeItem): Episode {
     languages: ["hindi", "english"],
     releasedAt: "",
     isNew: true,
+    ...(mock?.isMock ? { isMock: true } : {}),
   };
 }
 
@@ -3651,6 +3686,7 @@ export function getFallbackHomepageData(): HomepageData {
       languages: a.languages,
       releasedAt: a.updatedAt || "",
       isNew: true,
+      ...(a.isMock ? { isMock: true } : {}),
     };
   });
 
