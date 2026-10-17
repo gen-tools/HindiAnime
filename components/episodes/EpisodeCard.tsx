@@ -11,6 +11,7 @@ export function EpisodeCard({ episode, className }: { episode: Episode; classNam
   return (
     <Link
       href={`/watch/${episode.animeSlug}/${episode.id}`}
+      prefetch={false}
       className={cn(
         "focus-ring group flex h-[104px] sm:h-[114px] w-full items-center gap-3 rounded-xl border border-border-line bg-surface p-2.5 transition-all hover:border-green-primary/60 hover:bg-surface-elevated/40",
         className

@@ -46,6 +46,7 @@ export function EpisodeList({
             <Link
               key={getEpisodeIdentity(ep)}
               href={`/watch/${animeSlug}/${ep.id}`}
+              prefetch={false}
               aria-current={isActive ? "true" : undefined}
               className={cn(
                 "focus-ring flex aspect-square items-center justify-center rounded-lg border text-sm font-semibold transition-colors",

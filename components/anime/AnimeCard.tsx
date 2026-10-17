@@ -23,6 +23,7 @@ export function AnimeCard({
   return (
     <Link
       href={`/anime/${item.slug}`}
+      prefetch={false}
       className={cn(
         "focus-ring group relative block shrink-0 rounded-xl transition-transform duration-200 ease-out hover:-translate-y-1 motion-reduce:transform-none",
         className

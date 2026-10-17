@@ -147,6 +147,7 @@ export function HomeContinueWatching() {
                 {/* Poster Artwork with Hover Resume */}
                 <Link
                   href={buildStoredWatchHref(item)}
+                  prefetch={false}
                   className="relative block aspect-[2/3] w-full overflow-hidden bg-surface-card"
                 >
                   <PosterArt
@@ -180,7 +181,7 @@ export function HomeContinueWatching() {
 
                 {/* Info & Metadata */}
                 <div className="p-3">
-                  <Link href={buildStoredWatchHref(item)}>
+                  <Link href={buildStoredWatchHref(item)} prefetch={false}>
                     <h3 className="truncate text-sm font-semibold text-text-primary transition-colors group-hover:text-green-light">
                       {item.animeTitle}
                     </h3>
