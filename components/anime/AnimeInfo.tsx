@@ -82,13 +82,15 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
         />
 
         <div className="mt-1 flex flex-wrap items-center gap-3">
-          <ButtonLink
-            href={targetWatchHref}
-            size="lg"
-            icon={<Play className="h-4 w-4 fill-white" />}
-          >
-            Watch Now
-          </ButtonLink>
+          {!item.isMock && (
+            <ButtonLink
+              href={targetWatchHref}
+              size="lg"
+              icon={<Play className="h-4 w-4 fill-white" />}
+            >
+              Watch Now
+            </ButtonLink>
+          )}
           <FavoriteButton
             anime={{
               animeSlug: item.slug,

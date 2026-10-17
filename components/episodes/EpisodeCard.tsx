@@ -8,15 +8,8 @@ import { formatDuration, formatRelativeDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 export function EpisodeCard({ episode, className }: { episode: Episode; className?: string }) {
-  return (
-    <Link
-      href={`/watch/${episode.animeSlug}/${episode.id}`}
-      prefetch={false}
-      className={cn(
-        "focus-ring group flex h-[104px] sm:h-[114px] w-full items-center gap-3 rounded-xl border border-border-line bg-surface p-2.5 transition-all hover:border-green-primary/60 hover:bg-surface-elevated/40",
-        className
-      )}
-    >
+  const content = (
+    <>
       <div className="relative h-full aspect-video shrink-0 overflow-hidden rounded-lg">
         <PosterArt
           seed={episode.thumbnail}
@@ -24,9 +17,11 @@ export function EpisodeCard({ episode, className }: { episode: Episode; classNam
           orientation="landscape"
           className="h-full w-full object-cover"
         />
-        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-          <Play className="h-5 w-5 fill-white text-white sm:h-6 sm:w-6" />
-        </span>
+        {!episode.isMock && (
+          <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+            <Play className="h-5 w-5 fill-white text-white sm:h-6 sm:w-6" />
+          </span>
+        )}
         {episode.isNew && (
           <Badge tone="green" className="absolute left-1.5 top-1.5 px-1 py-0 text-[9px] sm:text-[10px]">
             NEW
@@ -54,6 +49,25 @@ export function EpisodeCard({ episode, className }: { episode: Episode; classNam
           {episode.releasedAt && <span>{formatRelativeDate(episode.releasedAt)}</span>}
         </div>
       </div>
+    </>
+  );
+
+  const cardClassName = cn(
+    "focus-ring group flex h-[104px] sm:h-[114px] w-full items-center gap-3 rounded-xl border border-border-line bg-surface p-2.5 transition-all hover:border-green-primary/60 hover:bg-surface-elevated/40",
+    className
+  );
+
+  if (episode.isMock) {
+    return <div aria-disabled="true" className={cn(cardClassName, "cursor-default opacity-80")}>{content}</div>;
+  }
+
+  return (
+    <Link
+      href={`/watch/${episode.animeSlug}/${episode.id}`}
+      prefetch={false}
+      className={cardClassName}
+    >
+      {content}
     </Link>
   );
 }

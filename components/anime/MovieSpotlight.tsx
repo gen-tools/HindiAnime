@@ -89,14 +89,16 @@ export function MovieSpotlight({ items }: { items: Anime[] }) {
           )}
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <ButtonLink
-              href={`/anime/${item.slug}`}
-              size="lg"
-              icon={<Play className="h-4 w-4 fill-white" />}
-              className="shadow-[0_0_20px_rgba(34,197,94,0.4)]"
-            >
-              Watch Movie
-            </ButtonLink>
+            {!item.isMock && (
+              <ButtonLink
+                href={`/anime/${item.slug}`}
+                size="lg"
+                icon={<Play className="h-4 w-4 fill-white" />}
+                className="shadow-[0_0_20px_rgba(34,197,94,0.4)]"
+              >
+                Watch Movie
+              </ButtonLink>
+            )}
             <ButtonLink
               href={`/anime/${item.slug}`}
               variant="secondary"

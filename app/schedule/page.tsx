@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { PosterArt } from "@/components/anime/PosterArt";
+import { getAnimeBySlug } from "@/lib/mock/anime";
 import { LanguageBadges } from "@/components/anime/LanguageBadges";
 import {
   Clock,
@@ -325,7 +326,7 @@ export default function SchedulePage() {
                             </>
                           )}
                         </button>
-                      ) : (
+                      ) : !getAnimeBySlug(entry.animeSlug)?.isMock ? (
                         <Link
                           href={`/anime/${entry.animeSlug}`}
                           className="flex items-center gap-1.5 rounded-lg bg-green-primary px-3 py-1.5 text-xs font-bold text-black shadow-md transition-all hover:bg-green-bright active:scale-95"
@@ -333,7 +334,7 @@ export default function SchedulePage() {
                           <Play className="h-3.5 w-3.5 fill-black" />
                           Watch Now
                         </Link>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 </div>
