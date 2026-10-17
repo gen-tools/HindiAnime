@@ -285,8 +285,8 @@ export default async function WatchPage({
 }) {
   const { animeSlug: rawSlug, episodeId } = await params;
   const cleanSlug = cleanAnimeSlug(rawSlug) || rawSlug;
-  const mockAnime = getAnimeBySlug(cleanSlug);
-  if (mockAnime?.isMock) return <MockWatchUnavailable anime={mockAnime} />;
+  const mockRecord = getAnimeBySlug(cleanSlug);
+  if (mockRecord?.isMock) return <MockWatchUnavailable anime={mockRecord} />;
 
   // 'movie' is a special episodeId used for all movies — skip episode regex
   const isMovieRoute = episodeId === "movie";

@@ -75,16 +75,16 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const cleanSlug = cleanAnimeSlug(slug) || slug;
-  const mockItem = getAnimeBySlug(cleanSlug);
-  if (mockItem?.isMock) {
-    const mockTitle = `${mockItem.title} Hindi Dubbed | Hindi Anime`;
+  const mockRecord = getAnimeBySlug(cleanSlug);
+  if (mockRecord?.isMock) {
+    const mockTitle = `${mockRecord.title} Hindi Dubbed | Hindi Anime`;
     const mockArtwork = new URL(MOCK_ARTWORK_URL, CANONICAL_SITE_ORIGIN).toString();
     return createCanonicalMetadata(`/anime/${cleanSlug}`, {
       title: { absolute: mockTitle },
-      description: mockItem.synopsis,
+      description: mockRecord.synopsis,
       robots: { index: false, follow: true },
-      openGraph: { title: mockTitle, description: mockItem.synopsis, images: [{ url: mockArtwork, alt: mockItem.title }] },
-      twitter: { card: "summary_large_image", title: mockTitle, description: mockItem.synopsis, images: [mockArtwork] },
+      openGraph: { title: mockTitle, description: mockRecord.synopsis, images: [{ url: mockArtwork, alt: mockRecord.title }] },
+      twitter: { card: "summary_large_image", title: mockTitle, description: mockRecord.synopsis, images: [mockArtwork] },
     });
   }
   const [[apiInfo, movieInfo, searchRes, directData], epApiRes] = await Promise.all([

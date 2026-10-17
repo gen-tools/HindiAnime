@@ -75,8 +75,8 @@ export default async function MovieWatchPage({
 }) {
   const { animeSlug: rawSlug } = await params;
   const slug = cleanAnimeSlug(rawSlug) || rawSlug;
-  const mockAnime = getAnimeBySlug(slug);
-  if (mockAnime?.isMock) return <MockWatchUnavailable anime={mockAnime} />;
+  const mockRecord = getAnimeBySlug(slug);
+  if (mockRecord?.isMock) return <MockWatchUnavailable anime={mockRecord} />;
   const [apiInfo, movieInfo, searchResult, directData, seasons, episodes] =
     await getMovieWatchPageData(slug);
 
