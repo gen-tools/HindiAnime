@@ -36,9 +36,12 @@ function normalizeApiSearchQuery(query: string): string {
 }
 
 type CachedCatalogFetch = (kind: "series" | "movies", page: number) => Promise<AnimeCatalogResponse>;
-type CachedSearchFetch = (query: string, page: number) => Promise<AnimeSearchResponse>;
 let cachedCatalogApiFetch: CachedCatalogFetch | undefined;
-let cachedAnimeSearchFetch: CachedSearchFetch | undefined;
+const animeSearchResultCache = new Map<
+  string,
+  { expiresAt: number; data: AnimeSearchResponse }
+>();
+const animeSearchInFlight = new Map<string, Promise<AnimeSearchResponse | null>>();
 
 function getCachedCatalogApiFetch(): CachedCatalogFetch {
   if (!cachedCatalogApiFetch) {
@@ -65,28 +68,49 @@ function getCachedCatalogApiFetch(): CachedCatalogFetch {
   return cachedCatalogApiFetch;
 }
 
-function getCachedAnimeSearchFetch(): CachedSearchFetch {
-  if (!cachedAnimeSearchFetch) {
-    // The normalized query + page are the cache arguments. Only nonempty,
-    // successful API responses are stored.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
-    cachedAnimeSearchFetch = unstable_cache(
-      async (query: string, page: number) => {
-        const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(query)}&page=${page}`;
-        const response = await fetch(url, { cache: "no-store" });
-        if (!response.ok) throw new Error(`Search API returned ${response.status}`);
-        const data = (await response.json()) as AnimeSearchResponse;
-        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
-          throw new Error("Search API returned no entries");
-        }
-        return data;
-      },
-      ["validated-anime-search-v1"],
-      { revalidate: SEARCH_CACHE_SECONDS }
-    ) as CachedSearchFetch;
-  }
-  return cachedAnimeSearchFetch;
+async function fetchCachedAnimeSearch(
+  query: string,
+  page: number
+): Promise<AnimeSearchResponse | null> {
+  // Cache only validated successes. An in-memory cache avoids Next's background
+  // revalidation error when the upstream responds with an HTTP error such as 402.
+  const key = `${query}\u0000${page}`;
+  const cached = animeSearchResultCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  if (cached) animeSearchResultCache.delete(key);
+
+  const pending = animeSearchInFlight.get(key);
+  if (pending) return pending;
+
+  const request = (async () => {
+    try {
+      const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(query)}&page=${page}`;
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) return null;
+
+      const data = (await response.json()) as AnimeSearchResponse;
+      if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
+        return null;
+      }
+
+      if (animeSearchResultCache.size >= 200) {
+        const oldestKey = animeSearchResultCache.keys().next().value;
+        if (oldestKey) animeSearchResultCache.delete(oldestKey);
+      }
+      animeSearchResultCache.set(key, {
+        data,
+        expiresAt: Date.now() + SEARCH_CACHE_SECONDS * 1000,
+      });
+      return data;
+    } catch {
+      return null;
+    } finally {
+      animeSearchInFlight.delete(key);
+    }
+  })();
+
+  animeSearchInFlight.set(key, request);
+  return request;
 }
 
 const KNOWN_LANGUAGES: Record<string, LanguageCode> = {
@@ -2116,18 +2140,20 @@ export async function searchAnime(
   if (!cleanKeyword) return null;
 
   // 1. Try upstream API
-  try {
-    if (typeof window === "undefined") {
-      return await getCachedAnimeSearchFetch()(cleanKeyword, page);
-    }
+  if (typeof window === "undefined") {
+    const data = await fetchCachedAnimeSearch(cleanKeyword, page);
+    if (data) return data;
+  } else {
     const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`;
-    const res = await fetch(url, { cache: "no-store" });
-    if (res.ok) {
-      const data: AnimeSearchResponse = await res.json();
-      if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (res.ok) {
+        const data: AnimeSearchResponse = await res.json();
+        if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
+      }
+    } catch {
+      // Fall through to AnimeSalt when the configured API is unavailable.
     }
-  } catch (err) {
-    console.error("searchAnime API error:", err);
   }
 
   // Callers can disable scraping when they need an API-only lookup.
