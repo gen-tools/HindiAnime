@@ -24,7 +24,6 @@ import { fuzzySearch, fuzzyScore, COMMON_ACRONYMS } from "@/lib/fuzzy-search";
 import { anime, getAnimeBySlug, getAnimeByGenre, getAnimeByLanguage, getAnimeByCountry } from "@/lib/mock/anime";
 import { matchesCountry } from "@/lib/mock/countries";
 import { shareInFlightRequest } from "@/lib/api/in-flight";
-import { unstable_rethrow } from "next/navigation";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -37,7 +36,40 @@ function normalizeApiSearchQuery(query: string): string {
 }
 
 function rethrowNextControlFlow(error: unknown): void {
+  if (typeof window !== "undefined") return;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { unstable_rethrow } = require("next/navigation") as typeof import("next/navigation");
   unstable_rethrow(error);
+}
+
+async function cacheValidatedScraperResult<T>(
+  keyParts: string[],
+  revalidateSeconds: number,
+  load: () => Promise<T | null>,
+  isValid: (result: T | null) => result is T
+): Promise<T | null> {
+  if (typeof window !== "undefined") return load();
+
+  // Cache parsed/validated domain data, not raw HTML. Invalid pages, challenges,
+  // empty results, and failed requests throw before an entry is stored.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { unstable_cache } = require("next/cache") as typeof import("next/cache");
+  const cachedLoad = unstable_cache(
+    async () => {
+      const result = await load();
+      if (!isValid(result)) throw new Error("Scraper returned no valid parsed result");
+      return result;
+    },
+    ["validated-animesalt-parsed-v1", ...keyParts],
+    { revalidate: revalidateSeconds }
+  ) as () => Promise<T>;
+
+  try {
+    return await cachedLoad();
+  } catch (error) {
+    rethrowNextControlFlow(error);
+    return null;
+  }
 }
 
 type CachedCatalogFetch = (kind: "series" | "movies", page: number) => Promise<AnimeCatalogResponse>;
@@ -813,7 +845,7 @@ export function parseAnimeSaltArticles(
  * Scrapes animesalt.cx/series/ or /movies/ catalog pages directly.
  * Each page returns 12 items. Series has ~38 pages (2,543 total), movies ~23 pages (2,531 total).
  */
-export async function scrapeAnimeSaltCatalog(
+async function scrapeAnimeSaltCatalogUncached(
   kind: "series" | "movies",
   page = 1
 ): Promise<CatalogPageResult | null> {
@@ -838,7 +870,7 @@ export async function scrapeAnimeSaltCatalog(
         const response = await fetch(buildServerWorkerCatalogUrl(kind, page), {
           headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
           signal: controller.signal,
-          next: { revalidate: 300 },
+          cache: "no-store",
         });
         const contentType = response.headers.get("content-type")?.toLowerCase() || "";
         if (response.ok && /(?:text\/html|application\/(?:rss\+xml|xml)|text\/xml)/.test(contentType)) {
@@ -862,7 +894,7 @@ export async function scrapeAnimeSaltCatalog(
       // Preserve the existing general-proxy/direct fallback if the restricted route is unavailable.
     }
 
-    if (!html) html = await fetchHtmlWithWorkerFallback(url, false, undefined, 300);
+    if (!html) html = await fetchHtmlWithWorkerFallback(url);
     if (!html) return null;
     const result = parseAnimeSaltArticles(html, page, pagination);
     if (result) {
@@ -870,15 +902,28 @@ export async function scrapeAnimeSaltCatalog(
     }
     return result;
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[Scraper] Error scraping ${kind} catalog page ${page}:`, err);
     return null;
   }
 }
 
+export function scrapeAnimeSaltCatalog(
+  kind: "series" | "movies",
+  page = 1
+): Promise<CatalogPageResult | null> {
+  return cacheValidatedScraperResult(
+    ["catalog", kind, String(page)],
+    300,
+    () => scrapeAnimeSaltCatalogUncached(kind, page),
+    (result): result is CatalogPageResult => Boolean(result?.results.length)
+  );
+}
+
 /**
  * Scrapes animesalt.cx search results directly. Searches full database of 2,500+ anime.
  */
-export async function scrapeAnimeSaltSearch(
+async function scrapeAnimeSaltSearchUncached(
   keyword: string,
   page = 1
 ): Promise<CatalogPageResult | null> {
@@ -910,10 +955,24 @@ export async function scrapeAnimeSaltSearch(
   }
 }
 
+export function scrapeAnimeSaltSearch(
+  keyword: string,
+  page = 1
+): Promise<CatalogPageResult | null> {
+  const cleanKeyword = normalizeApiSearchQuery(keyword);
+  if (!cleanKeyword) return Promise.resolve(null);
+  return cacheValidatedScraperResult(
+    ["search", cleanKeyword, String(page)],
+    60,
+    () => scrapeAnimeSaltSearchUncached(cleanKeyword, page),
+    (result): result is CatalogPageResult => Boolean(result?.results.length)
+  );
+}
+
 /**
  * Scrapes animesalt.cx/category/genre/[slug]/ directly across the full anime library.
  */
-export async function scrapeAnimeSaltGenre(
+async function scrapeAnimeSaltGenreUncached(
   genreSlug: string,
   page = 1
 ): Promise<CatalogPageResult | null> {
@@ -945,10 +1004,24 @@ export async function scrapeAnimeSaltGenre(
   }
 }
 
+export function scrapeAnimeSaltGenre(
+  genreSlug: string,
+  page = 1
+): Promise<CatalogPageResult | null> {
+  const cleanGenre = genreSlug.toLowerCase().trim();
+  if (!cleanGenre) return Promise.resolve(null);
+  return cacheValidatedScraperResult(
+    ["genre", cleanGenre, String(page)],
+    300,
+    () => scrapeAnimeSaltGenreUncached(cleanGenre, page),
+    (result): result is CatalogPageResult => Boolean(result?.results.length)
+  );
+}
+
 /**
  * Scrapes animesalt.cx/category/[language]/ directly across the full anime library.
  */
-export async function scrapeAnimeSaltLanguage(
+async function scrapeAnimeSaltLanguageUncached(
   languageCode: string,
   page = 1
 ): Promise<CatalogPageResult | null> {
@@ -974,16 +1047,31 @@ export async function scrapeAnimeSaltLanguage(
     }
     return result;
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[Scraper] Error scraping language "${cleanLang}" page ${page}:`, err);
     return null;
   }
+}
+
+export function scrapeAnimeSaltLanguage(
+  languageCode: string,
+  page = 1
+): Promise<CatalogPageResult | null> {
+  const cleanLang = languageCode.toLowerCase().trim();
+  if (!cleanLang) return Promise.resolve(null);
+  return cacheValidatedScraperResult(
+    ["language", cleanLang, String(page)],
+    300,
+    () => scrapeAnimeSaltLanguageUncached(cleanLang, page),
+    (result): result is CatalogPageResult => Boolean(result?.results.length)
+  );
 }
 
 /**
  * Scrapes animesalt.cx/category/type/cartoon/?type=series or ?type=movies directly.
  * Contains Western/USA animated series and movies.
  */
-export async function scrapeAnimeSaltCartoon(
+async function scrapeAnimeSaltCartoonUncached(
   kind: "series" | "movies",
   page = 1
 ): Promise<CatalogPageResult | null> {
@@ -1007,9 +1095,22 @@ export async function scrapeAnimeSaltCartoon(
     }
     return result;
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[Scraper] Error scraping cartoon ${kind} page ${page}:`, err);
     return null;
   }
+}
+
+export function scrapeAnimeSaltCartoon(
+  kind: "series" | "movies",
+  page = 1
+): Promise<CatalogPageResult | null> {
+  return cacheValidatedScraperResult(
+    ["cartoon", kind, String(page)],
+    300,
+    () => scrapeAnimeSaltCartoonUncached(kind, page),
+    (result): result is CatalogPageResult => Boolean(result?.results.length)
+  );
 }
 
 
@@ -1937,7 +2038,7 @@ export function parseHomepageSourceHtml(
   };
 }
 
-export async function scrapeDirectHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
+async function scrapeDirectHomepageFeedUncached(diagnostics = false): Promise<HomepageApiResponse | null> {
   if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
     return homepageFeedCache.data;
   }
@@ -1972,6 +2073,16 @@ export async function scrapeDirectHomepageFeed(diagnostics = false): Promise<Hom
     }
     return null;
   }
+}
+
+export function scrapeDirectHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
+  if (diagnostics) return scrapeDirectHomepageFeedUncached(true);
+  return cacheValidatedScraperResult(
+    ["homepage"],
+    300,
+    () => scrapeDirectHomepageFeedUncached(false),
+    (result): result is HomepageApiResponse => hasHomepageItems(result)
+  );
 }
 
 export function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
@@ -2724,36 +2835,9 @@ async function fetchHtmlUncached(url: string): Promise<string | null> {
 async function fetchHtmlWithWorkerFallback(
   url: string,
   diagnostics = false,
-  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void,
-  revalidateSeconds = 300
+  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
 ): Promise<string | null> {
-  if (!diagnostics) {
-    if (revalidateSeconds > 0 && typeof window === "undefined") {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { unstable_cache } = require("next/cache");
-        const cachedFetcher = unstable_cache(
-          async () => {
-            const html = await fetchHtmlUncached(url);
-            // If HTML is invalid, 404, or Cloudflare challenge, throw so Next.js NEVER caches it
-            if (!html || is404Html(html) || html.length < 500) {
-              throw new Error(`[worker-cache] Validation failed: challenge or 404 for ${url}`);
-            }
-            return html;
-          },
-          ["cf-worker-html", url],
-          { revalidate: revalidateSeconds }
-        );
-        const res = await cachedFetcher();
-        if (res && !is404Html(res)) return res;
-      } catch (error) {
-        rethrowNextControlFlow(error);
-        // Cache throw or fallback: fetch directly
-      }
-    }
-
-    return fetchHtmlUncached(url);
-  }
+  if (!diagnostics) return fetchHtmlUncached(url);
 
   const fetchAttempt = async (
     source: "worker-primary" | "direct-animesalt" | "worker-retry",
@@ -2859,7 +2943,15 @@ export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta 
   const pending = seriesScrapeInFlight.get(cleanId);
   if (pending) return pending;
 
-  const request = scrapeDirectSeriesDataUnshared(cleanId);
+  const request = cacheValidatedScraperResult(
+    ["series-detail", cleanId],
+    300,
+    () => scrapeDirectSeriesDataUnshared(cleanId),
+    (result): result is ScrapedSeriesMeta => Boolean(
+      result &&
+      (result.title || result.poster || result.synopsis || result.seasons.length > 0 || result.s1Episodes.length > 0)
+    )
+  );
   seriesScrapeInFlight.set(cleanId, request);
   const cleanup = () => {
     if (seriesScrapeInFlight.get(cleanId) === request) {
@@ -3181,7 +3273,7 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
   }
 }
 
-async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise<EpisodeItem[]> {
+async function scrapeDirectSeasonEpisodesUncached(slug: string, season: number): Promise<EpisodeItem[]> {
   const cleanId = cleanAnimeSlug(slug) || slug;
   if (!cleanId) return [];
 
@@ -3200,7 +3292,7 @@ async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise
 
   try {
     const ajaxUrl = `https://animesalt.cx/wp-admin/admin-ajax.php?action=action_select_season&season=${season}&post=${postId}`;
-    const html = await fetchHtmlWithWorkerFallback(ajaxUrl, false, undefined, 120);
+    const html = await fetchHtmlWithWorkerFallback(ajaxUrl);
     if (!html) return [];
     return parseEpisodesFromHtml(html);
   } catch (err) {
@@ -3208,6 +3300,17 @@ async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise
     console.error(`[Scraper] Error fetching season ${season} for ${cleanId}:`, err);
     return [];
   }
+}
+
+async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise<EpisodeItem[]> {
+  const cleanId = cleanAnimeSlug(slug) || slug;
+  const episodes = await cacheValidatedScraperResult(
+    ["season-episodes", cleanId, String(season)],
+    120,
+    () => scrapeDirectSeasonEpisodesUncached(cleanId, season),
+    (result): result is EpisodeItem[] => Boolean(result?.length)
+  );
+  return episodes ?? [];
 }
 
 /**
