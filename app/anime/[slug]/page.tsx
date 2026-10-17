@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
@@ -52,6 +53,22 @@ function isMatchingMovie(movieTitle: string | undefined, slug: string): boolean 
   return false;
 }
 
+const getAnimePageBaseData = cache(async (slug: string) => {
+  const searchKeyword = formatDisplayTitle(slug).toLowerCase();
+  return Promise.all([
+    getAnimeInfo(slug),
+    getMovieInfo(slug),
+    searchAnime(searchKeyword, 1),
+    scrapeDirectSeriesData(slug),
+  ]);
+});
+
+const getAnimePageEpisodes = cache((slug: string, season: number) => getEpisodes(slug, season));
+const getAnimePageSeasons = cache((slug: string) => getAvailableSeasons(slug));
+
+export const revalidate = 300;
+export const dynamicParams = true;
+
 export async function generateMetadata({
   params,
 }: {
@@ -59,14 +76,9 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const cleanSlug = cleanAnimeSlug(slug) || slug;
-  const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
-
-  const [apiInfo, movieInfo, searchRes, directData, epApiRes] = await Promise.all([
-    getAnimeInfo(cleanSlug),
-    getMovieInfo(cleanSlug),
-    searchAnime(searchKeyword, 1),
-    scrapeDirectSeriesData(cleanSlug),
-    getEpisodes(cleanSlug, 1),
+  const [[apiInfo, movieInfo, searchRes, directData], epApiRes] = await Promise.all([
+    getAnimePageBaseData(cleanSlug),
+    getAnimePageEpisodes(cleanSlug, 1),
   ]);
 
   const searchMatch = searchRes?.results?.results?.find(
@@ -356,17 +368,12 @@ export default async function AnimeDetailPage({
   const currentSeason = sParams.season || "1";
   const seasonNum = parseInt(currentSeason, 10) || 1;
 
-  const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
-
   // 1. Fetch info, movieInfo, search, direct scraper, seasons, and episodes in parallel
-  const [apiInfo, movieInfo, searchRes, directData, availableSeasons, epApiRes] =
+  const [[apiInfo, movieInfo, searchRes, directData], availableSeasons, epApiRes] =
     await Promise.all([
-      getAnimeInfo(cleanSlug),
-      getMovieInfo(cleanSlug),
-      searchAnime(searchKeyword, 1),
-      scrapeDirectSeriesData(cleanSlug),
-      getAvailableSeasons(cleanSlug),
-      getEpisodes(cleanSlug, seasonNum),
+      getAnimePageBaseData(cleanSlug),
+      getAnimePageSeasons(cleanSlug),
+      getAnimePageEpisodes(cleanSlug, seasonNum),
     ]);
 
   // Match ONLY by exact slug

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -41,6 +42,22 @@ import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 
+export const revalidate = 300;
+export const dynamicParams = true;
+
+const getWatchPageBaseData = cache(async (slug: string) => {
+  const searchKeyword = formatDisplayTitle(slug).toLowerCase();
+  return Promise.all([
+    getAnimeInfo(slug),
+    getMovieInfo(slug),
+    searchAnime(searchKeyword, 1),
+    scrapeDirectSeriesData(slug),
+  ]);
+});
+
+const getWatchPageEpisodes = cache((slug: string, season: number) => getEpisodes(slug, season));
+const getWatchPageSeasons = cache((slug: string) => getAvailableSeasons(slug));
+
 function createFallbackAnime(slug: string): Anime {
   const mock = getAnimeBySlug(slug);
   const formattedTitle = formatDisplayTitle(slug);
@@ -72,17 +89,13 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { animeSlug: rawSlug, episodeId } = await params;
   const cleanSlug = cleanAnimeSlug(rawSlug) || rawSlug;
-  const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
 
   const epMatch = episodeId.match(/ep-(\d+)-(\d+)/);
   const seasonNumber = epMatch ? parseInt(epMatch[1], 10) || 1 : 1;
 
-  const [apiInfo, movieInfo, searchRes, directData, epApiRes] = await Promise.all([
-    getAnimeInfo(cleanSlug),
-    getMovieInfo(cleanSlug),
-    searchAnime(searchKeyword, 1),
-    scrapeDirectSeriesData(cleanSlug),
-    getEpisodes(cleanSlug, seasonNumber),
+  const [[apiInfo, movieInfo, searchRes, directData], epApiRes] = await Promise.all([
+    getWatchPageBaseData(cleanSlug),
+    getWatchPageEpisodes(cleanSlug, seasonNumber),
   ]);
 
   const searchMatch = searchRes?.results?.results?.find(
@@ -254,7 +267,6 @@ export default async function WatchPage({
 }) {
   const { animeSlug: rawSlug, episodeId } = await params;
   const cleanSlug = cleanAnimeSlug(rawSlug) || rawSlug;
-  const searchKeyword = formatDisplayTitle(cleanSlug).toLowerCase();
 
   // 'movie' is a special episodeId used for all movies — skip episode regex
   const isMovieRoute = episodeId === "movie";
@@ -263,14 +275,11 @@ export default async function WatchPage({
   const episodeNumber = epMatch ? parseInt(epMatch[2], 10) || 1 : 1;
 
   // ── 1. Resolve anime metadata & episodes concurrently ──────────────────────
-  const [apiInfo, movieInfo, searchRes, discoveredSeasons, directData, epApiRes, homepageFeed] = await Promise.all([
-    getAnimeInfo(cleanSlug),
-    getMovieInfo(cleanSlug),
-    searchAnime(searchKeyword, 1),
-    getAvailableSeasons(cleanSlug),
-    scrapeDirectSeriesData(cleanSlug),
+  const [[apiInfo, movieInfo, searchRes, directData], discoveredSeasons, epApiRes, homepageFeed] = await Promise.all([
+    getWatchPageBaseData(cleanSlug),
+    getWatchPageSeasons(cleanSlug),
     // Skip episode fetch for explicit movie routes
-    isMovieRoute ? Promise.resolve(null) : getEpisodes(cleanSlug, seasonNumber),
+    isMovieRoute ? Promise.resolve(null) : getWatchPageEpisodes(cleanSlug, seasonNumber),
     getHomepageFeed(),
   ]);
 

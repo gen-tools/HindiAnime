@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createCanonicalMetadata } from "@/lib/seo";
@@ -23,6 +24,21 @@ import {
   parseDurationMinutes,
   SYNOPSIS_FALLBACK,
 } from "@/lib/api/client";
+
+export const revalidate = 300;
+export const dynamicParams = true;
+
+const getMovieWatchPageData = cache(async (slug: string) => {
+  const keyword = formatDisplayTitle(slug).toLowerCase();
+  return Promise.all([
+    getAnimeInfo(slug),
+    getMovieInfo(slug),
+    searchAnime(keyword, 1),
+    scrapeDirectSeriesData(slug),
+    getAvailableSeasons(slug),
+    getEpisodes(slug, 1),
+  ]);
+});
 
 function normalizeTitle(value: string): string {
   return value
@@ -59,15 +75,8 @@ export default async function MovieWatchPage({
 }) {
   const { animeSlug: rawSlug } = await params;
   const slug = cleanAnimeSlug(rawSlug) || rawSlug;
-  const keyword = formatDisplayTitle(slug).toLowerCase();
-  const [apiInfo, movieInfo, searchResult, directData, seasons, episodes] = await Promise.all([
-    getAnimeInfo(slug),
-    getMovieInfo(slug),
-    searchAnime(keyword, 1),
-    scrapeDirectSeriesData(slug),
-    getAvailableSeasons(slug),
-    getEpisodes(slug, 1),
-  ]);
+  const [apiInfo, movieInfo, searchResult, directData, seasons, episodes] =
+    await getMovieWatchPageData(slug);
 
   const animeData = resolveAnimeInfoData(apiInfo);
   const movieData = resolveMovieInfoData(movieInfo);
