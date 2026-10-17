@@ -35,6 +35,7 @@ import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
+import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
 function isMatchingMovie(movieTitle: string | undefined, slug: string): boolean {
   if (!movieTitle) return false;
@@ -74,6 +75,18 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const cleanSlug = cleanAnimeSlug(slug) || slug;
+  const mockItem = getAnimeBySlug(cleanSlug);
+  if (mockItem?.isMock) {
+    const mockTitle = `${mockItem.title} Hindi Dubbed | Hindi Anime`;
+    const mockArtwork = new URL(MOCK_ARTWORK_URL, CANONICAL_SITE_ORIGIN).toString();
+    return createCanonicalMetadata(`/anime/${cleanSlug}`, {
+      title: { absolute: mockTitle },
+      description: mockItem.synopsis,
+      robots: { index: false, follow: true },
+      openGraph: { title: mockTitle, description: mockItem.synopsis, images: [{ url: mockArtwork, alt: mockItem.title }] },
+      twitter: { card: "summary_large_image", title: mockTitle, description: mockItem.synopsis, images: [mockArtwork] },
+    });
+  }
   const [[apiInfo, movieInfo, searchRes, directData], epApiRes] = await Promise.all([
     getAnimePageBaseData(cleanSlug),
     getAnimePageEpisodes(cleanSlug, 1),
@@ -365,6 +378,18 @@ export default async function AnimeDetailPage({
   const sParams = await searchParams;
   const currentSeason = sParams.season || "1";
   const seasonNum = parseInt(currentSeason, 10) || 1;
+  const mockRecord = getAnimeBySlug(cleanSlug);
+  if (mockRecord?.isMock) {
+    return (
+      <div className="pb-14">
+        <div className="relative h-64 overflow-hidden border-b border-border-line sm:h-80 md:h-96">
+          <PosterArt seed={mockRecord.backdrop} title={mockRecord.title} orientation="landscape" className="h-full" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-background/10" />
+        </div>
+        <AnimeInfo item={mockRecord} />
+      </div>
+    );
+  }
 
   // 1. Fetch info, movieInfo, search, direct scraper, seasons, and episodes in parallel
   const [[apiInfo, movieInfo, searchRes, directData], availableSeasons, epApiRes] =

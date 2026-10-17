@@ -102,7 +102,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
   ];
 
-  const animeRoutes: MetadataRoute.Sitemap = anime.map((a) => ({
+  const animeRoutes: MetadataRoute.Sitemap = anime.filter((a) => !a.isMock).map((a) => ({
     url: `${BASE_URL}/anime/${a.slug}`,
     lastModified: a.updatedAt ? new Date(a.updatedAt) : now,
     changeFrequency: "weekly",

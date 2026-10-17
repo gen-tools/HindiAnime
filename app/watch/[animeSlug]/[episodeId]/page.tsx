@@ -4,6 +4,7 @@ import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
+import { MockWatchUnavailable } from "@/components/player/MockWatchUnavailable";
 import { ReadMoreText } from "@/components/ui/ReadMoreText";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { EpisodeNavigation } from "@/components/episodes/EpisodeNavigation";
@@ -41,6 +42,7 @@ import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
+import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
 const getWatchPageBaseData = cache(async (slug: string) => {
   const searchKeyword = formatDisplayTitle(slug).toLowerCase();
@@ -86,6 +88,25 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { animeSlug: rawSlug, episodeId } = await params;
   const cleanSlug = cleanAnimeSlug(rawSlug) || rawSlug;
+  const mockAnime = getAnimeBySlug(cleanSlug);
+  if (mockAnime?.isMock) {
+    const episodeMatch = episodeId.match(/ep-(\d+)-(\d+)/);
+    const episodeLabel = episodeId === "movie"
+      ? "Full Movie"
+      : episodeMatch
+      ? `Season ${episodeMatch[1]} Episode ${episodeMatch[2]}`
+      : episodeId;
+    const title = `${mockAnime.title} — ${episodeLabel} | Hindi Anime`;
+    const description = `Watch ${mockAnime.title} ${episodeLabel} on Hindi Anime.`;
+    const artwork = new URL(MOCK_ARTWORK_URL, CANONICAL_SITE_ORIGIN).toString();
+    return createCanonicalMetadata(`/watch/${cleanSlug}/${episodeId}`, {
+      title: { absolute: title },
+      description,
+      robots: { index: false, follow: true },
+      openGraph: { title, description, images: [{ url: artwork, alt: mockAnime.title }] },
+      twitter: { card: "summary_large_image", title, description, images: [artwork] },
+    });
+  }
 
   const epMatch = episodeId.match(/ep-(\d+)-(\d+)/);
   const seasonNumber = epMatch ? parseInt(epMatch[1], 10) || 1 : 1;
@@ -264,6 +285,8 @@ export default async function WatchPage({
 }) {
   const { animeSlug: rawSlug, episodeId } = await params;
   const cleanSlug = cleanAnimeSlug(rawSlug) || rawSlug;
+  const mockAnime = getAnimeBySlug(cleanSlug);
+  if (mockAnime?.isMock) return <MockWatchUnavailable anime={mockAnime} />;
 
   // 'movie' is a special episodeId used for all movies — skip episode regex
   const isMovieRoute = episodeId === "movie";

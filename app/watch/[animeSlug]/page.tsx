@@ -8,6 +8,7 @@ import { ReadMoreText } from "@/components/ui/ReadMoreText";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { getAnimeBySlug } from "@/lib/mock/anime";
+import { MockWatchUnavailable } from "@/components/player/MockWatchUnavailable";
 import {
   cleanAnimeSlug,
   formatDisplayTitle,
@@ -59,9 +60,11 @@ export async function generateMetadata({
   const { animeSlug: rawSlug } = await params;
   const slug = cleanAnimeSlug(rawSlug) || rawSlug;
   const title = formatDisplayTitle(slug);
+  const mockAnime = getAnimeBySlug(slug);
   return createCanonicalMetadata(`/watch/${slug}`, {
     title: `${title} - Full Movie`,
     description: `Watch ${title} full movie online in Hindi and regional languages on Hindi Anime.`,
+    ...(mockAnime?.isMock ? { robots: { index: false, follow: true } } : {}),
   });
 }
 
@@ -72,6 +75,8 @@ export default async function MovieWatchPage({
 }) {
   const { animeSlug: rawSlug } = await params;
   const slug = cleanAnimeSlug(rawSlug) || rawSlug;
+  const mockAnime = getAnimeBySlug(slug);
+  if (mockAnime?.isMock) return <MockWatchUnavailable anime={mockAnime} />;
   const [apiInfo, movieInfo, searchResult, directData, seasons, episodes] =
     await getMovieWatchPageData(slug);
 
