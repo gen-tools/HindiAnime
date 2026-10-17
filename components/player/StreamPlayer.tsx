@@ -16,6 +16,9 @@ import { StreamItem } from "@/types/api";
 import { isValidEmbedUrl } from "@/lib/api/client";
 import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl } from "@/lib/animesalt-stream";
+
+const MAX_AUTOMATIC_STREAM_RETRIES = 2;
+const STREAM_RETRY_BASE_DELAY_MS = 1_000;
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -363,7 +366,11 @@ export function StreamPlayer({
 
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchStreams = useCallback(async (isRetry = false) => {
+  const fetchStreams = useCallback(async (retryAttempt = 0) => {
+    if (retryAttempt === 0 && retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     abortPlaybackRequest(requestControllerRef.current, "Playback request superseded");
     const controller = new AbortController();
     requestControllerRef.current = controller;
@@ -374,11 +381,22 @@ export function StreamPlayer({
       requestGenerationRef.current === requestGeneration &&
       playbackIdentityRef.current === requestIdentity;
 
-    if (!isRetry) {
+    if (retryAttempt === 0) {
       setState("loading");
       setServers([]);
       setActiveServer(null);
     }
+
+    const scheduleAutomaticRetry = () => {
+      if (retryAttempt >= MAX_AUTOMATIC_STREAM_RETRIES) return false;
+      const nextAttempt = retryAttempt + 1;
+      const delay = STREAM_RETRY_BASE_DELAY_MS * 2 ** retryAttempt;
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        if (isCurrentRequest()) void fetchStreams(nextAttempt);
+      }, delay);
+      return true;
+    };
 
     const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
 
@@ -459,10 +477,7 @@ export function StreamPlayer({
       if (!isCurrentRequest()) return;
       const parsed = parseServers(data?.results ?? []);
       if (parsed.length === 0) {
-        if (!isRetry) {
-          retryTimerRef.current = setTimeout(() => { fetchStreams(true); }, 1500);
-          return;
-        }
+        if (scheduleAutomaticRetry()) return;
         setState("unavailable");
       } else {
         const currentEmbed = activeServerRef.current?.embed;
@@ -476,12 +491,7 @@ export function StreamPlayer({
     } catch (error) {
       if (isAbortError(error)) return;
       if (!isCurrentRequest()) return;
-      if (!isRetry) {
-        retryTimerRef.current = setTimeout(() => {
-          if (isCurrentRequest()) void fetchStreams(true);
-        }, 1500);
-        return;
-      }
+      if (scheduleAutomaticRetry()) return;
       setState("error");
     } finally {
       if (requestControllerRef.current === controller) requestControllerRef.current = null;
@@ -490,7 +500,7 @@ export function StreamPlayer({
 
 
   useEffect(() => {
-    const t = window.setTimeout(() => { void fetchStreams(false); }, 0);
+    const t = window.setTimeout(() => { void fetchStreams(0); }, 0);
     return () => {
       window.clearTimeout(t);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
@@ -561,7 +571,7 @@ export function StreamPlayer({
         {state === "loading" && <LoadingState episodeTitle={episodeTitle} />}
         {state === "error" && (
           <ErrorState
-            onRetry={() => fetchStreams(false)}
+            onRetry={() => fetchStreams(0)}
             onNextServer={handleNextServer}
             hasMoreServers={servers.length > 1}
           />
