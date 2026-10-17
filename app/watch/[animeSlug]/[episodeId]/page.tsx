@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
 import { ReadMoreText } from "@/components/ui/ReadMoreText";
 import { WatchTracker } from "@/components/player/WatchTracker";
@@ -548,7 +548,10 @@ export default async function WatchPage({
     "action";
 
   // Fetch all anime from this specific genre (e.g. Action anime)
-  const genreData = await getGenreCatalog(primaryGenre, 1).catch(() => null);
+  const genreData = await getGenreCatalog(primaryGenre, 1).catch((error) => {
+    unstable_rethrow(error);
+    return null;
+  });
   const genreCatalogItems = genreData?.results || [];
 
   const seenSlugs = new Set<string>([cleanSlug]);

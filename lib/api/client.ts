@@ -24,6 +24,7 @@ import { fuzzySearch, fuzzyScore, COMMON_ACRONYMS } from "@/lib/fuzzy-search";
 import { anime, getAnimeBySlug, getAnimeByGenre, getAnimeByLanguage, getAnimeByCountry } from "@/lib/mock/anime";
 import { matchesCountry } from "@/lib/mock/countries";
 import { shareInFlightRequest } from "@/lib/api/in-flight";
+import { unstable_rethrow } from "next/navigation";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
@@ -33,6 +34,10 @@ const SEARCH_CACHE_SECONDS = 60;
 
 function normalizeApiSearchQuery(query: string): string {
   return query.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function rethrowNextControlFlow(error: unknown): void {
+  unstable_rethrow(error);
 }
 
 type CachedCatalogFetch = (kind: "series" | "movies", page: number) => Promise<AnimeCatalogResponse>;
@@ -102,7 +107,8 @@ async function fetchCachedAnimeSearch(
         expiresAt: Date.now() + SEARCH_CACHE_SECONDS * 1000,
       });
       return data;
-    } catch {
+    } catch (error) {
+      rethrowNextControlFlow(error);
       return null;
     } finally {
       animeSearchInFlight.delete(key);
@@ -878,6 +884,7 @@ export async function scrapeAnimeSaltSearch(
     }
     return result;
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[Scraper] Error searching AnimeSalt for "${cleanKeyword}":`, err);
     return null;
   }
@@ -912,6 +919,7 @@ export async function scrapeAnimeSaltGenre(
     }
     return result;
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[Scraper] Error scraping genre "${cleanGenre}" page ${page}:`, err);
     return null;
   }
@@ -1006,6 +1014,7 @@ export async function getGenreCatalog(
       };
     }
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`getGenreCatalog error for ${cleanSlug}:`, err);
   }
 
@@ -1936,6 +1945,7 @@ export async function scrapeDirectHomepageFeed(diagnostics = false): Promise<Hom
     homepageFeedCache = { data: feed, timestamp: Date.now() };
     return feed;
   } catch (err) {
+    rethrowNextControlFlow(err);
     if (!diagnostics) {
       console.error("[Scraper] Error scraping direct homepage feed:", err);
       return null;
@@ -1981,7 +1991,8 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
       let data: HomepageApiResponse | null;
       try {
         data = await res.json() as HomepageApiResponse;
-      } catch {
+      } catch (error) {
+        rethrowNextControlFlow(error);
         logHomepageSsr(diagnostics, {
           source: "catalog-api-homepage",
           attempt: "fetch-and-parse",
@@ -2014,6 +2025,7 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
       }
     }
   } catch (err) {
+    rethrowNextControlFlow(err);
     const error = err instanceof Error ? err : new Error(String(err));
     logHomepageSsr(diagnostics, {
       source: "catalog-api-homepage",
@@ -2151,7 +2163,8 @@ export async function searchAnime(
         const data: AnimeSearchResponse = await res.json();
         if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
       }
-    } catch {
+    } catch (error) {
+      rethrowNextControlFlow(error);
       // Fall through to AnimeSalt when the configured API is unavailable.
     }
   }
@@ -2169,6 +2182,7 @@ export async function searchAnime(
       };
     }
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error("searchAnime scraper fallback error:", err);
   }
 
@@ -2298,7 +2312,8 @@ export async function fetchAniListMeta(
       episodes: String(m.episodes || "12"),
       language: "hindi, english, japanese",
     };
-  } catch {
+  } catch (error) {
+    rethrowNextControlFlow(error);
     return null;
   }
 }
@@ -2319,7 +2334,9 @@ export async function getAnimeInfo(
     if (aniMeta && aniMeta.overview && aniMeta.poster) {
       return { success: true, data: aniMeta };
     }
-  } catch {}
+  } catch (error) {
+    rethrowNextControlFlow(error);
+  }
 
   // 2. Fetch from legacy API if available
   try {
@@ -2343,6 +2360,7 @@ export async function getAnimeInfo(
       return data;
     }
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error("getAnimeInfo API error:", err);
   }
 
@@ -2396,7 +2414,9 @@ export async function getMovieInfo(
         },
       };
     }
-  } catch {}
+  } catch (error) {
+    rethrowNextControlFlow(error);
+  }
 
   try {
     const res = await fetch(`${API_BASE_URL}/api/movie?id=${encodeURIComponent(cleanId)}`, {
@@ -2406,6 +2426,7 @@ export async function getMovieInfo(
       return (await res.json()) as MovieInfoResponse;
     }
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error("getMovieInfo API error:", err);
   }
   return null;
@@ -2653,7 +2674,8 @@ async function fetchHtmlUncached(url: string): Promise<string | null> {
         const text = await pRes.text();
         if (!is404Html(text)) return text;
       }
-    } catch {
+    } catch (error) {
+      rethrowNextControlFlow(error);
       // proxy fetch error, fall back to direct
     }
   }
@@ -2671,7 +2693,8 @@ async function fetchHtmlUncached(url: string): Promise<string | null> {
       const text = await res.text();
       if (!is404Html(text)) return text;
     }
-  } catch {
+  } catch (error) {
+    rethrowNextControlFlow(error);
     // direct fetch error
   }
 
@@ -2703,7 +2726,8 @@ async function fetchHtmlWithWorkerFallback(
         );
         const res = await cachedFetcher();
         if (res && !is404Html(res)) return res;
-      } catch {
+      } catch (error) {
+        rethrowNextControlFlow(error);
         // Cache throw or fallback: fetch directly
       }
     }
@@ -2870,7 +2894,8 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
               }
             }
           }
-        } catch {
+        } catch (error) {
+          rethrowNextControlFlow(error);
           // search fallback error ignored
         }
       }
@@ -3130,6 +3155,7 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
     seriesScrapeCache.set(cleanId, { data: meta, timestamp: Date.now() });
     return meta;
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[Scraper] Error scraping series data for ${cleanId}:`, err);
     return null;
   }
@@ -3158,6 +3184,7 @@ async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise
     if (!html) return [];
     return parseEpisodesFromHtml(html);
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[Scraper] Error fetching season ${season} for ${cleanId}:`, err);
     return [];
   }
@@ -3198,7 +3225,8 @@ export async function getEpisodes(
         return data;
       }
     }
-  } catch {
+  } catch (error) {
+    rethrowNextControlFlow(error);
     // remote API failed, fall back to direct upstream scraper
   }
 
@@ -3223,6 +3251,7 @@ export async function getEpisodes(
       };
     }
   } catch (err) {
+    rethrowNextControlFlow(err);
     console.error(`[getEpisodes] Error fetching episodes for ${cleanId} s${seasonNum}:`, err);
   }
 
@@ -3252,7 +3281,8 @@ export async function getEpisodes(
         },
       };
     }
-  } catch {
+  } catch (error) {
+    rethrowNextControlFlow(error);
     // fallback error
   }
 
@@ -3293,7 +3323,8 @@ export async function getAvailableSeasons(
         return Array.from({ length: total }, (_, i) => i + 1);
       }
     }
-  } catch {
+  } catch (error) {
+    rethrowNextControlFlow(error);
     // ignore
   }
 
@@ -3310,7 +3341,8 @@ export async function getAvailableSeasons(
     if (aniSeasons > 1) {
       return Array.from({ length: aniSeasons }, (_, i) => i + 1);
     }
-  } catch {
+  } catch (error) {
+    rethrowNextControlFlow(error);
     // ignore
   }
 
@@ -3564,6 +3596,7 @@ export async function getHomepageData(options: { diagnostics?: boolean } = {}): 
   try {
     feed = await getHomepageFeed(diagnostics);
   } catch (err) {
+    rethrowNextControlFlow(err);
     const error = err instanceof Error ? err : new Error(String(err));
     if (diagnostics) {
       logHomepageSsr(true, {
@@ -3593,6 +3626,7 @@ export async function getHomepageData(options: { diagnostics?: boolean } = {}): 
   try {
     mapped = mapHomepageFeedToData(feed);
   } catch (err) {
+    rethrowNextControlFlow(err);
     const error = err instanceof Error ? err : new Error(String(err));
     logHomepageSsr(diagnostics, {
       source: "homepage-data",

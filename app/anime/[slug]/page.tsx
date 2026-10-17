@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { cache } from "react";
+import { unstable_rethrow } from "next/navigation";
 import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
@@ -704,7 +705,10 @@ export default async function AnimeDetailPage({
     rawGenres[0] ||
     "action";
 
-  const genreData = await getGenreCatalog(primaryGenre, 1).catch(() => null);
+  const genreData = await getGenreCatalog(primaryGenre, 1).catch((error) => {
+    unstable_rethrow(error);
+    return null;
+  });
   const genreCatalogItems = genreData?.results || [];
 
   const seenSlugs = new Set<string>([item.slug]);
