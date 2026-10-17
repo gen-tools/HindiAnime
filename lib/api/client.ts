@@ -547,6 +547,10 @@ export function applyCatalogPosters(items: Anime[], catalog: Anime[]): Anime[] {
   }
 
   return items.map((item) => {
+    if (item.isMock) {
+      return { ...item, poster: MOCK_ARTWORK_URL, backdrop: MOCK_ARTWORK_URL };
+    }
+
     const source =
       bySlug.get(item.slug) ?? byTitle.get(normalizeCatalogTitle(item.title));
 
@@ -564,7 +568,7 @@ export function applyCatalogPosters(items: Anime[], catalog: Anime[]): Anime[] {
 
 export function getCatalogPosterItems(items: Anime[], catalog: Anime[]): Anime[] {
   return applyCatalogPosters(items, catalog).filter((item) =>
-    isUsableImageUrl(item.poster)
+    item.isMock || isUsableImageUrl(item.poster)
   );
 }
 
