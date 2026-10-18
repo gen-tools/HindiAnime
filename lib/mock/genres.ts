@@ -21,6 +21,15 @@ export const genres: Genre[] = [
   { slug: "super-power", label: "Super Power", description: "Superhuman abilities and overwhelming might" },
 ];
 
+export function normalizeGenreSlug(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return genres.find((genre) =>
+    genre.slug === normalized ||
+    genre.label.toLowerCase().replace(/[\s_]+/g, "-") === normalized
+  )?.slug ?? normalized;
+}
+
 export function getGenre(slug: string) {
-  return genres.find((g) => g.slug === slug);
+  const normalized = normalizeGenreSlug(slug);
+  return genres.find((genre) => genre.slug === normalized);
 }

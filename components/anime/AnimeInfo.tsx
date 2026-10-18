@@ -10,6 +10,7 @@ import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
 import { FavoriteButton } from "./FavoriteButton";
 import { buildWatchHref } from "@/lib/watch-routing";
 import { ReadMoreText } from "@/components/ui/ReadMoreText";
+import { normalizeGenreSlug } from "@/lib/mock/genres";
 
 export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeId?: string }) {
   const isMovie = item.type === "Movie" || firstEpisodeId === "movie";
@@ -61,7 +62,7 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
         {item.genres && item.genres.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {item.genres.map((g) => (
-              <Link key={g} href={`/genre/${g}`}>
+              <Link key={g} href={`/genre/${normalizeGenreSlug(g)}`}>
                 <Badge className="capitalize hover:border-green-primary/60 hover:text-green-light">
                   {g.replace("-", " ")}
                 </Badge>

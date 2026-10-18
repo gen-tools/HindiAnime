@@ -10,6 +10,7 @@ import { LanguageBadges } from "./LanguageBadges";
 import { PosterArt } from "./PosterArt";
 import { FavoriteButton } from "./FavoriteButton";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
+import { normalizeGenreSlug } from "@/lib/mock/genres";
 
 const SLIDE_DURATION = 7500;
 
@@ -102,7 +103,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
           {item.genres?.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
               {item.genres.slice(0, 4).map((genre) => (
-                <Link key={genre} href={`/genre/${genre}`}>
+                <Link key={genre} href={`/genre/${normalizeGenreSlug(genre)}`}>
                   <span className="rounded-md border border-border-line bg-surface/80 px-2.5 py-0.5 text-[11px] font-medium capitalize text-text-secondary transition-colors hover:border-green-primary/50 hover:text-green-light">
                     {genre.replaceAll("-", " ")}
                   </span>

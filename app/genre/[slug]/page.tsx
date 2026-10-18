@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { genres, getGenre } from "@/lib/mock/genres";
+import { notFound, permanentRedirect } from "next/navigation";
+import { genres, getGenre, normalizeGenreSlug } from "@/lib/mock/genres";
 import { createCanonicalMetadata } from "@/lib/seo";
 import { GenreBrowseClient } from "@/components/genre/GenreBrowseClient";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
@@ -20,9 +20,10 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const genre = getGenre(slug);
+  const normalizedSlug = normalizeGenreSlug(slug);
+  const genre = getGenre(normalizedSlug);
   if (!genre) return {};
-  return createCanonicalMetadata(`/genre/${slug}`, {
+  return createCanonicalMetadata(`/genre/${normalizedSlug}`, {
     title: `${genre.label} Anime`,
     description: `Explore ${genre.label.toLowerCase()} anime series and movies on Hindi Anime — ${genre.description.toLowerCase()}.`,
   });
@@ -34,10 +35,12 @@ export default async function GenrePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const genre = getGenre(slug);
+  const normalizedSlug = normalizeGenreSlug(slug);
+  const genre = getGenre(normalizedSlug);
   if (!genre) notFound();
-  const items = catalogIndex.filter((item) => item.genres.includes(slug));
-  const { palette } = posterPalette(slug);
+  if (slug !== normalizedSlug) permanentRedirect(`/genre/${normalizedSlug}`);
+  const items = catalogIndex.filter((item) => item.genres.includes(normalizedSlug));
+  const { palette } = posterPalette(normalizedSlug);
   const [base, , bright] = palette;
 
   return (
@@ -50,7 +53,7 @@ export default async function GenrePage({
           <Link
             key={item.slug}
             href={`/genre/${item.slug}`}
-            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${item.slug === slug ? "border border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_12px_-2px_rgba(34,197,94,0.5)]" : "border border-border-line bg-surface text-text-secondary hover:border-green-primary/60 hover:text-white"}`}
+            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${item.slug === normalizedSlug ? "border border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_12px_-2px_rgba(34,197,94,0.5)]" : "border border-border-line bg-surface text-text-secondary hover:border-green-primary/60 hover:text-white"}`}
           >
             {item.label}
           </Link>
@@ -69,7 +72,7 @@ export default async function GenrePage({
       </div>
 
       <Suspense fallback={<div className="mt-8"><div className="h-11" /><div className="mt-8"><AnimeGrid items={items.slice(0, 12)} /></div></div>}>
-        <GenreBrowseClient slug={slug} />
+        <GenreBrowseClient slug={normalizedSlug} />
       </Suspense>
     </div>
   );

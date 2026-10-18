@@ -72,7 +72,8 @@ export async function generateMetadata({
   params: Promise<{ language: string }>;
 }): Promise<Metadata> {
   const { language } = await params;
-  const lang = languages.find((l) => l.code === language);
+  const normalizedLanguage = language.trim().toLowerCase();
+  const lang = languages.find((l) => l.code === normalizedLanguage);
   if (!lang) {
     return {
       robots: {
@@ -124,6 +125,12 @@ export default async function LanguagePage({
 }) {
   const { language } = await params;
   const sParams = await searchParams;
+  const normalizedLanguage = language.trim().toLowerCase();
+
+  if (normalizedLanguage !== language) {
+    const query = new URLSearchParams(sParams as Record<string, string>).toString();
+    redirect(`/language/${normalizedLanguage}${query ? `?${query}` : ""}`);
+  }
 
   const queryLanguage = sParams.language?.toLowerCase().trim();
   if (queryLanguage !== undefined) {
