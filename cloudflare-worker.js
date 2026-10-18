@@ -18,7 +18,7 @@
     const BROWSER_UA =
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-    const TOKO_API_URL = "https://anime-api2-nine.vercel.app";
+    const TOKO_API_URL = "https://anime-api2-3rkec57qu-sheztechy.vercel.app";
     const PROXY_SECRET_BINDING = "HINDIANIME_PROXY_SECRET";
     const PROXY_SECRET_HEADER = "x-hindianime-proxy-secret";
     const ANIMESALT_HOMEPAGE_URL = "https://animesalt.cx/";
@@ -65,7 +65,7 @@
       "as-cdn24.top",
       "as-cdn25.top",
       "as-cdn26.top",
-      "anime-api2-nine.vercel.app",
+      "anime-api2-3rkec57qu-sheztechy.vercel.app",
       "ravok.buzz",
     ]);
 
@@ -216,7 +216,7 @@
       if (ALLOWED_CDN_HOSTS.has(host)) {
         return true;
       }
-      if (host === "anime-api2-nine.vercel.app") {
+      if (host === "anime-api2-3rkec57qu-sheztechy.vercel.app") {
         return isAllowedTokoStreamTarget(url);
       }
       if (host === "ravok.buzz") {
@@ -592,7 +592,7 @@
             if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(classifyPromise);
             else classifyPromise.catch(() => {});
           }
-          const maxResponseBytes = parsedTarget.hostname === "anime-api2-nine.vercel.app"
+          const maxResponseBytes = parsedTarget.hostname === "anime-api2-3rkec57qu-sheztechy.vercel.app"
             ? GENERAL_RESPONSE_MAX_BYTES
             : ANIMESALT_RESPONSE_MAX_BYTES;
           const boundedResponse = limitProxyResponseBody(response, maxResponseBytes, upstreamController, upstreamTimeout);
