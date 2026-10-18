@@ -28,9 +28,22 @@ function decodeHtml(value) {
 
 function getCatalogEntries(html, kind) {
   const entries = [];
-  const articlePattern = /<article\b[^>]*\bclass=["'][^"']*\bpost\b[^"']*["'][^>]*>([\s\S]*?)<\/article>/gi;
+  const itemPattern = /<li\b([^>]*)>([\s\S]*?<article\b[^>]*\bclass=["'][^"']*\bpost\b[^"']*["'][^>]*>[\s\S]*?<\/article>[\s\S]*?)<\/li>/gi;
+  const categoryGenreMap = new Map([
+    ["action", ["action"]], ["adventure", ["adventure"]], ["comedy", ["comedy"]],
+    ["drama", ["drama"]], ["fantasy", ["fantasy"]], ["horror", ["horror"]],
+    ["isekai", ["isekai"]], ["mystery", ["mystery"]], ["psychological", ["psychological"]],
+    ["romance", ["romance"]], ["school", ["school"]], ["sci-fi", ["sci-fi"]],
+    ["shounen", ["shounen"]], ["slice-of-life", ["slice-of-life"]],
+    ["sports", ["sports"]], ["super-natural", ["supernatural"]],
+    ["supernatural", ["supernatural"]], ["super-power", ["super-power"]],
+    ["thriller", ["thriller"]], ["action-adventure", ["action", "adventure"]],
+    ["sci-fi-fantasy", ["sci-fi", "fantasy"]],
+  ]);
 
-  for (const [, article] of html.matchAll(articlePattern)) {
+  for (const [, listAttributes, listContent] of html.matchAll(itemPattern)) {
+    const article = listContent.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1];
+    if (!article) continue;
     const href = article.match(/href=["']([^"']+)["']/i)?.[1];
     if (!href) continue;
 
@@ -69,12 +82,8 @@ function getCatalogEntries(html, kind) {
     if (/\btelugu\b/.test(lower)) languages.push("telugu");
     if (/\benglish\b/.test(lower)) languages.push("english");
     if (/\bjapanese\b/.test(lower)) languages.push("japanese");
-    const genreKeywords = [
-      "action", "adventure", "fantasy", "romance", "comedy", "horror",
-      "thriller", "sports", "mystery", "sci-fi", "isekai", "slice-of-life",
-      "psychological", "supernatural", "drama", "shounen", "school",
-    ];
-    const genres = genreKeywords.filter((genre) => lower.includes(genre));
+    const categoryClasses = [...(listAttributes.match(/\bclass=["']([^"']+)["']/i)?.[1] ?? "").matchAll(/\bcategory-([a-z0-9-]+)/gi)];
+    const genres = [...new Set(categoryClasses.flatMap(([, category]) => categoryGenreMap.get(category) ?? []))];
 
     entries.push({
       id: slug,

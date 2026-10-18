@@ -13,6 +13,8 @@ interface SearchFilters {
   language?: string;
   country?: string;
   type?: string;
+  year?: string;
+  sort?: string;
 }
 
 export function BrowserSearchResults({
@@ -38,13 +40,22 @@ export function BrowserSearchResults({
     void loadSearchIndex()
       .then((index) => {
         if (requestIdRef.current !== requestId) return;
-        const matched = searchLocalIndex(query, index, index.length);
-        const filtered = matched.filter((item) =>
+        const matched = query.trim()
+          ? searchLocalIndex(query, index, index.length)
+          : index;
+        let filtered = matched.filter((item) =>
           (!filters.genre || item.genres.includes(filters.genre)) &&
           (!filters.language || item.languages.includes(filters.language as never)) &&
           (!filters.country || matchesCountry(item, filters.country)) &&
-          (!filters.type || item.type === filters.type)
+          (!filters.type || item.type === filters.type) &&
+          (!filters.year || String(item.year) === filters.year)
         );
+        if (!query.trim()) {
+          if (filters.sort === "year") filtered = [...filtered].sort((a, b) => b.year - a.year);
+          else if (filters.sort === "title") filtered = [...filtered].sort((a, b) => a.title.localeCompare(b.title));
+          else if (filters.sort === "recent") filtered = [...filtered].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+          else filtered = [...filtered].sort((a, b) => b.rating - a.rating);
+        }
         const pageSize = 12;
         setTotalPages(Math.max(1, Math.ceil(filtered.length / pageSize)));
         setItems(filtered.slice((page - 1) * pageSize, page * pageSize));
@@ -62,7 +73,8 @@ export function BrowserSearchResults({
   }, [query, page, filters.genre, filters.language, filters.country, filters.type, requestKey]);
 
   function buildHref(nextPage: number) {
-    const params = new URLSearchParams({ q: query });
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
     for (const [key, value] of Object.entries(filters)) {
       if (value) params.set(key, value);
     }

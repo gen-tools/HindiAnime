@@ -2,13 +2,7 @@ import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { genres } from "@/lib/mock/genres";
-import { anime } from "@/lib/mock/anime";
-import {
-  getCatalogPosterItems,
-  getHomepageData,
-  getHomepagePosterCatalog,
-  getGenreCatalog,
-} from "@/lib/api/client";
+import { catalogIndex } from "@/lib/catalog-index";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Badge } from "@/components/ui/Badge";
@@ -38,22 +32,13 @@ const genreIcons: Record<string, LucideIcon> = {
   comedy: Flame,
 };
 
-export default async function GenresDirectoryPage() {
-  const [homepageData, actionData, fantasyData] = await Promise.all([
-    getHomepageData(),
-    getGenreCatalog("action", 1),
-    getGenreCatalog("fantasy", 1),
-  ]);
-
-  const browseItems = getCatalogPosterItems(
-    anime,
-    getHomepagePosterCatalog(homepageData)
-  );
+export default function GenresDirectoryPage() {
+  const browseItems = catalogIndex;
   const getAnimeByGenre = (slug: string) =>
     browseItems.filter((item) => item.genres.includes(slug));
 
-  const actionAnime = actionData.results.length > 0 ? actionData.results.slice(0, 6) : getAnimeByGenre("action").slice(0, 6);
-  const fantasyAnime = fantasyData.results.length > 0 ? fantasyData.results.slice(0, 6) : getAnimeByGenre("fantasy").slice(0, 6);
+  const actionAnime = getAnimeByGenre("action").slice(0, 6);
+  const fantasyAnime = getAnimeByGenre("fantasy").slice(0, 6);
 
   return (
     <div className="container-page py-10 md:py-14">
