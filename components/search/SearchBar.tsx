@@ -7,8 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect, useId } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { cleanAnimeSlug } from "@/lib/api/client";
-import type { Anime } from "@/types/anime";
+import { loadSearchIndex, searchLocalIndex } from "@/lib/search-index";
 import type { LanguageCode } from "@/types/language";
 
 interface Suggestion {
@@ -105,18 +104,9 @@ export function SearchBar({
     setLoading(true);
     const loadSuggestions = async () => {
       try {
-        const res = await fetch(`/api/suggestions?q=${encodeURIComponent(q)}`, {
-          signal: controller.signal,
-        });
+        const index = await loadSearchIndex();
         if (controller.signal.aborted || searchRequestIdRef.current !== requestId) return;
-        if (!res.ok) {
-          setRequestFailed(true);
-          setHasSearched(true);
-          return;
-        }
-        const data = await res.json() as { results?: Anime[] };
-        if (controller.signal.aborted || searchRequestIdRef.current !== requestId) return;
-        setSuggestions((data.results ?? []).slice(0, 6).map((item: Anime) => ({
+        setSuggestions(searchLocalIndex(q, index, 6).map((item) => ({
           slug: item.slug,
           title: item.title,
           poster: item.poster,
@@ -169,8 +159,7 @@ export function SearchBar({
     setOpen(false);
     setSuggestions([]);
     inputRef.current?.blur();
-    const clean = cleanAnimeSlug(slug) || slug;
-    router.push(`/anime/${clean}`);
+    router.push(`/anime/${slug}`);
   }
 
   function handleSubmit(e: React.FormEvent) {

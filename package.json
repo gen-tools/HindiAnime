@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "generate:search-index": "node scripts/generate-search-index.mjs",
     "start": "next start",
     "lint": "eslint"
   },

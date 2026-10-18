@@ -13,7 +13,6 @@ import {
   getGenreCatalog,
   getLanguageCatalog,
   mapSearchItemToAnime,
-  searchGlobalAnime,
 } from "@/lib/api/client";
 import { matchesCountry } from "@/lib/mock/countries";
 import type { Anime } from "@/types/anime";
@@ -52,13 +51,7 @@ export default async function SearchPage({
   let totalPages = 1;
 
   if (rawQ) {
-    const globalSearch = await searchGlobalAnime(rawQ, page);
-    results = globalSearch.results.map((result) => result.item);
-    totalPages = globalSearch.totalPages;
-    if (genre) results = results.filter((a) => a.genres.includes(genre));
-    if (language) results = results.filter((a) => a.languages.includes(language as never));
-    if (country) results = results.filter((a) => matchesCountry(a, country));
-    if (type) results = results.filter((a) => a.type === type);
+    // Query searches run against the static browser index in BrowserSearchResults.
   } else if (genre) {
     const genreData = await getGenreCatalog(genre, page);
     results = genreData.results;
@@ -133,8 +126,6 @@ export default async function SearchPage({
             key={`${rawQ}:${page}:${genre ?? ""}:${language ?? ""}:${country ?? ""}:${type ?? ""}`}
             query={rawQ}
             page={page}
-            initialItems={results}
-            initialTotalPages={totalPages}
             filters={{ genre, language, country, type }}
           />
         ) : results.length > 0 ? (

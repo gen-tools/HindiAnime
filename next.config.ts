@@ -42,6 +42,15 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        source: "/search-index.json",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800",
+          },
+        ],
+      },
+      {
         // Global security headers for all routes — NO X-Robots-Tag here (let meta robots handle it per page)
         source: "/:path*",
         headers: [
