@@ -29,7 +29,11 @@ export async function GET(req: NextRequest) {
       headers: {
         // Cache for 60s in the browser; Vercel edge caches for 5 min (s-maxage);
         // serve stale for another 120s while the server refreshes in the background.
-        "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=120",
+        // Empty results can mean the upstream API or scraper was temporarily
+        // unavailable; do not let an outage become a cached "no results" state.
+        "Cache-Control": results.length > 0
+          ? "public, max-age=60, s-maxage=300, stale-while-revalidate=120"
+          : "no-store",
       },
     });
   } catch {

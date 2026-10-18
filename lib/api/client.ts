@@ -2835,7 +2835,12 @@ async function fetchHtmlUncached(url: string): Promise<string | null> {
       const t = setTimeout(() => controller.abort(), 6000);
       console.log(`[Worker Request Outbound] Proxying: ${url}`);
       const pRes = await fetch(proxyUrl, {
-        headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
+        // AnimeSalt HTML is fetched through the Worker’s public, allowlisted
+        // scraper route. Do not attach the server-only proxy secret here: a
+        // stale or missing Vercel secret would make autocomplete fall back to
+        // direct AnimeSalt egress, which is commonly challenged in production.
+        // Protected stream/Toko Worker routes continue to require the secret.
+        headers: DEFAULT_SCRAPER_HEADERS,
         signal: controller.signal,
         cache: "no-store",
       });
