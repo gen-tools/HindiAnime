@@ -116,6 +116,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){
+              var path = window.location.pathname.toLowerCase();
+              if (/^\\/(about|contact|dmca|privacy|terms)(\\/|$)/.test(path)) return;
+              if (document.querySelector("script[data-adsterra-popunder]")) return;
+              var script = document.createElement("script");
+              script.async = true;
+              script.crossOrigin = "anonymous";
+              script.dataset.adsterraPopunder = "true";
+              script.src = "https://pl31917244.profitableratecpmnetwork.com/89/e4/e8/89e4e830f97d279bf0b57a442e0062bf.js";
+              document.head.appendChild(script);
+            })();`,
+          }}
+        />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd).replace(/</g, "\\u003c") }} />
       </head>
       <body
