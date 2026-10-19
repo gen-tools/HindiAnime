@@ -511,10 +511,12 @@ function buildTokoItem(s: TokoSource): StreamItem {
 
 function assembleServers(
   rawSources: TokoSource[],
-  animeSaltItems: StreamItem[]
+  animeSaltItems: StreamItem[],
+  animeSlug: string
 ): StreamItem[] {
   const list: StreamItem[] = [];
   const usedUrls = new Set<string>();
+  const isNarutoShippuden = cleanAnimeSlug(animeSlug).toLowerCase() === "naruto-shippuden";
 
   function add(item: StreamItem | null | undefined, label: string) {
     if (!item) return;
@@ -637,7 +639,13 @@ function assembleServers(
     add(saltMyStream, "Server 2 · 🇮🇳 MyStream");
   } else {
     const nextSaltHindi = animeSaltItems.find((s) => !s.languageSources?.length && isHindi(s) && !usedUrls.has(s.embed));
-    if (nextSaltHindi) add(nextSaltHindi, "Server 2 · 🇮🇳 Hindi (Abyss)");
+    if (nextSaltHindi && !(isNarutoShippuden && preferredSaltHindi && abyssPlayer)) {
+      add(nextSaltHindi, "Server 2 · 🇮🇳 Hindi (Abyss)");
+    } else if (nextSaltHindi && isNarutoShippuden) {
+      // Naruto Shippuden already has its Hindi MyStream source and multi-audio
+      // Abyss player; omit the extra Hindi fallback that became Server 6.
+      usedUrls.add(nextSaltHindi.embed);
+    }
   }
 
   // Keep Vidmoly out of this slot; it was replaced by RubyVidHub above.
@@ -921,7 +929,7 @@ async function buildStreamResponse(
         : fetchAnimeSaltSources(cleanId, season, ep, browserResult),
   ]);
 
-  const finalResults = assembleServers(tokoRaw, animeSaltItems);
+  const finalResults = assembleServers(tokoRaw, animeSaltItems, cleanId);
 
   if (finalResults.length > 0) {
     return NextResponse.json(
@@ -1070,7 +1078,7 @@ export async function POST(request: Request) {
 
       const emitSnapshot = (complete: boolean, byLanguage?: Record<string, unknown>) => {
         if (!animeSaltItems) return;
-        const results = assembleServers(orderTokoSources(tokoRaw), animeSaltItems);
+        const results = assembleServers(orderTokoSources(tokoRaw), animeSaltItems, cleanId);
         const signature = results.map((item) => `${item.server}\u0000${item.label}\u0000${item.embed}`).join("\u0001");
         if (!complete && signature === lastSnapshot) return;
         lastSnapshot = signature;

@@ -669,6 +669,7 @@ export default async function WatchPage({
         episode={episode.number}
         episodeTitle={episodeTitle}
         languages={episode.languages}
+        isMovie={isMovie}
       />
 
       {/* Episode metadata & Controls */}
