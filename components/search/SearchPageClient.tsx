@@ -6,7 +6,6 @@ import { SearchBar } from "@/components/search/SearchBar";
 import { SearchFilters } from "@/components/search/SearchFilters";
 import { BrowserSearchResults } from "@/components/search/BrowserSearchResults";
 import { normalizeFilterParams, hasFilterParamChanges } from "@/lib/search-filters";
-import { openWatchDirectAd } from "@/components/ads/WatchDirectLinkAd";
 
 export function SearchPageClient() {
   const router = useRouter();
@@ -26,41 +25,6 @@ export function SearchPageClient() {
       router.replace(`/search${query ? `?${query}` : ""}`);
     }
   }, [rawParams, router]);
-
-  useEffect(() => {
-    const handleAnimeResultClick = (event: MouseEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey
-      ) {
-        return;
-      }
-
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const anchor = target.closest<HTMLAnchorElement>("a[href]");
-      if (!anchor || anchor.hasAttribute("download") || anchor.target === "_blank") return;
-
-      try {
-        const destination = new URL(anchor.href, window.location.href);
-        if (
-          destination.origin === window.location.origin &&
-          /^\/anime\/[^/]+\/?$/.test(destination.pathname)
-        ) {
-          openWatchDirectAd();
-        }
-      } catch {
-        // Ignore malformed or non-navigation links.
-      }
-    };
-
-    document.addEventListener("click", handleAnimeResultClick, true);
-    return () => document.removeEventListener("click", handleAnimeResultClick, true);
-  }, []);
 
   const query = (params.get("q") || params.get("s") || "").trim();
   const genre = params.get("genre") || undefined;
