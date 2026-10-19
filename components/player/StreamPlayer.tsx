@@ -120,7 +120,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
             ja: "Japanese",
             fr: "French Dub",
           } as Record<string, string>)[item.audioLanguage || ""],
-      restrictNavigation: /mystream/i.test(item.label || "") && !/animesalt/i.test(item.label || ""),
+      restrictNavigation: /mystream/i.test(item.label || ""),
     });
   }
 
