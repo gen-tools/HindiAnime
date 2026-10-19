@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { cache } from "react";
 import { unstable_rethrow } from "next/navigation";
 import { AnimeInfo } from "@/components/anime/AnimeInfo";
+import { AnimeNativeAd } from "@/components/ads/AnimeNativeAd";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
 import { EpisodeList } from "@/components/episodes/EpisodeList";
@@ -382,11 +384,17 @@ export default async function AnimeDetailPage({
   if (mockRecord?.isMock) {
     return (
       <div className="pb-14">
+        <Script
+          id="adsterra-anime-social-bar"
+          src="https://pl31914364.profitableratecpmnetwork.com/c6/96/cc/c696cc5233febe1d3a6ffbe8d634b971.js"
+          strategy="afterInteractive"
+        />
         <div className="relative h-64 overflow-hidden border-b border-border-line sm:h-80 md:h-96">
           <PosterArt seed={mockRecord.backdrop} title={mockRecord.title} orientation="landscape" className="h-full" />
           <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-background/10" />
         </div>
         <AnimeInfo item={mockRecord} />
+        <AnimeNativeAd />
       </div>
     );
   }
@@ -778,6 +786,11 @@ export default async function AnimeDetailPage({
 
   return (
     <div className="pb-14">
+      <Script
+        id="adsterra-anime-social-bar"
+        src="https://pl31914364.profitableratecpmnetwork.com/c6/96/cc/c696cc5233febe1d3a6ffbe8d634b971.js"
+        strategy="afterInteractive"
+      />
       <div className="relative h-64 overflow-hidden border-b border-border-line sm:h-80 md:h-96">
         <PosterArt
           seed={item.backdrop}
@@ -789,6 +802,7 @@ export default async function AnimeDetailPage({
       </div>
 
       <AnimeInfo item={item} firstEpisodeId={firstEpisodeId} />
+      <AnimeNativeAd />
 
       {!isMovie && episodes.length > 0 && (
         <div className="container-page mt-10">
