@@ -78,9 +78,9 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://*.profitableratecpmnetwork.com https://profitableratecpmnetwork.com",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: https://image.tmdb.org https://*.anilist.co https://s4.anilist.co https://img.animesalt.cx https://animesalt.cx https://*.animesalt.cx https://*.tmdb.org https://multishows.top https://*.multishows.top https://i0.wp.com https://i1.wp.com https://i2.wp.com https://i3.wp.com https://*.wp.com",
+              "img-src 'self' data: blob: https: https://image.tmdb.org https://*.anilist.co https://s4.anilist.co https://img.animesalt.cx https://animesalt.cx https://*.animesalt.cx https://*.tmdb.org https://multishows.top https://*.multishows.top https://i0.wp.com https://i1.wp.com https://i2.wp.com https://i3.wp.com https://*.wp.com",
               "font-src 'self' data:",
               "connect-src 'self' https: http: blob: data: https://graphql.anilist.co https://anime-api2-3rkec57qu-sheztechy.vercel.app https://animesalt.cx https://*.workers.dev https://wispy-cherry-6934.sheztech.workers.dev https://cloud.hindi-anime.com",
               // Permissive frame-src and media-src so embedded video players and streams function smoothly
