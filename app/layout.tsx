@@ -6,6 +6,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { AdsterraPopunder } from "@/components/ads/AdsterraPopunder";
+import { EpisodeChangeDirectLink } from "@/components/ads/EpisodeChangeDirectLink";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -145,6 +146,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <Header />
         <AdsterraPopunder />
+        <EpisodeChangeDirectLink />
         <main id="main-content" className="flex-1 mobile-nav-clearance">
           {children}
         </main>
