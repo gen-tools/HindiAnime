@@ -201,6 +201,12 @@ export interface StreamItem {
   languageLabel?: string;
   /** BCP-47 audio language code e.g. "hi", "ja", "en" */
   audioLanguage?: string;
+  /** Alternate audio embeds provided by a single multi-language player. */
+  languageSources?: Array<{
+    code: string;
+    label: string;
+    embed: string;
+  }>;
   /** True when the stream is a direct HLS/MP4 (no ads, no iframe) */
   adFree?: boolean;
   /** Optional request headers required by the source CDN */

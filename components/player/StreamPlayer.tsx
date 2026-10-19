@@ -11,6 +11,8 @@ import {
   Maximize,
   Minimize,
   PictureInPicture2,
+  Volume2,
+  X,
 } from "lucide-react";
 import { StreamItem } from "@/types/api";
 import { isValidEmbedUrl } from "@/lib/api/client";
@@ -34,6 +36,9 @@ interface ValidServer {
   isDirect: boolean;
   /** True when this is a direct HLS/MP4 stream — no ads, no iframe */
   adFree: boolean;
+  languageSources?: NonNullable<StreamItem["languageSources"]>;
+  displayLanguage?: string;
+  restrictNavigation: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -42,7 +47,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   const servers: ValidServer[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < results.length && servers.length < 9; i++) {
+  for (let i = 0; i < results.length && servers.length < 7; i++) {
     const item = results[i];
     const isDirect = (item.type === "hls" || item.type === "mp4") && Boolean(item.url || item.embed);
     // For direct streams: prefer item.url (the proxy URL), else fall back to item.embed (raw HLS/MP4)
@@ -69,12 +74,10 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       // Relative application API URLs are handled separately below.
     }
     const isOwnProxy = streamUrl.startsWith("/api/") || isWorkerProxy;
-    const isAllowedRubyServer4 = (() => {
+    const isAllowedRubyEmbed = (() => {
       if (
-        item.server !== "Server 4" ||
         item.type !== "embed" ||
-        item.audioLanguage?.toLowerCase() !== "hi" ||
-        !item.label?.includes("Hindi Dub (Toko Alt)")
+        !/rubyvidhub|hindi dub \(toko alt\)/i.test(item.label || "")
       ) return false;
       try {
         const url = new URL(streamUrl);
@@ -84,7 +87,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
         return false;
       }
     })();
-    if (!isOwnProxy && !isAllowedRubyServer4 && !isValidEmbedUrl(streamUrl)) continue;
+    if (!isOwnProxy && !isAllowedRubyEmbed && !isValidEmbedUrl(streamUrl)) continue;
 
     seen.add(dedupeKey);
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
@@ -102,6 +105,22 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       type: finalType,
       isDirect,
       adFree: Boolean(item.adFree) || isDirect,
+      languageSources: item.languageSources,
+      displayLanguage: /mega\s*play/i.test(item.label || "")
+        ? "Mega"
+        : /vidmoly/i.test(item.label || "")
+          ? "VidMoly"
+          : item.languageSources?.length
+        ? `Multi-Audio${item.languageLabel ? ` · ${item.languageLabel}` : ""}`
+        : item.languageLabel || ({
+            hi: "Hindi Dub",
+            ta: "Tamil Dub",
+            te: "Telugu Dub",
+            en: "English",
+            ja: "Japanese",
+            fr: "French Dub",
+          } as Record<string, string>)[item.audioLanguage || ""],
+      restrictNavigation: /mystream/i.test(item.label || "") && !/animesalt/i.test(item.label || ""),
     });
   }
 
@@ -115,7 +134,8 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
   return servers.map((server, index) => ({
     ...server,
-    label: server.label.replace(/^Server\s+\d+/, `Server ${index + 1}`),
+    server: `Server ${index + 1}`,
+    label: `Server ${index + 1}${server.displayLanguage ? ` · ${server.displayLanguage}` : ""}`,
   }));
 }
 
@@ -205,11 +225,21 @@ export function StreamPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [pictureInPictureSupported, setPictureInPictureSupported] = useState(false);
   const [isPictureInPicture, setIsPictureInPicture] = useState(false);
+  const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const embedPictureInPictureRef = useRef<Window | null>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!isLanguageMenuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsLanguageMenuOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [isLanguageMenuOpen]);
 
   useEffect(() => {
     const video = playerFrameRef.current?.querySelector("video");
@@ -550,7 +580,18 @@ export function StreamPlayer({
       embedPictureInPictureRef.current.close();
       embedPictureInPictureRef.current = null;
     }
+    setIsLanguageMenuOpen(false);
     setActiveServer(server);
+  }, []);
+
+  const handleLanguageSelect = useCallback((embed: string) => {
+    setActiveServer((current) => {
+      const source = current?.languageSources?.find((entry) => entry.embed === embed);
+      return current && source
+        ? { ...current, embed: source.embed }
+        : current;
+    });
+    setIsLanguageMenuOpen(false);
   }, []);
 
   return (
@@ -603,14 +644,73 @@ export function StreamPlayer({
               />
             ) : (
               <EmbedFrame
-                key={activeServer.id}
+                key={`${activeServer.id}:${activeServer.embed}`}
                 embed={activeServer.embed}
                 title={episodeTitle}
                 reloadKey={reloadKey}
-                restrictNavigation={/mystream|animesalt/i.test(activeServer.label)}
+                restrictNavigation={activeServer.restrictNavigation}
               />
             )}
 
+          </>
+        )}
+        {state === "ready" && activeServer && (activeServer.languageSources?.length || 0) > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setIsLanguageMenuOpen((open) => !open)}
+              aria-haspopup="dialog"
+              aria-expanded={isLanguageMenuOpen}
+              className="focus-ring absolute right-3 top-3 z-20 inline-flex min-h-8 items-center gap-1.5 rounded-md bg-green-bright px-3 text-xs font-semibold text-black shadow-lg transition hover:bg-green-light"
+            >
+              <Volume2 className="h-3.5 w-3.5" />
+              {activeServer.languageSources?.find((source) => source.embed === activeServer.embed)?.label || "Audio"}
+            </button>
+            {isLanguageMenuOpen && (
+              <div
+                className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+                onClick={() => setIsLanguageMenuOpen(false)}
+              >
+                <section
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Audio selection"
+                  className="w-full max-w-xs rounded-xl border border-green-primary/30 bg-[#111712] p-4 shadow-2xl"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-green-light">Audio Selection</h2>
+                    <button
+                      type="button"
+                      onClick={() => setIsLanguageMenuOpen(false)}
+                      aria-label="Close audio selection"
+                      className="focus-ring flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-white/10 hover:text-white"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {activeServer.languageSources?.map((source) => (
+                      <button
+                        key={`${source.code}:${source.embed}`}
+                        type="button"
+                        onClick={() => handleLanguageSelect(source.embed)}
+                        aria-pressed={source.embed === activeServer.embed}
+                        className={cn(
+                          "focus-ring flex min-h-10 items-center justify-center gap-2 rounded-md border px-3 text-xs font-semibold transition-colors",
+                          source.embed === activeServer.embed
+                            ? "border-green-primary/60 bg-green-primary/20 text-green-light"
+                            : "border-border-line bg-surface-elevated/50 text-text-primary hover:border-green-primary/50 hover:bg-green-primary/10"
+                        )}
+                      >
+                        <Volume2 className="h-3.5 w-3.5 text-green-bright" />
+                        {source.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            )}
           </>
         )}
         {isPictureInPicture && activeServer?.type === "embed" && (
