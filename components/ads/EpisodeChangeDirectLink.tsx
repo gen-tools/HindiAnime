@@ -30,6 +30,11 @@ export function EpisodeChangeDirectLink() {
       const anchor = target.closest<HTMLAnchorElement>("a[href]");
       if (!anchor || anchor.hasAttribute("download") || anchor.target === "_blank") return;
 
+      if (anchor.dataset.directLinkAd === "true") {
+        openEpisodeChangeDirectLink();
+        return;
+      }
+
       try {
         const destination = new URL(anchor.href, window.location.href);
         if (destination.origin !== window.location.origin) return;
