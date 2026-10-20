@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Hls from "hls.js";
 import {
   Loader2,
+  Play,
   WifiOff,
   ServerCrash,
   RefreshCw,
@@ -25,7 +26,7 @@ import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type PlayerState = "loading" | "ready" | "unavailable" | "error";
+type PlayerState = "idle" | "loading" | "ready" | "unavailable" | "error";
 
 interface ValidServer {
   id: string;
@@ -530,16 +531,18 @@ export function StreamPlayer({
 
 
   useEffect(() => {
-    const t = window.setTimeout(() => { void fetchStreams(0); }, 0);
+    setState((current) => current === "loading" ? "idle" : current);
+  }, []);
+
+  useEffect(() => {
     return () => {
-      window.clearTimeout(t);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       requestGenerationRef.current += 1;
       const controller = requestControllerRef.current;
       requestControllerRef.current = null;
       abortPlaybackRequest(controller, "Playback request cleaned up");
     };
-  }, [fetchStreams]);
+  }, [playbackIdentity]);
 
   const serversRef = useRef<ValidServer[]>([]);
   serversRef.current = servers;
@@ -609,6 +612,7 @@ export function StreamPlayer({
             : "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
         )}
       >
+        {state === "idle" && <IdleState onPlay={() => void fetchStreams(0)} />}
         {state === "loading" && <LoadingState episodeTitle={episodeTitle} />}
         {state === "error" && (
           <ErrorState
@@ -871,6 +875,25 @@ export function StreamPlayer({
 
 
 // ─── Sub-states ──────────────────────────────────────────────────────────────
+
+function IdleState({ onPlay }: { onPlay: () => void }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/90 text-center">
+      <button
+        type="button"
+        onClick={onPlay}
+        aria-label="Load video sources and play"
+        className="focus-ring flex h-20 w-20 items-center justify-center rounded-full border border-green-primary/50 bg-green-primary text-white shadow-lg transition-transform hover:scale-105 hover:bg-green-hover active:scale-95"
+      >
+        <Play className="ml-1 h-9 w-9 fill-current" />
+      </button>
+      <div>
+        <p className="text-base font-semibold text-white">Play video</p>
+        <p className="mt-1 text-sm text-text-secondary">Click to load available servers</p>
+      </div>
+    </div>
+  );
+}
 
 function LoadingState({ episodeTitle }: { episodeTitle: string }) {
   return (
