@@ -362,3 +362,40 @@ body {
 .mobile-nav-clearance {
   padding-bottom: 5.5rem !important; /* 88px */
 }
+
+.navigation-progress-track {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.navigation-progress-track[data-visible="true"] {
+  opacity: 1;
+}
+
+.navigation-progress-track > span {
+  display: block;
+  width: 32%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, #22c55e, #86efac);
+  box-shadow: 0 0 8px rgb(34 197 94 / 55%);
+  transform: translateX(-110%);
+  animation: navigation-progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes navigation-progress-slide {
+  to { transform: translateX(330%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navigation-progress-track > span {
+    width: 100%;
+    animation: none;
+    transform: none;
+  }
+}

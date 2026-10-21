@@ -25,16 +25,18 @@ export function MovieSpotlight({ items }: { items: Anime[] }) {
     const syncRotation = () => {
       if (timer) clearInterval(timer);
       timer = undefined;
-      if (!motionPreference.matches) {
+      if (!motionPreference.matches && document.visibilityState === "visible") {
         timer = setInterval(() => setIndex((current) => (current + 1) % items.length), SLIDE_DURATION);
       }
     };
 
     syncRotation();
     motionPreference.addEventListener("change", syncRotation);
+    document.addEventListener("visibilitychange", syncRotation);
     return () => {
       if (timer) clearInterval(timer);
       motionPreference.removeEventListener("change", syncRotation);
+      document.removeEventListener("visibilitychange", syncRotation);
     };
   }, [items.length]);
 

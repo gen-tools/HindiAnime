@@ -5,6 +5,7 @@ import "./globals.css";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
+import { NavigationFeedback } from "@/components/layout/NavigationFeedback";
 import { AdsterraPopunder } from "@/components/ads/AdsterraPopunder";
 import { EpisodeChangeDirectLink } from "@/components/ads/EpisodeChangeDirectLink";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
@@ -145,6 +146,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
         <Header />
+        <NavigationFeedback />
         <AdsterraPopunder />
         <EpisodeChangeDirectLink />
         <main id="main-content" className="flex-1 mobile-nav-clearance">

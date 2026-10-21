@@ -26,16 +26,18 @@ export function AnimeHero({ items }: { items: Anime[] }) {
     const syncRotation = () => {
       if (timer) clearInterval(timer);
       timer = undefined;
-      if (!motionPreference.matches) {
+      if (!motionPreference.matches && document.visibilityState === "visible") {
         timer = setInterval(() => setIndex((current) => (current + 1) % items.length), SLIDE_DURATION);
       }
     };
 
     syncRotation();
     motionPreference.addEventListener("change", syncRotation);
+    document.addEventListener("visibilitychange", syncRotation);
     return () => {
       if (timer) clearInterval(timer);
       motionPreference.removeEventListener("change", syncRotation);
+      document.removeEventListener("visibilitychange", syncRotation);
     };
   }, [items.length]);
 
@@ -121,7 +123,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
 
           <div className="mt-2 flex flex-wrap items-center gap-2.5 sm:gap-3">
             {!item.isMock && (
-              <ButtonLink href={watchHref} prefetch={false} size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold">
+              <ButtonLink href={watchHref} prefetch={false} size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold touch-manipulation active:scale-95">
                 WATCH NOW
               </ButtonLink>
             )}

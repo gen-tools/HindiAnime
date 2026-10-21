@@ -50,7 +50,7 @@ function MobileBottomNavInner() {
         <Link
           href="/"
           className={cn(
-            "flex flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-colors group",
+            "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isHomeActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
           )}
         >
@@ -65,7 +65,7 @@ function MobileBottomNavInner() {
         <Link
           href="/genre"
           className={cn(
-            "flex flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-colors group",
+            "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isBrowseActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
           )}
         >
@@ -82,7 +82,7 @@ function MobileBottomNavInner() {
             href="/search"
             aria-label="Search anime"
             className={cn(
-              "flex h-13 w-13 sm:h-14 sm:w-14 items-center justify-center rounded-full bg-green-bright text-black shadow-[0_0_24px_rgba(34,197,94,0.7)] border-4 border-background transition-all duration-200 hover:scale-105 active:scale-95",
+              "flex h-13 w-13 touch-manipulation sm:h-14 sm:w-14 items-center justify-center rounded-full bg-green-bright text-black shadow-[0_0_24px_rgba(34,197,94,0.7)] border-4 border-background transition-all duration-150 hover:scale-105 active:scale-90",
               isSearchActive && "ring-2 ring-green-light ring-offset-2 ring-offset-background scale-105"
             )}
           >
@@ -102,7 +102,7 @@ function MobileBottomNavInner() {
         <Link
           href="/profile?tab=favorites"
           className={cn(
-            "flex flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-colors group",
+            "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isListActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
           )}
         >
@@ -117,7 +117,7 @@ function MobileBottomNavInner() {
         <Link
           href="/profile"
           className={cn(
-            "flex flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-colors group",
+            "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isYouActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
           )}
         >

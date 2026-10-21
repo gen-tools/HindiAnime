@@ -8,7 +8,6 @@ import { formatDuration } from "@/lib/utils";
 import Link from "next/link";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/client";
 import { FavoriteButton } from "./FavoriteButton";
-import { buildWatchHref } from "@/lib/watch-routing";
 import { ReadMoreText } from "@/components/ui/ReadMoreText";
 import { normalizeGenreSlug } from "@/lib/mock/genres";
 
@@ -88,6 +87,7 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
               href={targetWatchHref}
               prefetch={false}
               size="lg"
+              className="touch-manipulation active:scale-95"
               icon={<Play className="h-4 w-4 fill-white" />}
             >
               Watch Now

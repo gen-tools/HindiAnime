@@ -9,6 +9,8 @@ interface PosterArtProps {
   title: string;
   className?: string;
   orientation?: "portrait" | "landscape";
+  /** Use a smaller source variant for compact catalog cards. */
+  imageSize?: "card" | "poster";
   /** Preserve the source artwork (`contain`) or crop it to fill the frame (`cover`). */
   fit?: "cover" | "contain";
   /** Lets full-bleed callers provide their own frame height instead of an aspect ratio. */
@@ -27,6 +29,7 @@ export function PosterArt({
   title,
   className,
   orientation = "portrait",
+  imageSize = "poster",
   fit = "cover",
   fillContainer = false,
   imageClassName,
@@ -62,10 +65,10 @@ export function PosterArt({
     })()
   );
 
-  // Request TMDB's existing poster-sized asset directly. Hero artwork uses
-  // w1280; portrait cards use w500, matching the source size already used.
+  // Request TMDB's existing sized assets directly. Compact cards use w342,
+  // full-size portrait art uses w500, and hero artwork uses w1280.
   if (isTmdbImage) {
-    const tmdbSize = orientation === "landscape" ? "w1280" : "w500";
+    const tmdbSize = orientation === "landscape" ? "w1280" : imageSize === "card" ? "w342" : "w500";
     imageSrc = imageSrc.replace(/\/t\/p\/(?:w\d+|original)\//, `/t/p/${tmdbSize}/`);
   }
 

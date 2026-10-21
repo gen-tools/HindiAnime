@@ -25,7 +25,7 @@ export function AnimeCard({
       href={`/anime/${item.slug}`}
       prefetch={false}
       className={cn(
-        "focus-ring group relative block shrink-0 rounded-xl transition-transform duration-200 ease-out hover:-translate-y-1 motion-reduce:transform-none",
+        "focus-ring group relative block shrink-0 touch-manipulation rounded-xl transition-[transform,filter] duration-150 ease-out hover:-translate-y-1 active:scale-[0.98] active:brightness-110 motion-reduce:transform-none",
         className
       )}
     >
@@ -35,6 +35,7 @@ export function AnimeCard({
           <PosterArt
             seed={item.poster}
             title={item.title}
+            imageSize="card"
             loading={imageLoading}
             sizes={imageSizes || "(max-width: 640px) 45vw, (max-width: 768px) 30vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 180px"}
             className="h-full w-full object-cover"
