@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { anime } from "@/lib/mock/anime";
+import { staticCatalog } from "@/lib/static-catalog";
 import { genres } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
 import { CANONICAL_SITE_ORIGIN } from "@/lib/seo";
@@ -59,18 +59,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
     {
-      url: `${BASE_URL}/browse`,
-      lastModified: now,
-      changeFrequency: "daily",
-      priority: 0.8,
-    },
-    {
-      url: `${BASE_URL}/search`,
-      lastModified: now,
-      changeFrequency: "weekly",
-      priority: 0.7,
-    },
-    {
       url: `${BASE_URL}/about`,
       lastModified: now,
       changeFrequency: "monthly",
@@ -102,12 +90,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
   ];
 
-  const animeRoutes: MetadataRoute.Sitemap = anime.filter((a) => !a.isMock).map((a) => ({
-    url: `${BASE_URL}/anime/${a.slug}`,
-    lastModified: a.updatedAt ? new Date(a.updatedAt) : now,
-    changeFrequency: "weekly",
-    priority: 0.8,
-  }));
+  const animeRoutes: MetadataRoute.Sitemap = staticCatalog
+    .filter((item) => !item.isMock && Boolean(item.slug))
+    .map((item) => {
+      const updatedAt = item.updatedAt ? new Date(item.updatedAt) : null;
+      return {
+        url: `${BASE_URL}/anime/${encodeURIComponent(item.slug)}`,
+        lastModified:
+          updatedAt && !Number.isNaN(updatedAt.getTime()) ? updatedAt : now,
+        changeFrequency: "weekly",
+        priority: 0.8,
+      };
+    });
 
   const genreRoutes: MetadataRoute.Sitemap = genres.map((g) => ({
     url: `${BASE_URL}/genre/${g.slug}`,
