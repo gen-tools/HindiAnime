@@ -72,6 +72,38 @@ export function PosterArt({
     imageSrc = imageSrc.replace(/\/t\/p\/(?:w\d+|original)\//, `/t/p/${tmdbSize}/`);
   }
 
+  const mobileHeroSrc = isTmdbImage && orientation === "landscape"
+    ? imageSrc.replace("/t/p/w1280/", "/t/p/w780/")
+    : null;
+  const image = (
+    <Image
+      src={imageSrc}
+      alt={title || "Anime poster"}
+      fill
+      // Let <picture> choose the mobile TMDB size before the request starts.
+      // fetchPriority keeps the hero image prioritized without preloading the
+      // desktop-sized asset on phones.
+      priority={false}
+      loading={priority ? "eager" : loading}
+      fetchPriority={priority ? "high" : "auto"}
+      sizes={sizes || (
+        orientation === "landscape"
+          ? "(max-width: 768px) 100vw, (max-width: 1280px) 80vw, 1200px"
+          : "(max-width: 640px) 45vw, (max-width: 768px) 30vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 180px"
+      )}
+      className={cn(fit === "contain" ? "object-contain" : "object-cover", imageClassName)}
+      // TMDB and AniList already provide appropriately sized assets. Load
+      // them directly to avoid consuming Vercel image transformations.
+      unoptimized={
+        isTmdbImage ||
+        isAniListImage ||
+        imageSrc.includes("animesalt.cx") ||
+        imageSrc.includes("multishows.top")
+      }
+      onError={() => setFailedImageSrc(imageSrc)}
+    />
+  );
+
   return (
     <div
       className={cn(
@@ -87,28 +119,12 @@ export function PosterArt({
       aria-hidden="true"
     >
       {isExternalImage && !imageFailed ? (
-        <Image
-          src={imageSrc}
-          alt={title || "Anime poster"}
-          fill
-          priority={priority}
-          loading={loading}
-          sizes={sizes || (
-            orientation === "landscape"
-              ? "(max-width: 768px) 100vw, (max-width: 1280px) 80vw, 1200px"
-              : "(max-width: 640px) 45vw, (max-width: 768px) 30vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 180px"
-          )}
-          className={cn(fit === "contain" ? "object-contain" : "object-cover", imageClassName)}
-          // TMDB and AniList already provide appropriately sized assets. Load
-          // them directly to avoid consuming Vercel image transformations.
-          unoptimized={
-            isTmdbImage ||
-            isAniListImage ||
-            imageSrc.includes("animesalt.cx") ||
-            imageSrc.includes("multishows.top")
-          }
-          onError={() => setFailedImageSrc(imageSrc)}
-        />
+        mobileHeroSrc ? (
+          <picture className="absolute inset-0 block">
+            <source media="(max-width: 767px)" srcSet={mobileHeroSrc} />
+            {image}
+          </picture>
+        ) : image
       ) : (
         <div className="absolute inset-0 bg-surface-elevated" />
       )}

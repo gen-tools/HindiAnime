@@ -295,12 +295,11 @@ export default async function WatchPage({
   const episodeNumber = epMatch ? parseInt(epMatch[2], 10) || 1 : 1;
 
   // ── 1. Resolve anime metadata & episodes concurrently ──────────────────────
-  const [[apiInfo, movieInfo, searchRes, directData], discoveredSeasons, epApiRes, homepageFeed] = await Promise.all([
+  const [[apiInfo, movieInfo, searchRes, directData], discoveredSeasons, epApiRes] = await Promise.all([
     getWatchPageBaseData(cleanSlug),
     getWatchPageSeasons(cleanSlug),
     // Skip episode fetch for explicit movie routes
     isMovieRoute ? Promise.resolve(null) : getWatchPageEpisodes(cleanSlug, seasonNumber),
-    getHomepageFeed(),
   ]);
 
   // Match strictly by exact slug — never hijack identity with random search results
@@ -601,6 +600,7 @@ export default async function WatchPage({
 
   // 3. Fallback: if fewer than 10 items, supplement with homepage feed items
   if (youMightAlsoLikePool.length < 10) {
+    const homepageFeed = await getHomepageFeed();
     const feedSections = homepageFeed?.data?.results;
     const feedCandidates = feedSections
       ? isMovie

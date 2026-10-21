@@ -16,6 +16,32 @@ export const STORES = {
 export type StoreName = (typeof STORES)[keyof typeof STORES];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+let activeDb: IDBDatabase | null = null;
+const closingDatabases = new WeakSet<IDBDatabase>();
+
+class DatabaseConnectionClosingError extends Error {
+  constructor() {
+    super("IndexedDB connection closed while starting a transaction");
+    this.name = "DatabaseConnectionClosingError";
+  }
+}
+
+function resetDbPromise(database?: IDBDatabase, openingPromise?: Promise<IDBDatabase>) {
+  if (database) {
+    closingDatabases.add(database);
+    // A late close event from an old connection must not clear a newer open.
+    if (activeDb !== database) return;
+    activeDb = null;
+  }
+  if (!openingPromise || dbPromise === openingPromise) dbPromise = null;
+}
+
+function isConnectionClosingError(error: unknown, database: IDBDatabase): boolean {
+  return (
+    closingDatabases.has(database) ||
+    (error instanceof DOMException && error.name === "InvalidStateError")
+  );
+}
 
 export function isIndexedDbSupported(): boolean {
   return typeof window !== "undefined" && "indexedDB" in window;
@@ -28,7 +54,7 @@ export function getDb(): Promise<IDBDatabase> {
 
   if (dbPromise) return dbPromise;
 
-  dbPromise = new Promise((resolve, reject) => {
+  const openingPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const request = window.indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = (event) => {
@@ -60,11 +86,20 @@ export function getDb(): Promise<IDBDatabase> {
     };
 
     request.onsuccess = () => {
-      resolve(request.result);
+      const database = request.result;
+      activeDb = database;
+      database.onversionchange = () => {
+        // A second tab or a newer app version is changing the schema. Close
+        // this handle and make the next operation open a fresh connection.
+        resetDbPromise(database, openingPromise);
+        database.close();
+      };
+      database.onclose = () => resetDbPromise(database, openingPromise);
+      resolve(database);
     };
 
     request.onerror = () => {
-      dbPromise = null;
+      resetDbPromise(undefined, openingPromise);
       reject(request.error);
     };
 
@@ -73,72 +108,87 @@ export function getDb(): Promise<IDBDatabase> {
     };
   });
 
+  dbPromise = openingPromise;
   return dbPromise;
+}
+
+async function runStoreRequest<T>(
+  storeName: StoreName,
+  mode: IDBTransactionMode,
+  createRequest: (store: IDBObjectStore) => IDBRequest
+): Promise<T> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const database = await getDb();
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        let transaction: IDBTransaction;
+        let request: IDBRequest;
+        let result: T | undefined;
+
+        try {
+          transaction = database.transaction(storeName, mode);
+          request = createRequest(transaction.objectStore(storeName));
+        } catch (error) {
+          reject(error);
+          return;
+        }
+
+        request.onsuccess = () => {
+          result = request.result as T;
+        };
+        request.onerror = () => reject(request.error || transaction.error);
+        transaction.oncomplete = () => resolve(result as T);
+        transaction.onabort = () => reject(transaction.error || request.error);
+      });
+    } catch (error) {
+      const canRetry = attempt === 0 && isConnectionClosingError(error, database);
+      if (canRetry) {
+        resetDbPromise(database);
+        continue;
+      }
+      if (isConnectionClosingError(error, database)) {
+        throw new DatabaseConnectionClosingError();
+      }
+      throw error;
+    }
+  }
+
+  throw new DatabaseConnectionClosingError();
 }
 
 export async function dbGetAll<T>(storeName: StoreName): Promise<T[]> {
   if (!isIndexedDbSupported()) return [];
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readonly");
-    const store = tx.objectStore(storeName);
-    const request = store.getAll();
-
-    request.onsuccess = () => resolve((request.result as T[]) || []);
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    return (await runStoreRequest<T[]>(storeName, "readonly", (store) => store.getAll())) || [];
+  } catch (error) {
+    if (error instanceof DatabaseConnectionClosingError) return [];
+    throw error;
+  }
 }
 
 export async function dbGet<T>(storeName: StoreName, key: IDBValidKey): Promise<T | undefined> {
   if (!isIndexedDbSupported()) return undefined;
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readonly");
-    const store = tx.objectStore(storeName);
-    const request = store.get(key);
-
-    request.onsuccess = () => resolve(request.result as T | undefined);
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    return await runStoreRequest<T | undefined>(storeName, "readonly", (store) => store.get(key));
+  } catch (error) {
+    if (error instanceof DatabaseConnectionClosingError) return undefined;
+    throw error;
+  }
 }
 
 export async function dbPut<T>(storeName: StoreName, value: T): Promise<void> {
   if (!isIndexedDbSupported()) return;
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite");
-    const store = tx.objectStore(storeName);
-    const request = store.put(value);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  await runStoreRequest<undefined>(storeName, "readwrite", (store) => store.put(value));
 }
 
 export async function dbDelete(storeName: StoreName, key: IDBValidKey): Promise<void> {
   if (!isIndexedDbSupported()) return;
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite");
-    const store = tx.objectStore(storeName);
-    const request = store.delete(key);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  await runStoreRequest<undefined>(storeName, "readwrite", (store) => store.delete(key));
 }
 
 export async function dbClearStore(storeName: StoreName): Promise<void> {
   if (!isIndexedDbSupported()) return;
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite");
-    const store = tx.objectStore(storeName);
-    const request = store.clear();
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  await runStoreRequest<undefined>(storeName, "readwrite", (store) => store.clear());
 }
 
 export async function dbClearAllStores(): Promise<void> {
