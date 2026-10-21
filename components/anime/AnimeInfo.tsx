@@ -87,7 +87,6 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
             <ButtonLink
               href={targetWatchHref}
               prefetch={false}
-              dataDirectLinkAd
               size="lg"
               icon={<Play className="h-4 w-4 fill-white" />}
             >

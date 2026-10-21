@@ -121,7 +121,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
 
           <div className="mt-2 flex flex-wrap items-center gap-2.5 sm:gap-3">
             {!item.isMock && (
-              <ButtonLink href={watchHref} prefetch={false} dataDirectLinkAd size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold">
+              <ButtonLink href={watchHref} prefetch={false} size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold">
                 WATCH NOW
               </ButtonLink>
             )}
@@ -173,7 +173,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
             <PosterArt seed={item.poster} title={item.title} orientation="portrait" loading="lazy" />
             {!item.isMock && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                <Link href={watchHref} prefetch={false} data-direct-link-ad="true" aria-label={`Watch ${item.title}`} className="flex h-14 w-14 items-center justify-center rounded-full bg-green-bright text-black transition-transform hover:scale-110 active:scale-95">
+                <Link href={watchHref} prefetch={false} aria-label={`Watch ${item.title}`} className="flex h-14 w-14 items-center justify-center rounded-full bg-green-bright text-black transition-transform hover:scale-110 active:scale-95">
                   <Play className="h-6 w-6 translate-x-0.5 fill-black" />
                 </Link>
               </div>
