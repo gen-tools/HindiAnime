@@ -2990,8 +2990,12 @@ export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta 
   const pending = seriesScrapeInFlight.get(cleanId);
   if (pending) return pending;
 
+  // Jujutsu Kaisen's movie URL redirects to Jujutsu Kaisen 0, while the
+  // series has the same base slug. Refresh only this ambiguous cached result
+  // so an older movie classification cannot keep winning for six hours.
+  const cacheVersion = cleanId === "jujutsu-kaisen" ? "series-first-v2" : "v1";
   const request = cacheValidatedScraperResult(
-    ["series-detail", cleanId],
+    ["series-detail", cleanId, cacheVersion],
     300,
     () => scrapeDirectSeriesDataUnshared(cleanId),
     (result): result is ScrapedSeriesMeta => Boolean(

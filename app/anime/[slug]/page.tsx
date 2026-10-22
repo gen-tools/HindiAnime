@@ -97,14 +97,18 @@ export async function generateMetadata({
   const rawEpisodes = epApiRes?.results?.episodes || [];
   const s1Fallback = directData?.s1Episodes && !directData.isMovie ? directData.s1Episodes : [];
   const hasSeriesEpisodes = rawEpisodes.length > 0 || s1Fallback.length > 0;
-  const hasMultipleSeasons = Boolean(directData?.seasons && directData.seasons.length > 1 && !directData.isMovie);
+  const hasMultipleSeasons = Boolean(
+    epApiRes?.results?.seasons?.length > 1 || directData?.seasons?.length > 1
+  );
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
 
-  const isMovie =
+  const hasSeriesIdentity =
+    hasSeriesEpisodes || hasMultipleSeasons || mockItem?.type === "TV";
+  const isMovie = !hasSeriesIdentity && (
     Boolean(directData?.isMovie) ||
     (
       !hasSeriesEpisodes &&
@@ -113,7 +117,8 @@ export async function generateMetadata({
         mockItem?.type === "Movie" ||
         (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
       )
-    );
+    )
+  );
 
   let item: Anime | undefined;
   if (isMovie && matchingMovieData?.title) {
@@ -412,7 +417,7 @@ export default async function AnimeDetailPage({
   const hasSeriesEpisodes = effectiveRawEpisodes.length > 0;
   const hasMultipleSeasons =
     (availableSeasons && availableSeasons.length > 1) ||
-    (directData?.seasons && directData.seasons.length > 1 && !directData.isMovie);
+    (directData?.seasons && directData.seasons.length > 1);
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
@@ -420,9 +425,13 @@ export default async function AnimeDetailPage({
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
-  // directData.isMovie is the most reliable signal — honor it first
+  // Series episodes, multiple seasons, or a known TV catalog record take
+  // precedence over a conflicting cached movie classification.
+  const hasSeriesIdentity =
+    hasSeriesEpisodes || hasMultipleSeasons || mockItem?.type === "TV" || searchItemType === "TV";
   const isMovie =
-    Boolean(directData?.isMovie) ||
+    !hasSeriesIdentity &&
+    (Boolean(directData?.isMovie) ||
     (
       !hasSeriesEpisodes &&
       !hasMultipleSeasons &&
@@ -430,7 +439,7 @@ export default async function AnimeDetailPage({
         mockItem?.type === "Movie" ||
         (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
       )
-    );
+    ));
 
   let item: Anime | undefined;
   if (isMovie && matchingMovieData?.title) {
