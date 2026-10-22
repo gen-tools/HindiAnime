@@ -16,12 +16,11 @@ import { AnimeRow } from "@/components/anime/AnimeRow";
 import { Play, ChevronRight } from "lucide-react";
 import { getAnimeBySlug, getAnimeByGenre, anime as mockAnimeList } from "@/lib/mock/anime";
 import { genres } from "@/lib/mock/genres";
+import { staticCatalog } from "@/lib/static-catalog";
 import {
   getAnimeInfo,
   getEpisodes,
   getAvailableSeasons,
-  getHomepageFeed,
-  getGenreCatalog,
   searchAnime,
   mapApiInfoToAnime,
   mapSearchItemToAnime,
@@ -569,18 +568,19 @@ export default async function WatchPage({
     rawGenres[0] ||
     "action";
 
-  // Fetch all anime from this specific genre (e.g. Action anime)
-  const genreData = await getGenreCatalog(primaryGenre, 1).catch((error) => {
-    unstable_rethrow(error);
-    return null;
-  });
-  const genreCatalogItems = genreData?.results || [];
-
   const seenSlugs = new Set<string>([cleanSlug]);
   const youMightAlsoLikePool: Anime[] = [];
 
-  // 1. All anime from this specific genre catalog (e.g. Action)
-  for (const item of genreCatalogItems) {
+  // Use the build-time catalog for related titles so rendering a detail or
+  // watch page does not wait on additional scraper and homepage API calls.
+  const localRelatedItems = staticCatalog.filter((candidate) =>
+    candidate.genres?.some((genre) => {
+      const normalizedGenre = genre.toLowerCase().trim().replace(/\s+/g, "-");
+      return (rawGenres.length ? rawGenres : [primaryGenre]).includes(normalizedGenre);
+    })
+  );
+
+  for (const item of localRelatedItems) {
     if (item.slug && !seenSlugs.has(item.slug)) {
       seenSlugs.add(item.slug);
       youMightAlsoLikePool.push(item);
@@ -598,34 +598,6 @@ export default async function WatchPage({
     }
   }
 
-  // 3. Fallback: if fewer than 10 items, supplement with homepage feed items
-  if (youMightAlsoLikePool.length < 10) {
-    const homepageFeed = await getHomepageFeed();
-    const feedSections = homepageFeed?.data?.results;
-    const feedCandidates = feedSections
-      ? isMovie
-        ? [
-            ...(feedSections.mostWatched_Films ?? []),
-            ...(feedSections.latest_animeMovies ?? []),
-            ...(feedSections.mostWatched_Series ?? []),
-            ...(feedSections.on_air_series ?? []),
-          ]
-        : [
-            ...(feedSections.mostWatched_Series ?? []),
-            ...(feedSections.on_air_series ?? []),
-            ...(feedSections.mostWatched_Films ?? []),
-            ...(feedSections.latest_animeMovies ?? []),
-          ]
-      : [];
-
-    for (const candidate of feedCandidates) {
-      const mapped = mapSearchItemToAnime(candidate);
-      if (mapped.slug && !seenSlugs.has(mapped.slug)) {
-        seenSlugs.add(mapped.slug);
-        youMightAlsoLikePool.push(mapped);
-      }
-    }
-  }
 
   const youMightAlsoLike = youMightAlsoLikePool.slice(0, 18);
 

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { cache } from "react";
-import { unstable_rethrow } from "next/navigation";
 import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { SeasonSelector } from "@/components/episodes/SeasonSelector";
@@ -8,6 +7,7 @@ import { EpisodeList } from "@/components/episodes/EpisodeList";
 import { AnimeRow } from "@/components/anime/AnimeRow";
 import { genres } from "@/lib/mock/genres";
 import { getAnimeBySlug, getAnimeByGenre } from "@/lib/mock/anime";
+import { staticCatalog } from "@/lib/static-catalog";
 import {
   getAnimeInfo,
   getEpisodes,
@@ -16,8 +16,6 @@ import {
   mapSearchItemToAnime,
   mapApiEpisodeToEpisode,
   cleanAnimeSlug,
-  getHomepageFeed,
-  getGenreCatalog,
   getAvailableSeasons,
   getMovieInfo,
   mapMovieInfoToAnime,
@@ -730,16 +728,17 @@ export default async function AnimeDetailPage({
     rawGenres[0] ||
     "action";
 
-  const genreData = await getGenreCatalog(primaryGenre, 1).catch((error) => {
-    unstable_rethrow(error);
-    return null;
-  });
-  const genreCatalogItems = genreData?.results || [];
-
   const seenSlugs = new Set<string>([item.slug]);
   const youMightAlsoLikeItems: Anime[] = [];
 
-  for (const genreItem of genreCatalogItems) {
+  const localRelatedItems = staticCatalog.filter((candidate) =>
+    candidate.genres?.some((genre) => {
+      const normalizedGenre = genre.toLowerCase().trim().replace(/\s+/g, "-");
+      return (rawGenres.length ? rawGenres : [primaryGenre]).includes(normalizedGenre);
+    })
+  );
+
+  for (const genreItem of localRelatedItems) {
     if (genreItem.slug && !seenSlugs.has(genreItem.slug)) {
       seenSlugs.add(genreItem.slug);
       youMightAlsoLikeItems.push(genreItem);
@@ -756,23 +755,6 @@ export default async function AnimeDetailPage({
     }
   }
 
-  if (youMightAlsoLikeItems.length < 10) {
-    const homepageFeed = await getHomepageFeed();
-    const feedSections = homepageFeed?.data?.results;
-    const relatedRaw = feedSections
-      ? [
-          ...(feedSections.mostWatched_Series ?? []),
-          ...(feedSections.on_air_series ?? []),
-        ]
-      : [];
-    for (const candidate of relatedRaw) {
-      const mapped = mapSearchItemToAnime(candidate);
-      if (mapped.slug && !seenSlugs.has(mapped.slug)) {
-        seenSlugs.add(mapped.slug);
-        youMightAlsoLikeItems.push(mapped);
-      }
-    }
-  }
 
   const related = youMightAlsoLikeItems.slice(0, 18);
 
