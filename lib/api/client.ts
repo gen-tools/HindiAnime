@@ -2736,7 +2736,10 @@ function getServerWorkerBaseUrl(): string {
   const { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } =
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require("@/lib/api/worker-config") as typeof import("@/lib/api/worker-config");
-  const rawUrl = (process.env.CF_PROXY_URL || "").trim();
+  // Vercel deployments sometimes have only the public Worker URL configured.
+  // The hostname is still allowlisted below; the shared secret remains
+  // server-only in getServerWorkerHeaders().
+  const rawUrl = (process.env.CF_PROXY_URL || process.env.NEXT_PUBLIC_CF_PROXY_URL || "").trim();
   if (!rawUrl) {
     console.warn("[worker-auth] CF_PROXY_URL is not set; falling back to DEFAULT_WORKER_BASE_URL.");
     return DEFAULT_WORKER_BASE_URL;
@@ -3667,10 +3670,12 @@ export interface HomepageData {
 export function getFallbackHomepageData(): HomepageData {
   const rankedAnime = [...anime].sort(
     (a, b) => (a.trendingRank ?? 99) - (b.trendingRank ?? 99)
-  );
+  ).filter((item) => !item.isMock);
 
-  const heroItems = rankedAnime.slice(0, 6);
-  const trendingItems = rankedAnime.slice(0, 16);
+  // These sections claim to reflect current upstream activity. Never fill them
+  // with curated rankings or synthetic episodes when AnimeSalt is unavailable.
+  const heroItems: Anime[] = [];
+  const trendingItems: Anime[] = [];
   const popularItems = rankedAnime
     .filter((a) => a.type === "TV")
     .sort((a, b) => (a.popularityRank ?? 99) - (b.popularityRank ?? 99));
@@ -3680,24 +3685,7 @@ export function getFallbackHomepageData(): HomepageData {
     (a) => a.status === "Upcoming" || a.status === "Ongoing"
   );
 
-  const latestEpisodes: Episode[] = rankedAnime.slice(0, 16).map((a, i) => {
-    const epNum = (i % 12) + 1;
-    return {
-      id: `ep-1-${epNum}`,
-      animeSlug: a.slug,
-      animeTitle: a.title,
-      animePoster: a.poster,
-      season: 1,
-      number: epNum,
-      title: `Episode ${epNum}`,
-      thumbnail: a.backdrop || a.poster,
-      durationMinutes: a.durationMinutes || 24,
-      languages: a.languages,
-      releasedAt: a.updatedAt || "",
-      isNew: true,
-      ...(a.isMock ? { isMock: true } : {}),
-    };
-  });
+  const latestEpisodes: Episode[] = [];
 
   return {
     heroItems,

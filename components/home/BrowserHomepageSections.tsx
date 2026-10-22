@@ -9,36 +9,34 @@ import { LatestSection } from "@/components/home/LatestSection";
 import { AllAnimeSection } from "@/components/home/AllAnimeSection";
 import { MovieSection } from "@/components/home/MovieSection";
 import { FadeIn } from "@/components/ui/FadeIn";
-import { getHomepageFeed, mapHomepageFeedToData, type HomepageData } from "@/lib/api/client";
+import type { HomepageData } from "@/lib/api/client";
 
 export function BrowserHomepageSections({ initialData }: { initialData: HomepageData }) {
   const [data, setData] = useState(initialData);
-  const hasInitialContent = initialData.trendingItems.length > 0 || initialData.latestEpisodes.length > 0;
-  const [isLoading, setIsLoading] = useState(!hasInitialContent);
+  const [isLoading, setIsLoading] = useState(
+    initialData.trendingItems.length === 0 && initialData.latestEpisodes.length === 0
+  );
 
   useEffect(() => {
-    // Server data is already rendered immediately. Retry through the catalog
-    // API only when server-side retrieval produced no homepage content.
-    if (hasInitialContent) {
-      setIsLoading(false);
-      return;
-    }
-
     let active = true;
-    getHomepageFeed()
-      .then((feed) => {
-        if (active && feed) setData(mapHomepageFeedToData(feed));
+    fetch("/api/homepage", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Homepage refresh returned ${response.status}`);
+        return response.json() as Promise<HomepageData>;
+      })
+      .then((freshData) => {
+        if (active && freshData && Array.isArray(freshData.trendingItems)) setData(freshData);
       })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name !== "AbortError") {
-          console.warn("[Homepage] Catalog API refresh failed; retaining current data.", error.message);
+          console.warn("[Homepage] Refresh failed; retaining current data.", error.message);
         }
       })
       .finally(() => {
         if (active) setIsLoading(false);
       });
     return () => { active = false; };
-  }, [hasInitialContent]);
+  }, []);
 
   const displayHeroItems = data.heroItems.length > 0
     ? data.heroItems
