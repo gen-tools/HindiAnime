@@ -60,14 +60,14 @@ export function AnimeHero({ items }: { items: Anime[] }) {
           showOverlay={false}
           showSprocket={false}
           fillContainer
-          className="absolute inset-0 h-full w-full opacity-50 sm:opacity-60"
+          className="absolute inset-0 h-full w-full opacity-75 sm:opacity-100"
           imageClassName="object-cover object-center"
         />
       </div>
 
-      <div className="absolute inset-0 bg-gradient-to-t from-background via-background/70 to-transparent" />
-      <div className="absolute inset-0 bg-gradient-to-r from-background via-background/80 to-transparent sm:via-background/60" />
-      <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-background/70 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent sm:via-background/25" />
+      <div className="absolute inset-0 bg-gradient-to-r from-background/65 via-background/30 to-transparent sm:from-background/55 sm:via-background/15" />
+      <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-background/40 to-transparent sm:from-background/20" />
 
       <div className="container-page relative z-10 flex min-h-[480px] flex-col justify-end pb-8 pt-16 sm:min-h-[520px] sm:pb-12 sm:pt-20 md:min-h-[560px] md:flex-row md:items-end md:justify-between lg:min-h-[600px]">
         <div key={`${item.slug}-copy`} className="hero-copy-enter flex max-w-2xl flex-1 flex-col gap-3.5 sm:gap-4 md:pb-2">
