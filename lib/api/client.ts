@@ -2736,35 +2736,35 @@ function getServerWorkerBaseUrl(): string {
   const { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } =
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require("@/lib/api/worker-config") as typeof import("@/lib/api/worker-config");
-  // Vercel deployments sometimes have only the public Worker URL configured.
-  // The hostname is still allowlisted below; the shared secret remains
-  // server-only in getServerWorkerHeaders().
-  const rawUrl = (process.env.CF_PROXY_URL || process.env.NEXT_PUBLIC_CF_PROXY_URL || "").trim();
-  if (!rawUrl) {
-    console.warn("[worker-auth] CF_PROXY_URL is not set; falling back to DEFAULT_WORKER_BASE_URL.");
-    return DEFAULT_WORKER_BASE_URL;
-  }
-  try {
-    const url = new URL(rawUrl.split("?")[0].replace(/\/+$/, ""));
-    const validQuery =
-      url.search === "" ||
-      (url.searchParams.size === 1 && url.searchParams.has("url") && url.searchParams.get("url") === "");
-    if (
-      url.protocol !== "https:" ||
-      !ALLOWED_WORKER_HOSTS.has(url.hostname) ||
-      url.username ||
-      url.password ||
-      url.pathname !== "/" ||
-      !validQuery ||
-      url.hash
-    ) {
-      throw new Error("invalid Worker URL");
+  const configuredUrls = [process.env.CF_PROXY_URL, process.env.NEXT_PUBLIC_CF_PROXY_URL]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  const candidates = [...new Set([...configuredUrls, DEFAULT_WORKER_BASE_URL])];
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate.split("?")[0].replace(/\/+$/, ""));
+      const validQuery =
+        url.search === "" ||
+        (url.searchParams.size === 1 && url.searchParams.has("url") && url.searchParams.get("url") === "");
+      if (
+        url.protocol === "https:" &&
+        ALLOWED_WORKER_HOSTS.has(url.hostname) &&
+        !url.username &&
+        !url.password &&
+        url.pathname === "/" &&
+        validQuery &&
+        !url.hash
+      ) {
+        return url.origin;
+      }
+    } catch {
+      // Try the next configured, allowlisted Worker URL.
     }
-    return url.origin;
-  } catch {
-    console.error("[worker-auth] CF_PROXY_URL must target an allowed Worker hostname.");
-    throw new Error("CF_PROXY_URL is not configured for an authenticated Worker.");
   }
+
+  console.error("[worker-auth] No valid allowlisted Worker URL; using the configured default.");
+  return DEFAULT_WORKER_BASE_URL;
 }
 
 function buildServerWorkerProxyUrl(targetUrl: string): string {
@@ -3674,7 +3674,7 @@ export function getFallbackHomepageData(): HomepageData {
 
   // These sections claim to reflect current upstream activity. Never fill them
   // with curated rankings or synthetic episodes when AnimeSalt is unavailable.
-  const heroItems: Anime[] = [];
+  const heroItems = rankedAnime.slice(0, 6);
   const trendingItems: Anime[] = [];
   const popularItems = rankedAnime
     .filter((a) => a.type === "TV")

@@ -19,13 +19,19 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
 
   useEffect(() => {
     let active = true;
-    fetch("/api/homepage", { cache: "no-store" })
+    fetch("/api/homepage")
       .then(async (response) => {
         if (!response.ok) throw new Error(`Homepage refresh returned ${response.status}`);
         return response.json() as Promise<HomepageData>;
       })
       .then((freshData) => {
-        if (active && freshData && Array.isArray(freshData.trendingItems)) setData(freshData);
+        const hasFreshFeed = Boolean(
+          freshData &&
+          ((Array.isArray(freshData.heroItems) && freshData.heroItems.length > 0) ||
+            (Array.isArray(freshData.trendingItems) && freshData.trendingItems.length > 0) ||
+            (Array.isArray(freshData.latestEpisodes) && freshData.latestEpisodes.length > 0))
+        );
+        if (active && hasFreshFeed) setData(freshData);
       })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name !== "AbortError") {
@@ -40,7 +46,9 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
 
   const displayHeroItems = data.heroItems.length > 0
     ? data.heroItems
-    : data.trendingItems.slice(0, 6);
+    : data.trendingItems.length > 0
+      ? data.trendingItems.slice(0, 6)
+      : data.popularItems.slice(0, 6);
 
   return (
     <>
