@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { PosterArt } from "@/components/anime/PosterArt";
-import { SeasonSelector } from "@/components/episodes/SeasonSelector";
-import { EpisodeList } from "@/components/episodes/EpisodeList";
+import { AnimeSeasonBrowser } from "@/components/episodes/AnimeSeasonBrowser";
 import { AnimeRow } from "@/components/anime/AnimeRow";
 import { genres } from "@/lib/mock/genres";
 import { getAnimeBySlug, getAnimeByGenre } from "@/lib/mock/anime";
@@ -34,6 +33,13 @@ import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
+
+// Dynamic anime slugs are rendered once on demand, then served from the ISR cache.
+export const revalidate = 21600;
+export const dynamicParams = true;
+export function generateStaticParams() {
+  return [];
+}
 
 function isMatchingMovie(movieTitle: string | undefined, slug: string): boolean {
   if (!movieTitle) return false;
@@ -98,7 +104,7 @@ export async function generateMetadata({
   const s1Fallback = directData?.s1Episodes && !directData.isMovie ? directData.s1Episodes : [];
   const hasSeriesEpisodes = rawEpisodes.length > 0 || s1Fallback.length > 0;
   const hasMultipleSeasons = Boolean(
-    epApiRes?.results?.seasons?.length > 1 || directData?.seasons?.length > 1
+    (epApiRes?.results?.seasons?.length ?? 0) > 1 || (directData?.seasons?.length ?? 0) > 1
   );
 
   const movieData = resolveMovieInfoData(movieInfo);
@@ -371,15 +377,15 @@ export async function generateMetadata({
 
 export default async function AnimeDetailPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const { slug } = await params;
   const cleanSlug = cleanAnimeSlug(slug) || slug;
-  const sParams = await searchParams;
-  const currentSeason = sParams.season || "1";
+  // The canonical page HTML always contains season 1. A query-selected season
+  // is loaded in the browser after hydration, so query strings do not disable ISR.
+  const currentSeason = "1";
+  const sParams: Record<string, string | undefined> = {};
   const seasonNum = parseInt(currentSeason, 10) || 1;
   const mockRecord = getAnimeBySlug(cleanSlug);
   if (mockRecord?.isMock) {
@@ -764,7 +770,6 @@ export default async function AnimeDetailPage({
     }
   }
 
-
   const related = youMightAlsoLikeItems.slice(0, 18);
 
   return (
@@ -794,14 +799,16 @@ export default async function AnimeDetailPage({
                 </span>
               )}
             </div>
-            {!isMovie && seasonList.length > 1 && (
-              <SeasonSelector
-                seasons={seasonList}
-                currentSeason={currentSeason}
-              />
-            )}
           </div>
-          <EpisodeList episodes={episodes} animeSlug={item.slug} />
+          <AnimeSeasonBrowser
+            initialEpisodes={episodes}
+            animeSlug={item.slug}
+            animeTitle={item.title}
+            animePoster={item.poster}
+            languages={item.languages}
+            seasons={seasonList}
+            currentSeason={currentSeason}
+          />
         </div>
       )}
 

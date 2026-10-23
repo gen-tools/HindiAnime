@@ -36,6 +36,17 @@ import {
   isUsableImageUrl,
   parseLanguages,
 } from "@/lib/api/client";
+
+export const revalidate = 21600;
+export const dynamicParams = true;
+
+export function generateStaticParams() {
+  return mockAnimeList
+    .filter((item) => !item.isMock && item.type !== "Movie")
+    .sort((a, b) => (a.popularityRank ?? Number.MAX_SAFE_INTEGER) - (b.popularityRank ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, 5)
+    .map((item) => ({ animeSlug: item.slug, episodeId: "ep-1-1" }));
+}
 import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
@@ -598,7 +609,6 @@ export default async function WatchPage({
     }
   }
 
-
   const youMightAlsoLike = youMightAlsoLikePool.slice(0, 18);
 
   return (
@@ -689,6 +699,7 @@ export default async function WatchPage({
           {!isMovie && nextEpisode && (
             <Link
               href={`/watch/${anime.slug}/${nextEpisode.id}`}
+              prefetch={false}
               className="group mt-3.5 inline-flex items-center gap-3 rounded-xl border border-border-line bg-surface/80 px-3.5 py-2 text-xs transition-all hover:border-green-primary/50 hover:bg-surface-elevated"
             >
               <span className="flex h-6 w-6 items-center justify-center rounded-md bg-green-primary/20 text-green-light">

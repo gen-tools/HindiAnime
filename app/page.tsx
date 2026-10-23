@@ -10,13 +10,13 @@ import {
 
 import { createCanonicalMetadata } from "@/lib/seo";
 
-// Cache homepage with ISR (120s) for instant (<50ms) TTFB and ultra-high mobile & desktop PageSpeed.
-export const revalidate = 120;
+// Refresh the homepage snapshot every five minutes; visitors are served cache hits.
+export const revalidate = 3600;
 
 export const metadata: Metadata = createCanonicalMetadata("/");
 
 export default async function HomePage() {
-  const homepageData = await getHomepageData({ diagnostics: true });
+  const homepageData = await getHomepageData();
 
   return (
     <>

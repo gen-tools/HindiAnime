@@ -8,6 +8,7 @@ import { ReadMoreText } from "@/components/ui/ReadMoreText";
 import { WatchTracker } from "@/components/player/WatchTracker";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { getAnimeBySlug } from "@/lib/mock/anime";
+import { anime } from "@/lib/mock/anime";
 import { MockWatchUnavailable } from "@/components/player/MockWatchUnavailable";
 import {
   cleanAnimeSlug,
@@ -25,6 +26,17 @@ import {
   parseDurationMinutes,
   SYNOPSIS_FALLBACK,
 } from "@/lib/api/client";
+
+export const revalidate = 21600;
+export const dynamicParams = true;
+
+export function generateStaticParams() {
+  return anime
+    .filter((item) => !item.isMock && item.type === "Movie")
+    .sort((a, b) => (a.popularityRank ?? Number.MAX_SAFE_INTEGER) - (b.popularityRank ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, 5)
+    .map((item) => ({ animeSlug: item.slug }));
+}
 
 const getMovieWatchPageData = cache(async (slug: string) => {
   const keyword = formatDisplayTitle(slug).toLowerCase();
