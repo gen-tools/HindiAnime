@@ -91,6 +91,15 @@ function createFallbackAnime(slug: string): Anime {
   };
 }
 
+function isKnownTvMovieTitleCollision(slug: string, title?: string): boolean {
+  if (!title) return false;
+  const known = getAnimeBySlug(slug);
+  if (known?.type !== "TV") return false;
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const expected = normalize(known.title);
+  return Boolean(expected && normalize(title) === `${expected}0`);
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -130,9 +139,17 @@ export async function generateMetadata({
     (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
   );
 
-  const rawEpisodes = epApiRes?.results?.episodes || [];
+  const rawEpisodesFromSource = epApiRes?.results?.episodes || [];
+  const isSingleMovieEntry = Boolean(
+    mockAnime?.type === "TV" &&
+    seasonNumber === 1 &&
+    rawEpisodesFromSource.length === 1 &&
+    /^full\s+movie$/i.test(rawEpisodesFromSource[0].title.trim())
+  );
+  const rawEpisodes = isSingleMovieEntry ? [] : rawEpisodesFromSource;
   // Do NOT count scraper's movie s1Episodes as series episodes
-  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes && !directData.isMovie
+  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes && !directData.isMovie &&
+    !(mockAnime?.type === "TV" && directData.s1Episodes.length === 1 && /^full\s+movie$/i.test(directData.s1Episodes[0].title.trim()))
     ? directData.s1Episodes
     : [];
   const hasSeriesEpisodes = rawEpisodes.length > 0 || s1Fallback.length > 0;
@@ -142,11 +159,17 @@ export async function generateMetadata({
   const animeDataMeta = resolveAnimeInfoData(apiInfo);
 
   const isMovieRoute = episodeId === "movie";
+  const isKnownTv = mockAnime?.type === "TV";
+  const wrongMovieDetail = Boolean(
+    isKnownTv && episodeId !== "movie" &&
+    (directData?.isMovie || isKnownTvMovieTitleCollision(cleanSlug, directData?.title) || isSingleMovieEntry)
+  );
   const isMovie =
     isMovieRoute ||
-    Boolean(directData?.isMovie) ||
+    (Boolean(directData?.isMovie) && !isKnownTv && episodeId === "movie") ||
     (!hasSeriesEpisodes &&
       !hasMultipleSeasons &&
+      episodeId === "movie" &&
       (Boolean(movieData?.title) && !animeDataMeta?.title));
 
   let anime: Anime = createFallbackAnime(cleanSlug);
@@ -210,7 +233,7 @@ export async function generateMetadata({
   }
 
   const rawTitle =
-    directData?.title ||
+    (wrongMovieDetail ? mockAnime?.title : directData?.title) ||
     (anime.title && !anime.title.includes("%") ? anime.title : formatDisplayTitle(cleanSlug));
   const cleanTitle = cleanAnimeTitle(rawTitle) || formatDisplayTitle(cleanSlug);
 
@@ -317,9 +340,18 @@ export default async function WatchPage({
     (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
   );
 
-  const rawEpisodes = epApiRes?.results?.episodes || [];
+  const rawEpisodesFromSource = epApiRes?.results?.episodes || [];
+  const mockAnime = getAnimeBySlug(cleanSlug);
+  const isSingleMovieEntry = Boolean(
+    mockAnime?.type === "TV" &&
+    seasonNumber === 1 &&
+    rawEpisodesFromSource.length === 1 &&
+    /^full\s+movie$/i.test(rawEpisodesFromSource[0].title.trim())
+  );
+  const rawEpisodes = isSingleMovieEntry ? [] : rawEpisodesFromSource;
   // Do NOT count scraper's movie s1Episodes as series episodes
-  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes && !directData.isMovie
+  const s1Fallback = seasonNumber === 1 && directData?.s1Episodes && !directData.isMovie &&
+    !(mockAnime?.type === "TV" && directData.s1Episodes.length === 1 && /^full\s+movie$/i.test(directData.s1Episodes[0].title.trim()))
     ? directData.s1Episodes
     : [];
   const effectiveRawEpisodes = rawEpisodes.length > 0 ? rawEpisodes : s1Fallback;
@@ -331,7 +363,14 @@ export default async function WatchPage({
 
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
-  const mockAnime = getAnimeBySlug(cleanSlug);
+  const isKnownTv = mockAnime?.type === "TV";
+  const wrongMovieDetail = Boolean(
+    isKnownTv && !isMovieRoute &&
+    (directData?.isMovie ||
+      isKnownTvMovieTitleCollision(cleanSlug, directData?.title) ||
+      isSingleMovieEntry ||
+      (seasonNumber === 1 && directData?.s1Episodes.length === 1 && /^full\s+movie$/i.test(directData.s1Episodes[0].title.trim())))
+  );
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
   // isMovieRoute (episodeId === 'movie') is the strongest signal — always a movie.
@@ -371,12 +410,14 @@ export default async function WatchPage({
     Boolean(t && !t.toLowerCase().includes("404") && !t.toLowerCase().includes("not found"));
 
   const bestTitle =
+    (wrongMovieDetail && mockAnime?.title ? mockAnime.title : "") ||
     (isTitleValid(directData?.title) ? directData!.title : "") ||
     (movieData?.title && !animeData?.title && isTitleValid(movieData.title) ? movieData.title : "") ||
     (isTitleValid(anime.title) ? anime.title : "") ||
     formatDisplayTitle(cleanSlug);
 
   const bestPoster =
+    (wrongMovieDetail && mockAnime?.poster ? mockAnime.poster : "") ||
     directData?.poster ||
     directData?.backdrop ||
     (isUsableImageUrl(anime.poster) ? anime.poster : "") ||
@@ -384,9 +425,11 @@ export default async function WatchPage({
     cleanSlug;
 
   const totalSeasonsCount =
+    (wrongMovieDetail && mockAnime?.seasons ? mockAnime.seasons : 0) ||
     discoveredSeasons.length || directData?.seasons?.length || anime.seasons || 1;
 
   const resolvedGenres =
+    (wrongMovieDetail && mockAnime?.genres?.length ? mockAnime.genres : undefined) ||
     (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
     (animeData?.genres && animeData.genres.length > 0 ? animeData.genres : undefined) ||
     (movieData?.genres && movieData.genres.length > 0
@@ -401,29 +444,32 @@ export default async function WatchPage({
     slug: cleanSlug,
     title: bestTitle,
     poster: bestPoster,
-    backdrop: directData?.backdrop || bestPoster,
+    backdrop: wrongMovieDetail ? bestPoster : directData?.backdrop || bestPoster,
     type: isMovie ? "Movie" : "TV",
     status: isMovie ? "Completed" : anime.status || "Ongoing",
     durationMinutes: isMovie ? 110 : 24,
-    episodeCount: effectiveRawEpisodes.length || anime.episodeCount || 12,
+    episodeCount: effectiveRawEpisodes.length || (wrongMovieDetail ? mockAnime?.episodeCount : undefined) || anime.episodeCount || 12,
     seasons: totalSeasonsCount,
     genres: resolvedGenres.length > 0 ? resolvedGenres : anime.genres,
   };
 
   if (
+    !wrongMovieDetail &&
     directData?.synopsis &&
     (!anime.synopsis ||
       anime.synopsis === SYNOPSIS_FALLBACK ||
       anime.synopsis === "No synopsis available.")
   ) {
     anime = { ...anime, synopsis: directData.synopsis };
-  } else if (typeof movieData?.overview === "string" && (!anime.synopsis || anime.synopsis === SYNOPSIS_FALLBACK)) {
+  } else if (!wrongMovieDetail && typeof movieData?.overview === "string" && (!anime.synopsis || anime.synopsis === SYNOPSIS_FALLBACK)) {
     anime = { ...anime, synopsis: movieData.overview };
   }
 
   // Determine available seasons
   const infoSeasonCount = Number(animeData?.seasons);
-  const discoveredList = discoveredSeasons.length
+  const discoveredList = wrongMovieDetail && mockAnime?.seasons
+    ? Array.from({ length: mockAnime.seasons }, (_, index) => index + 1)
+    : discoveredSeasons.length
     ? discoveredSeasons
     : directData?.seasons?.length
     ? directData.seasons
