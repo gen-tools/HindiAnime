@@ -591,7 +591,7 @@ export default async function AnimeDetailPage({
     ...item,
     id: cleanSlug,
     slug: cleanSlug,
-    type: isMovie ? "Movie" : item.type,
+    type: isMovie ? "Movie" : hasSeriesIdentity ? "TV" : item.type,
   };
 
   // Resolve actual genres from scraped, API, movie, or mock data
