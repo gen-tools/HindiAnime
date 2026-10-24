@@ -40,13 +40,13 @@ export function EpisodeList({
       </div>
 
       <div className="grid grid-cols-5 gap-2 sm:grid-cols-6 md:grid-cols-8">
-        {filtered.map((ep) => {
+        {filtered.map((ep, index) => {
           const isActive = ep.id === activeEpisodeId;
           return (
             <Link
               key={getEpisodeIdentity(ep)}
               href={`/watch/${animeSlug}/${ep.id}`}
-              prefetch={false}
+              prefetch={!activeEpisodeId && index === 0}
               aria-current={isActive ? "true" : undefined}
               className={cn(
                 "focus-ring flex aspect-square items-center justify-center rounded-lg border text-sm font-semibold transition-colors",

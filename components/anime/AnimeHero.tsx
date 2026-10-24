@@ -123,7 +123,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
 
           <div className="mt-2 flex flex-wrap items-center gap-2.5 sm:gap-3">
             {!item.isMock && (
-              <ButtonLink href={watchHref} prefetch={false} size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold touch-manipulation active:scale-95">
+              <ButtonLink href={watchHref} prefetch size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold touch-manipulation active:scale-95">
                 WATCH NOW
               </ButtonLink>
             )}

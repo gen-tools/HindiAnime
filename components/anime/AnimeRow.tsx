@@ -11,6 +11,7 @@ export function AnimeRow({
   items = [],
   viewAllHref,
   ranked = false,
+  prefetchFirstCard = false,
   className,
   containerClassName,
 }: {
@@ -18,6 +19,7 @@ export function AnimeRow({
   items?: Anime[];
   viewAllHref?: string;
   ranked?: boolean;
+  prefetchFirstCard?: boolean;
   className?: string;
   containerClassName?: string;
 }) {
@@ -124,6 +126,7 @@ export function AnimeRow({
                 key={item.id}
                 item={item}
                 rank={ranked ? i + 1 : undefined}
+                prefetch={prefetchFirstCard && i === 0}
                 className="w-[150px] shrink-0 sm:w-[168px] md:w-[180px]"
                 imageSizes="(max-width: 639px) 150px, (max-width: 767px) 168px, 180px"
               />
