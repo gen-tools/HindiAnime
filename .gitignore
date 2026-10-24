@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment and Secret files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+!.env.example
+*.pem
+*.key
+*.cert
+
+# Production & Build outputs
+dist/
+build/
+coverage/
+.next/
+out/
+
+# Debug logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# System & OS Files
+.DS_Store
+Thumbs.db
+*.tmp
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary / Cache
+tmp/
+temp/
+.cache/
+.turbo/
+
+# Unnecessary REA template files & fixtures
+rea_scripts/
+bridge/
+third_party/
+website/
+licenses/
+docs/
+REA_README.md
+install.sh
+metadata.json
+server.json
+bun.lock
+AGENTS.md
