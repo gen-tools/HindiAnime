@@ -13,7 +13,12 @@ export async function GET(request: NextRequest) {
   }
   const record = getAnimeBySlug(slug);
   if (record?.isMock) {
-    return NextResponse.json({ episodes: [] }, { headers: { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" } });
+    return NextResponse.json({ episodes: [] }, {
+      headers: {
+        "Cache-Control": "public, max-age=0, s-maxage=21600",
+        "Cloudflare-CDN-Cache-Control": "public, max-age=21600",
+      },
+    });
   }
 
   const data = await getEpisodes(slug, season);
@@ -21,5 +26,10 @@ export async function GET(request: NextRequest) {
   if (!rawEpisodes.length) {
     return NextResponse.json({ error: "Episodes unavailable" }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
-  return NextResponse.json({ episodes: rawEpisodes }, { headers: { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" } });
+  return NextResponse.json({ episodes: rawEpisodes }, {
+    headers: {
+      "Cache-Control": "public, max-age=0, s-maxage=21600",
+      "Cloudflare-CDN-Cache-Control": "public, max-age=21600",
+    },
+  });
 }

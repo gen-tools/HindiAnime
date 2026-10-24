@@ -28,6 +28,9 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json(catalog, {
-    headers: { "Cache-Control": "public, max-age=0, s-maxage=300, stale-while-revalidate=600" },
+    headers: {
+      "Cache-Control": "public, max-age=0, s-maxage=300",
+      "Cloudflare-CDN-Cache-Control": "public, max-age=300",
+    },
   });
 }

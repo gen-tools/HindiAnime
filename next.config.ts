@@ -40,7 +40,29 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
+    const publicHtmlCacheHeader = (ttlSeconds: number) => [{
+      key: "Cloudflare-CDN-Cache-Control",
+      value: `public, max-age=${ttlSeconds}`,
+    }];
+
     return [
+      // Cloudflare can cache public document responses separately from the
+      // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
+      // GETs with no query string; API and account routes are intentionally absent.
+      { source: "/", headers: publicHtmlCacheHeader(300) },
+      { source: "/anime/:path*", headers: publicHtmlCacheHeader(1800) },
+      { source: "/watch/:path*", headers: publicHtmlCacheHeader(1800) },
+      { source: "/series", headers: publicHtmlCacheHeader(1800) },
+      { source: "/latest", headers: publicHtmlCacheHeader(1800) },
+      { source: "/movies", headers: publicHtmlCacheHeader(1800) },
+      { source: "/language", headers: publicHtmlCacheHeader(1800) },
+      { source: "/language/:path*", headers: publicHtmlCacheHeader(1800) },
+      { source: "/popular", headers: publicHtmlCacheHeader(1800) },
+      { source: "/browse", headers: publicHtmlCacheHeader(1800) },
+      { source: "/genre", headers: publicHtmlCacheHeader(1800) },
+      { source: "/genre/:path*", headers: publicHtmlCacheHeader(1800) },
+      { source: "/schedule", headers: publicHtmlCacheHeader(1800) },
+      { source: "/search", headers: publicHtmlCacheHeader(1800) },
       {
         source: "/search-index.json",
         headers: [
