@@ -160,7 +160,7 @@ export async function generateMetadata({
       poster: directData.poster || mockItem?.poster || cleanSlug,
       backdrop: directData.backdrop || mockItem?.backdrop || directData.poster || cleanSlug,
       rating: mockItem?.rating || 8.5,
-      year: mockItem?.year || new Date().getFullYear(),
+      year: mockItem?.year || 0,
       type: isMovie ? "Movie" : (mockItem?.type || "TV"),
       status: isMovie ? "Completed" : (mockItem?.status || "Ongoing"),
       durationMinutes: mockItem?.durationMinutes || (isMovie ? 110 : 24),
@@ -175,7 +175,7 @@ export async function generateMetadata({
       languages: mockItem?.languages || ["hindi", "japanese", "english"],
       seasons: directData.seasons.length || mockItem?.seasons || 1,
       studio: mockItem?.studio || "Anime",
-      updatedAt: new Date().toISOString().split("T")[0],
+      updatedAt: mockItem?.updatedAt || "",
     };
   } else if (searchMatch) {
     item = mapSearchItemToAnime(searchMatch);
@@ -193,7 +193,7 @@ export async function generateMetadata({
       poster: directData?.poster || mockItem?.poster || cleanSlug,
       backdrop: directData?.backdrop || mockItem?.backdrop || directData?.poster || cleanSlug,
       rating: mockItem?.rating || 8.0,
-      year: mockItem?.year || new Date().getFullYear(),
+      year: mockItem?.year || 0,
       type: mockItem?.type || "TV",
       status: mockItem?.status || "Ongoing",
       durationMinutes: mockItem?.durationMinutes || 24,
@@ -202,7 +202,7 @@ export async function generateMetadata({
       languages: mockItem?.languages || ["hindi", "japanese", "english"],
       seasons: mockItem?.seasons || 1,
       studio: mockItem?.studio || "Anime Production",
-      updatedAt: new Date().toISOString().split("T")[0],
+      updatedAt: mockItem?.updatedAt || "",
     };
   }
 
@@ -492,7 +492,7 @@ export default async function AnimeDetailPage({
       poster,
       backdrop: directData?.backdrop || mockItem?.backdrop || poster,
       rating: mockItem?.rating || Number(matchingMovieData?.rating) || 8.5,
-      year: mockItem?.year || Number(matchingMovieData?.year) || new Date().getFullYear(),
+      year: mockItem?.year || Number(matchingMovieData?.year) || 0,
       type: isMovie ? "Movie" : (mockItem?.type || "TV"),
       status: isMovie ? "Completed" : (mockItem?.status || "Ongoing"),
       durationMinutes: mockItem?.durationMinutes || (isMovie ? 110 : 24),
@@ -507,7 +507,7 @@ export default async function AnimeDetailPage({
         : ["hindi", "japanese", "english"]),
       seasons: totalSeasonsCount,
       studio: mockItem?.studio || "Anime",
-      updatedAt: new Date().toISOString().split("T")[0],
+      updatedAt: mockItem?.updatedAt || "",
     };
   }
 
@@ -521,7 +521,7 @@ export default async function AnimeDetailPage({
       poster: directData?.poster || mockItem?.poster || cleanSlug,
       backdrop: directData?.backdrop || mockItem?.backdrop || directData?.poster || cleanSlug,
       rating: mockItem?.rating || 8.0,
-      year: mockItem?.year || new Date().getFullYear(),
+      year: mockItem?.year || 0,
       type: mockItem?.type || "TV",
       status: mockItem?.status || "Ongoing",
       durationMinutes: mockItem?.durationMinutes || 24,
@@ -530,7 +530,7 @@ export default async function AnimeDetailPage({
       languages: mockItem?.languages || ["hindi", "japanese", "english"],
       seasons: mockItem?.seasons || 1,
       studio: mockItem?.studio || "Anime Production",
-      updatedAt: new Date().toISOString().split("T")[0],
+      updatedAt: mockItem?.updatedAt || "",
     };
   }
 
@@ -630,7 +630,7 @@ export default async function AnimeDetailPage({
         thumbnail: item.poster,
         durationMinutes: item.durationMinutes || 110,
         languages: item.languages,
-        releasedAt: new Date().toISOString().split("T")[0],
+        releasedAt: "",
       },
     ];
   } else {
@@ -666,7 +666,7 @@ export default async function AnimeDetailPage({
           thumbnail: item.poster,
           durationMinutes: 24,
           languages: item.languages,
-          releasedAt: new Date().toISOString().split("T")[0],
+          releasedAt: "",
         },
       ];
     }

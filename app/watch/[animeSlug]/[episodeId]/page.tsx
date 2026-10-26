@@ -78,7 +78,7 @@ function createFallbackAnime(slug: string): Anime {
     poster: mock?.poster || slug,
     backdrop: mock?.backdrop || slug,
     rating: mock?.rating || 8.5,
-    year: mock?.year || new Date().getFullYear(),
+    year: mock?.year || 0,
     type: mock?.type || "TV",
     status: mock?.status || "Ongoing",
     durationMinutes: mock?.durationMinutes || 24,
@@ -87,7 +87,7 @@ function createFallbackAnime(slug: string): Anime {
     languages: mock?.languages && mock.languages.length > 0 ? mock.languages : ["hindi", "japanese", "english"],
     seasons: mock?.seasons || 1,
     studio: mock?.studio || "Anime",
-    updatedAt: new Date().toISOString().split("T")[0],
+    updatedAt: mock?.updatedAt || "",
   };
 }
 
@@ -199,7 +199,7 @@ export async function generateMetadata({
       poster,
       backdrop: directData?.backdrop || poster,
       rating: Number(movieData?.rating) || 8.5,
-      year: Number(movieData?.year) || new Date().getFullYear(),
+      year: Number(movieData?.year) || 0,
       type: isMovie ? "Movie" : "TV",
       status: isMovie ? "Completed" : "Ongoing",
       durationMinutes: isMovie ? 110 : 24,
@@ -506,7 +506,7 @@ export default async function WatchPage({
         thumbnail: anime.poster,
         durationMinutes: anime.durationMinutes || 110,
         languages: anime.languages,
-        releasedAt: new Date().toISOString().split("T")[0],
+        releasedAt: "",
       },
     ];
   } else {
@@ -543,7 +543,7 @@ export default async function WatchPage({
         thumbnail: anime.poster,
         durationMinutes: 24,
         languages: anime.languages,
-        releasedAt: new Date().toISOString().split("T")[0],
+        releasedAt: "",
       };
     });
   }
@@ -570,7 +570,7 @@ export default async function WatchPage({
       thumbnail: anime.poster,
       durationMinutes: 24,
       languages: anime.languages,
-      releasedAt: new Date().toISOString().split("T")[0],
+      releasedAt: "",
     };
 
   const prevEpisode = currentIndex > 0 ? episodes[currentIndex - 1] : undefined;

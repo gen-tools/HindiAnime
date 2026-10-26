@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { getHomepageData } from "@/lib/api/client";
 
 export const runtime = "nodejs";
-export const revalidate = 300;
+const HOMEPAGE_ISR_SECONDS = 900;
+// Keep the durable Vercel snapshot and scraper data cached for 15 minutes.
+export const revalidate = 900;
 
 function homepageCacheHeaders(edgeTtlSeconds: number) {
   return {
     // Visitors should revalidate in their browser; shared edges may reuse this
     // public feed for a short, explicit interval.
-    "Cache-Control": `public, max-age=0, s-maxage=${edgeTtlSeconds}`,
+    "Cache-Control": `public, max-age=0, s-maxage=${HOMEPAGE_ISR_SECONDS}`,
     "Cloudflare-CDN-Cache-Control": `public, max-age=${edgeTtlSeconds}`,
   };
 }

@@ -2106,7 +2106,7 @@ export function scrapeDirectHomepageFeed(diagnostics = false): Promise<HomepageA
   if (diagnostics) return scrapeDirectHomepageFeedUncached(true);
   return cacheValidatedScraperResult(
     ["homepage"],
-    300,
+    900,
     () => scrapeDirectHomepageFeedUncached(false),
     (result): result is HomepageApiResponse => hasHomepageItems(result)
   );
@@ -2137,7 +2137,7 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
   const apiStartedAt = Date.now();
   try {
     const res = await fetch(`${API_BASE_URL}/api`, {
-      next: { revalidate: 60 },
+      next: { revalidate: 900 },
     });
     const contentType = res.headers.get("content-type");
     const cacheStatus = res.headers.get("x-vercel-cache") ?? res.headers.get("cf-cache-status");
