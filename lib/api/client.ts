@@ -3008,9 +3008,7 @@ async function fetchHtmlWithWorkerFallback(
     try {
       console.log(`[Worker Request Outbound] Diagnostics fetch: ${requestUrl}`);
       const response = await fetch(requestUrl, {
-        headers: source === "direct-animesalt"
-          ? DEFAULT_SCRAPER_HEADERS
-          : getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
+        headers: DEFAULT_SCRAPER_HEADERS,
         signal: controller.signal,
       });
       status = response.status;
