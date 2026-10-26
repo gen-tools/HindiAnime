@@ -19,6 +19,10 @@ import type {
 import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
 import type { LanguageCode } from "@/types/language";
+import { cache } from "react";
+import { SYNOPSIS_FALLBACK } from "@/lib/api/constants";
+import { BLOCKED_STREAM_DOMAINS, isValidEmbedUrl } from "@/lib/api/stream-validation";
+export { SYNOPSIS_FALLBACK, BLOCKED_STREAM_DOMAINS, isValidEmbedUrl };
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { fuzzySearch, fuzzyScore, COMMON_ACRONYMS } from "@/lib/fuzzy-search";
 import { anime, getAnimeBySlug, getAnimeByGenre, getAnimeByLanguage, getAnimeByCountry } from "@/lib/mock/anime";
@@ -26,11 +30,26 @@ import { matchesCountry } from "@/lib/mock/countries";
 import { shareInFlightRequest } from "@/lib/api/in-flight";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
+function isLegacyApiEnabled(): boolean {
+  return typeof window === "undefined" && process.env.LEGACY_API_FALLBACK_ENABLED === "true";
+}
 
-const CATALOG_CACHE_SECONDS = 300;
-const SEARCH_CACHE_SECONDS = 60;
+function getLegacyApiBaseUrl(): string | null {
+  if (!isLegacyApiEnabled()) return null;
+  const configuredUrl = process.env.LEGACY_API_URL?.trim().replace(/\/+$/, "");
+  return configuredUrl || null;
+}
+
+function logDataSource(feature: string, source: string, outcome: "success" | "empty" | "error"): void {
+  if (typeof window === "undefined" && process.env.DATA_SOURCE_LOGGING === "true") {
+    console.info("[Data source]", { feature, source, outcome });
+  }
+}
+
+const CATALOG_CACHE_SECONDS = 21600;
+const SEARCH_CACHE_SECONDS = 21600;
+const SCRAPER_NEGATIVE_CACHE_MS = 3 * 60 * 1000;
+const scraperNegativeCache = new Map<string, number>();
 
 function normalizeApiSearchQuery(query: string): string {
   return query.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
@@ -51,6 +70,12 @@ async function cacheValidatedScraperResult<T>(
 ): Promise<T | null> {
   if (typeof window !== "undefined") return load();
 
+  const cacheKey = keyParts.join("\u0000");
+  const sourceName = keyParts[0] === "anilist-metadata" ? "anilist" : "animesalt-worker-or-direct";
+  const failedUntil = scraperNegativeCache.get(cacheKey);
+  if (failedUntil && failedUntil > Date.now()) return null;
+  if (failedUntil) scraperNegativeCache.delete(cacheKey);
+
   // Cache parsed/validated domain data, not raw HTML. Invalid pages, challenges,
   // empty results, and failed requests throw before an entry is stored.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -66,9 +91,56 @@ async function cacheValidatedScraperResult<T>(
   ) as () => Promise<T>;
 
   try {
-    return await cachedLoad();
+    const result = await cachedLoad();
+    scraperNegativeCache.delete(cacheKey);
+    logDataSource(keyParts[0] || "scraper", sourceName, "success");
+    return result;
   } catch (error) {
     rethrowNextControlFlow(error);
+    logDataSource(keyParts[0] || "scraper", sourceName, "error");
+    if (scraperNegativeCache.size > 2000) {
+      for (const [key, expiry] of scraperNegativeCache) {
+        if (expiry <= Date.now()) scraperNegativeCache.delete(key);
+      }
+    }
+    scraperNegativeCache.set(cacheKey, Date.now() + SCRAPER_NEGATIVE_CACHE_MS);
+    return null;
+  }
+}
+
+async function fetchLegacyValidated<T>(
+  feature: string,
+  cacheKey: string,
+  path: string,
+  isValid: (data: unknown) => data is T,
+  revalidateSeconds = 21600
+): Promise<T | null> {
+  const baseUrl = getLegacyApiBaseUrl();
+  if (!baseUrl) return null;
+
+  // Cache only validated JSON. Throwing on HTTP errors, malformed JSON, and
+  // empty payloads prevents those responses from being retained for six hours.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { unstable_cache } = require("next/cache") as typeof import("next/cache");
+  const load = unstable_cache(
+    async () => {
+      const response = await fetch(`${baseUrl}${path}`);
+      if (!response.ok) throw new Error(`Legacy API returned ${response.status}`);
+      const data: unknown = await response.json();
+      if (!isValid(data)) throw new Error("Legacy API returned an invalid or empty payload");
+      return data;
+    },
+    ["validated-legacy-api-v1", feature, cacheKey, baseUrl, path],
+    { revalidate: revalidateSeconds }
+  ) as () => Promise<T>;
+
+  try {
+    const result = await load();
+    logDataSource(feature, "legacy-api", "success");
+    return result;
+  } catch (error) {
+    rethrowNextControlFlow(error);
+    logDataSource(feature, "legacy-api", "error");
     return null;
   }
 }
@@ -85,50 +157,38 @@ const animeSearchInFlight = new Map<string, Promise<AnimeSearchResponse | null>>
 
 function getCachedAnimeSearchFetch(): CachedSearchFetch {
   if (!cachedAnimeSearchFetch) {
-    // Cache the validated, parsed search result. Failed and empty responses throw
-    // before Next.js stores an entry; normalized query + page form the key.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
-    cachedAnimeSearchFetch = unstable_cache(
-      async (query: string, page: number) => {
-        const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(query)}&page=${page}`;
-        const response = await fetch(url, { cache: "no-store" });
-        if (!response.ok) throw new Error(`Search API returned ${response.status}`);
-
-        const data = (await response.json()) as AnimeSearchResponse;
-        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
-          throw new Error("Search API returned no entries");
+    cachedAnimeSearchFetch = async (query: string, page: number) => {
+      const data = await fetchLegacyValidated(
+        "search",
+        `${normalizeApiSearchQuery(query)}:${page}`,
+        `/api/search?s=${encodeURIComponent(query)}&page=${page}`,
+        (value): value is AnimeSearchResponse => {
+          const candidate = value as AnimeSearchResponse | null;
+          return Array.isArray(candidate?.results?.results) && candidate.results.results.length > 0;
         }
-        return data;
-      },
-      ["validated-anime-search-v2"],
-      { revalidate: SEARCH_CACHE_SECONDS }
-    ) as CachedSearchFetch;
+      );
+      if (!data) throw new Error("Legacy search is disabled or unavailable");
+      return data;
+    };
   }
   return cachedAnimeSearchFetch;
 }
 
 function getCachedCatalogApiFetch(): CachedCatalogFetch {
   if (!cachedCatalogApiFetch) {
-    // The persistent cache surrounds validation, so failed and empty payloads
-    // throw before Next.js stores a cache entry. Arguments key by kind + page.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
-    cachedCatalogApiFetch = unstable_cache(
-      async (kind: "series" | "movies", page: number) => {
-        const response = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
-          cache: "no-store",
-        });
-        if (!response.ok) throw new Error(`Catalog API returned ${response.status}`);
-        const data = (await response.json()) as AnimeCatalogResponse;
-        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
-          throw new Error("Catalog API returned no entries");
+    cachedCatalogApiFetch = async (kind: "series" | "movies", page: number) => {
+      const data = await fetchLegacyValidated(
+        "catalog",
+        `${kind}:${page}`,
+        `/api/${kind}?page=${page}`,
+        (value): value is AnimeCatalogResponse => {
+          const candidate = value as AnimeCatalogResponse | null;
+          return Array.isArray(candidate?.results?.results) && candidate.results.results.length > 0;
         }
-        return data;
-      },
-      ["validated-anime-catalog-v1"],
-      { revalidate: CATALOG_CACHE_SECONDS }
-    ) as CachedCatalogFetch;
+      );
+      if (!data) throw new Error("Legacy catalog is disabled or unavailable");
+      return data;
+    };
   }
   return cachedCatalogApiFetch;
 }
@@ -302,8 +362,6 @@ export function isUsableImageUrl(value?: string | null): value is string {
     return false;
   }
 }
-
-export const SYNOPSIS_FALLBACK = "No synopsis available.";
 
 const SYNOPSIS_EMPTY_VALUES = new Set([
   "",
@@ -897,7 +955,6 @@ async function scrapeAnimeSaltCatalogUncached(
         const response = await fetch(buildServerWorkerCatalogUrl(kind, page), {
           headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
           signal: controller.signal,
-          cache: "no-store",
         });
         const contentType = response.headers.get("content-type")?.toLowerCase() || "";
         if (response.ok && /(?:text\/html|application\/(?:rss\+xml|xml)|text\/xml)/.test(contentType)) {
@@ -941,7 +998,7 @@ export function scrapeAnimeSaltCatalog(
 ): Promise<CatalogPageResult | null> {
   return cacheValidatedScraperResult(
     ["catalog", kind, String(page)],
-    300,
+    21600,
     () => scrapeAnimeSaltCatalogUncached(kind, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -990,7 +1047,7 @@ export function scrapeAnimeSaltSearch(
   if (!cleanKeyword) return Promise.resolve(null);
   return cacheValidatedScraperResult(
     ["search", cleanKeyword, String(page)],
-    60,
+    21600,
     () => scrapeAnimeSaltSearchUncached(cleanKeyword, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1039,7 +1096,7 @@ export function scrapeAnimeSaltGenre(
   if (!cleanGenre) return Promise.resolve(null);
   return cacheValidatedScraperResult(
     ["genre", cleanGenre, String(page)],
-    300,
+    21600,
     () => scrapeAnimeSaltGenreUncached(cleanGenre, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1088,7 +1145,7 @@ export function scrapeAnimeSaltLanguage(
   if (!cleanLang) return Promise.resolve(null);
   return cacheValidatedScraperResult(
     ["language", cleanLang, String(page)],
-    300,
+    21600,
     () => scrapeAnimeSaltLanguageUncached(cleanLang, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1134,7 +1191,7 @@ export function scrapeAnimeSaltCartoon(
 ): Promise<CatalogPageResult | null> {
   return cacheValidatedScraperResult(
     ["cartoon", kind, String(page)],
-    300,
+    21600,
     () => scrapeAnimeSaltCartoonUncached(kind, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1560,32 +1617,11 @@ export async function getCatalog(
   page = 1,
   options: { allowHomepageFallback?: boolean; signal?: AbortSignal } = {}
 ): Promise<AnimeCatalogResponse | null> {
-  // 1. Try upstream JSON API first
-  try {
-    const data = typeof window === "undefined" && !options.signal
-      ? await getCachedCatalogApiFetch()(kind, page)
-      : await (async () => {
-          const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
-            cache: "no-store",
-            signal: options.signal,
-          });
-          if (!res.ok) return null;
-          const responseData = (await res.json()) as AnimeCatalogResponse;
-          return Array.isArray(responseData?.results?.results) && responseData.results.results.length > 0
-            ? responseData
-            : null;
-        })();
-    if (data) return data;
-  } catch (err) {
-    console.error(`getCatalog ${kind} API error:`, err);
-  }
-
-  // Use the authenticated Worker-backed scraper on the server when the API
-  // has no entries. Keep this scoped to the requested page so pagination does
-  // not trigger a full-catalog scan.
+  // AnimeSalt is the primary catalog source. Fetch only the requested page.
   if (typeof window === "undefined" && !options.signal?.aborted) {
     const scraped = await scrapeAnimeSaltCatalog(kind, page);
     if (scraped?.results.length) {
+      logDataSource(`${kind}-catalog`, "animesalt-worker-or-direct", "success");
       return {
         success: true,
         results: {
@@ -1594,6 +1630,19 @@ export async function getCatalog(
           results: scraped.results,
         },
       };
+    }
+    logDataSource(`${kind}-catalog`, "animesalt-worker-or-direct", "empty");
+  }
+
+  // Optional migration fallback. Disabled unless a server-only flag and URL
+  // are explicitly configured; never read from browser code.
+  if (isLegacyApiEnabled()) {
+    try {
+      const data = await getCachedCatalogApiFetch()(kind, page);
+      if (data) return data;
+    } catch (err) {
+      rethrowNextControlFlow(err);
+      console.error(`getCatalog ${kind} legacy fallback error:`, err);
     }
   }
 
@@ -1659,15 +1708,15 @@ export async function searchGlobalAnime(
 
   // 1. Query live search for both query and alias (e.g. jjk -> jujutsu kaisen)
   const [searchResp, aliasResp] = await Promise.all([
-    searchAnime(cleanQ, page),
+    searchAnimeScraperFirst(cleanQ, page),
     aliasTerm && aliasTerm !== cleanQ.toLowerCase()
-      ? searchAnime(aliasTerm, page)
+      ? searchAnimeScraperFirst(aliasTerm, page)
       : Promise.resolve(null),
   ]);
 
   const rawResults = [
-    ...(searchResp?.results?.results ?? []),
-    ...(aliasResp?.results?.results ?? []),
+    ...(searchResp?.results ?? []),
+    ...(aliasResp?.results ?? []),
   ];
 
   if (rawResults.length > 0) {
@@ -1698,8 +1747,8 @@ export async function searchGlobalAnime(
     scored.sort((a, b) => b.score - a.score);
 
     const totalPages = Math.max(
-      searchResp?.results?.totalPages ?? 1,
-      aliasResp?.results?.totalPages ?? 1,
+      searchResp?.totalPages ?? 1,
+      aliasResp?.totalPages ?? 1,
       Math.ceil(scored.length / GLOBAL_SEARCH_PAGE_SIZE)
     );
 
@@ -1754,13 +1803,16 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
     const alias = COMMON_ACRONYMS[cacheKey];
     const queries = alias && alias !== cacheKey ? [cleanQuery, alias] : [cleanQuery];
     const responses = await Promise.all(
-      queries.map((term) => searchAnime(term, 1))
+      queries.map(async (term) => {
+        const response = await searchAnimeScraperFirst(term, 1);
+        return response?.results ?? [];
+      })
     );
     const seen = new Set<string>();
     const scored: SearchSuggestion[] = [];
 
     for (const response of responses) {
-      for (const raw of response?.results?.results ?? []) {
+      for (const raw of response) {
         const item = mapSearchItemToAnime(raw);
         if (!item.slug || seen.has(item.slug)) continue;
         seen.add(item.slug);
@@ -1779,7 +1831,24 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
     }
 
     scored.sort((a, b) => b.score - a.score);
-    const results = scored.slice(0, 8);
+    let results = scored.slice(0, 8);
+
+    // If both live sources are unavailable, retain useful suggestions from
+    // the bundled real-anime catalog without surfacing generated mock entries.
+    if (results.length === 0) {
+      results = fuzzySearch(cleanQuery, anime.filter((item) => !item.isMock), 0.4)
+        .slice(0, 8)
+        .map(({ item, score }) => ({
+          slug: item.slug,
+          title: item.title,
+          poster: item.poster,
+          year: item.year,
+          type: item.type,
+          languages: item.languages,
+          score,
+        }));
+    }
+
     // Keep negative results retryable; only cache actual matches.
     if (results.length > 0) {
       cache.set(cacheKey, { results, timestamp: Date.now() });
@@ -1789,33 +1858,32 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
 }
 
 export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/newadded`, {
-      next: { revalidate: 60 },
-    });
-    if (res.ok) {
-      const data = (await res.json()) as LatestEpisodesResponse;
-      if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
-        return data;
-      }
-    }
-  } catch (err) {
-    console.error("getLatestEpisodes API error:", err);
-  }
-
-  // Fallback to the catalog API's homepage endpoint when /api/newadded is unavailable.
+  // AnimeSalt homepage fresh drops are primary; old endpoints are opt-in only.
   try {
     const feed = await getHomepageFeed();
     const drops = feed?.data?.results?.fresh_drops;
     if (drops && Array.isArray(drops) && drops.length > 0) {
+      logDataSource("latest-episodes", "animesalt-homepage", "success");
       return {
         success: true,
         results: drops,
       };
     }
   } catch (err) {
-    console.error("getLatestEpisodes fallback error:", err);
+    rethrowNextControlFlow(err);
+    console.error("getLatestEpisodes AnimeSalt error:", err);
   }
+
+  const legacy = await fetchLegacyValidated(
+    "latest-episodes",
+    "newadded",
+    "/api/newadded",
+    (value): value is LatestEpisodesResponse => {
+      const candidate = value as LatestEpisodesResponse | null;
+      return Array.isArray(candidate?.results) && candidate.results.length > 0;
+    }
+  );
+  if (legacy) return legacy;
 
   return null;
 }
@@ -2134,74 +2202,38 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
     return homepageFeedCache?.data ?? null;
   }
 
-  const apiStartedAt = Date.now();
-  try {
-    const res = await fetch(`${API_BASE_URL}/api`, {
-      next: { revalidate: 900 },
-    });
-    const contentType = res.headers.get("content-type");
-    const cacheStatus = res.headers.get("x-vercel-cache") ?? res.headers.get("cf-cache-status");
-    const responseBytesPromise = diagnostics
-      ? res.clone().arrayBuffer().then((body) => body.byteLength).catch(() => null)
-      : null;
-    const responseBytes = async () => responseBytesPromise ? await responseBytesPromise : null;
-    if (res.ok) {
-      let data: HomepageApiResponse | null;
-      try {
-        data = await res.json() as HomepageApiResponse;
-      } catch (error) {
-        rethrowNextControlFlow(error);
-        logHomepageSsr(diagnostics, {
-          source: "catalog-api-homepage",
-          attempt: "fetch-and-parse",
-          outcome: "invalid-response",
-          status: res.status,
-          contentType,
-          cacheStatus,
-          responseBytes: await responseBytes(),
-          elapsedMs: Date.now() - apiStartedAt,
-          errorCategory: "invalid-json",
-        });
-        data = null;
-      }
-      if (data && hasHomepageItems(data)) {
-        if (data.data.success !== false) {
-          homepageFeedCache = { data, timestamp: Date.now() };
-          logHomepageSsr(diagnostics, {
-            source: "catalog-api-homepage",
-            attempt: "fetch-and-parse",
-            outcome: "success",
-            status: res.status,
-            contentType,
-            cacheStatus,
-            responseBytes: await responseBytes(),
-            elapsedMs: Date.now() - apiStartedAt,
-            sectionCounts: getHomepageSectionCounts(data),
-          });
-          return data;
-        }
-      }
-    }
-  } catch (err) {
-    rethrowNextControlFlow(err);
-    const error = err instanceof Error ? err : new Error(String(err));
-    logHomepageSsr(diagnostics, {
-      source: "catalog-api-homepage",
-      attempt: "fetch",
-      outcome: "error",
-      elapsedMs: Date.now() - apiStartedAt,
-      errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "request-error",
-    });
-  }
-
-  // Fallback 1: Direct scrape from AnimeSalt via Cloudflare Worker proxy
+  // Primary source: validated AnimeSalt homepage data through Worker/direct fetch.
   const scrapedFeed = await scrapeDirectHomepageFeed(diagnostics);
   if (hasHomepageItems(scrapedFeed)) {
     homepageFeedCache = { data: scrapedFeed!, timestamp: Date.now() };
+    logDataSource("homepage", "animesalt-worker-or-direct", "success");
     return scrapedFeed;
   }
+  logDataSource("homepage", "animesalt-worker-or-direct", "empty");
 
-  // Fallback 2: Cached in-memory feed if available
+  // Optional, disabled-by-default old-backend fallback. Validation occurs
+  // inside unstable_cache, so failed or empty responses are never cached.
+  const legacyFeed = await fetchLegacyValidated(
+    "homepage",
+    "feed",
+    "/api",
+    (value): value is HomepageApiResponse => {
+      const candidate = value as HomepageApiResponse | null;
+      return Boolean(candidate && candidate.data?.success !== false && hasHomepageItems(candidate));
+    }
+  );
+  if (legacyFeed) {
+    homepageFeedCache = { data: legacyFeed, timestamp: Date.now() };
+    logHomepageSsr(diagnostics, {
+      source: "legacy-api-homepage",
+      attempt: "validated-fallback",
+      outcome: "success",
+      sectionCounts: getHomepageSectionCounts(legacyFeed),
+    });
+    return legacyFeed;
+  }
+
+  // Last resort: reuse a previously verified in-memory feed.
   const cachedFeed = homepageFeedCache?.data;
   if (hasHomepageItems(cachedFeed)) {
     logHomepageSsr(diagnostics, {
@@ -2309,10 +2341,7 @@ export function mapLatestEpisodeToEpisode(item: LatestEpisodeItem): Episode {
   };
 }
 
-/**
- * Searches anime via the deployed API.
- * This is the RELIABLE source for anime title and TMDB poster.
- */
+/** Searches AnimeSalt first; the old backend is an opt-in migration fallback. */
 export async function searchAnime(
   keyword: string,
   page: number = 1,
@@ -2321,42 +2350,47 @@ export async function searchAnime(
   const cleanKeyword = normalizeApiSearchQuery(keyword || "");
   if (!cleanKeyword) return null;
 
-  // 1. Try upstream API
-  if (typeof window === "undefined") {
-    const data = await fetchCachedAnimeSearch(cleanKeyword, page);
-    if (data) return data;
-  } else {
-    const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`;
+  if (options.allowScraperFallback !== false) {
     try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (res.ok) {
-        const data: AnimeSearchResponse = await res.json();
-        if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
+      const scraped = await scrapeAnimeSaltSearch(cleanKeyword, page);
+      if (scraped?.results.length) {
+        logDataSource("search", "animesalt-worker-or-direct", "success");
+        return { success: true, results: scraped };
       }
-    } catch (error) {
-      rethrowNextControlFlow(error);
-      // Fall through to AnimeSalt when the configured API is unavailable.
+      logDataSource("search", "animesalt-worker-or-direct", "empty");
+    } catch (err) {
+      rethrowNextControlFlow(err);
+      console.error("searchAnime AnimeSalt error:", err);
     }
   }
 
-  // Callers can disable scraping when they need an API-only lookup.
-  if (options.allowScraperFallback === false) return null;
-
-  // 2. Search one AnimeSalt results page; do not scan the full catalog.
-  try {
-    const scraped = await scrapeAnimeSaltSearch(cleanKeyword, page);
-    if (scraped && scraped.results.length > 0) {
-      return {
-        success: true,
-        results: scraped,
-      };
-    }
-  } catch (err) {
-    rethrowNextControlFlow(err);
-    console.error("searchAnime scraper fallback error:", err);
+  if (isLegacyApiEnabled()) {
+    const data = await fetchCachedAnimeSearch(cleanKeyword, page);
+    if (data) return data;
   }
 
   return null;
+}
+
+/** Prefer AnimeSalt; optionally consult the disabled-by-default legacy API. */
+async function searchAnimeScraperFirst(
+  keyword: string,
+  page: number
+): Promise<{ results: AnimeSearchResult[]; totalPages: number } | null> {
+  const scraped = await scrapeAnimeSaltSearch(keyword, page);
+  if (scraped?.results.length) {
+    logDataSource("search", "animesalt-worker-or-direct", "success");
+    return { results: scraped.results, totalPages: scraped.totalPages };
+  }
+
+  const apiResult = await searchAnime(keyword, page, { allowScraperFallback: false });
+  if (!Array.isArray(apiResult?.results?.results) || apiResult.results.results.length === 0) {
+    return null;
+  }
+  return {
+    results: apiResult.results.results,
+    totalPages: apiResult.results.totalPages || 1,
+  };
 }
 
 /**
@@ -2368,7 +2402,7 @@ export async function searchAnime(
  * Fetches rich anime details via AniList GraphQL (synopsis, cover, banner, genres, score)
  * Fast, reliable, public API with no rate-limit blocking.
  */
-export async function fetchAniListMeta(
+async function fetchAniListMetaUncached(
   slugOrTitle: string
 ): Promise<AnimeInfoData | null> {
   const clean = formatDisplayTitle(slugOrTitle).replace(/-/g, " ").trim();
@@ -2411,7 +2445,6 @@ export async function fetchAniListMeta(
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ query, variables: { s: clean } }),
       signal: controller.signal,
-      next: { revalidate: 3600 },
     });
     clearTimeout(t);
     if (!res.ok) return null;
@@ -2488,34 +2521,74 @@ export async function fetchAniListMeta(
   }
 }
 
-/**
- * Fetches anime details by slug.
- * Uses AniList as primary rich metadata source, with API and local mock fallback.
- */
+export function fetchAniListMeta(slugOrTitle: string): Promise<AnimeInfoData | null> {
+  const normalized = normalizeApiSearchQuery(slugOrTitle);
+  if (!normalized) return Promise.resolve(null);
+  return cacheValidatedScraperResult(
+    ["anilist-metadata", normalized],
+    21600,
+    () => fetchAniListMetaUncached(slugOrTitle),
+    (result): result is AnimeInfoData => Boolean(result?.title && result.poster && result.overview)
+  );
+}
+
+/** Fetches AnimeSalt detail first, with AniList as metadata fallback. */
 export async function getAnimeInfo(
   animeId: string
 ): Promise<AnimeInfoResponse | null> {
   if (!animeId) return null;
   const cleanId = cleanAnimeSlug(animeId) || animeId;
 
-  // 1. Fetch rich metadata via AniList
+  // 1. AnimeSalt detail page is the primary content source.
   try {
-    const aniMeta = await fetchAniListMeta(cleanId);
-    if (aniMeta && aniMeta.overview && aniMeta.poster) {
-      return { success: true, data: aniMeta };
+    const scraped = await scrapeDirectSeriesData(cleanId);
+    const knownTv = getAnimeBySlug(cleanId)?.type === "TV";
+    const wrongMovieDetail = Boolean(
+      knownTv && (scraped?.isMovie || isKnownTvMovieTitleCollision(cleanId, scraped?.title))
+    );
+    if (scraped && !wrongMovieDetail && (scraped.title || scraped.poster || scraped.synopsis)) {
+      logDataSource("anime-info", "animesalt-worker-or-direct", "success");
+      return {
+        success: true,
+        data: {
+          title: scraped.title || formatDisplayTitle(cleanId),
+          anime_id: cleanId,
+          poster: scraped.poster || "",
+          backdrop: scraped.backdrop || scraped.poster || "",
+          overview: scraped.synopsis || "",
+          genres: scraped.genres || [],
+          year: "",
+          rating: "8.5",
+          seasons: String(scraped.seasons.length || 1),
+          episodes: String(scraped.s1Episodes.length || 12),
+          language: "hindi, english, japanese",
+        },
+      };
     }
   } catch (error) {
     rethrowNextControlFlow(error);
   }
 
-  // 2. Fetch from legacy API if available
+  // 2. AniList supplies metadata if AnimeSalt has no usable detail page.
+  const aniMeta = await fetchAniListMeta(cleanId);
+  if (aniMeta?.overview && aniMeta.poster) {
+    logDataSource("anime-info", "anilist", "success");
+    return { success: true, data: aniMeta };
+  }
+
+  // 3. Optional old-backend fallback, disabled by default.
   try {
-    const url = `${API_BASE_URL}/api/info?id=${encodeURIComponent(cleanId)}`;
-    const res = await fetch(url, {
-      next: { revalidate: 300 },
-    });
-    if (res.ok) {
-      const data: AnimeInfoResponse = await res.json();
+    const data = await fetchLegacyValidated(
+      "anime-info",
+      cleanId,
+      `/api/info?id=${encodeURIComponent(cleanId)}`,
+      (value): value is AnimeInfoResponse => {
+        const candidate = value as AnimeInfoResponse | null;
+        const resolved = candidate ? resolveAnimeInfoData(candidate) : null;
+        return Boolean(resolved && (resolved.title || resolved.overview || resolved.poster));
+      }
+    );
+    if (data) {
       const resolved = resolveAnimeInfoData(data);
       if (resolved && (!resolved.title || !resolved.overview)) {
         const mock = getAnimeBySlug(cleanId);
@@ -2534,7 +2607,7 @@ export async function getAnimeInfo(
     console.error("getAnimeInfo API error:", err);
   }
 
-  // 3. Fallback to local mock database
+  // 4. Fallback to local bundled records.
   const mock = getAnimeBySlug(cleanId);
   if (mock) {
     return {
@@ -2564,10 +2637,35 @@ export async function getMovieInfo(
   if (!movieId) return null;
   const cleanId = cleanAnimeSlug(movieId) || movieId;
 
-  // 1. Fetch rich metadata via AniList
+  // 1. AnimeSalt's exact movie page is the primary source.
+  const scraped = await scrapeDirectSeriesData(cleanId).catch((error) => {
+    rethrowNextControlFlow(error);
+    return null;
+  });
+  if (scraped?.isMovie && (scraped.title || scraped.poster || scraped.synopsis)) {
+    logDataSource("movie-info", "animesalt-worker-or-direct", "success");
+    return {
+      success: true,
+      results: {
+        title: scraped.title || formatDisplayTitle(cleanId),
+        anime_id: cleanId,
+        poster: scraped.poster,
+        backdrop: scraped.backdrop || scraped.poster,
+        overview: scraped.synopsis || "",
+        genres: scraped.genres || [],
+        year: "",
+        rating: "8.5",
+        format: "MOVIE",
+        languages: ["hindi", "english", "japanese"],
+      },
+    };
+  }
+
+  // 2. AniList is the metadata fallback when AnimeSalt has no movie detail.
   try {
     const aniMeta = await fetchAniListMeta(cleanId);
     if (aniMeta && aniMeta.overview) {
+      logDataSource("movie-info", "anilist", "success");
       return {
         success: true,
         results: {
@@ -2589,12 +2687,17 @@ export async function getMovieInfo(
   }
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/movie?id=${encodeURIComponent(cleanId)}`, {
-      next: { revalidate: 300 },
-    });
-    if (res.ok) {
-      return (await res.json()) as MovieInfoResponse;
-    }
+    const data = await fetchLegacyValidated(
+      "movie-info",
+      cleanId,
+      `/api/movie?id=${encodeURIComponent(cleanId)}`,
+      (value): value is MovieInfoResponse => {
+        const candidate = value as MovieInfoResponse | null;
+        const resolved = candidate ? resolveMovieInfoData(candidate) : null;
+        return Boolean(resolved && (resolved.title || resolved.overview || resolved.poster));
+      }
+    );
+    if (data) return data;
   } catch (err) {
     rethrowNextControlFlow(err);
     console.error("getMovieInfo API error:", err);
@@ -2661,6 +2764,17 @@ export interface ScrapedSeriesMeta {
   backdrop?: string;
   isMovie?: boolean;
   genres?: string[];
+}
+
+function isKnownTvMovieTitleCollision(slug: string, title?: string): boolean {
+  if (!title) return false;
+  const known = getAnimeBySlug(slug);
+  if (known?.type !== "TV") return false;
+
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const expected = normalize(known.title);
+  // AnimeSalt may resolve the shared Jujutsu Kaisen slug to Jujutsu Kaisen 0.
+  return Boolean(expected && normalize(title) === `${expected}0`);
 }
 
 const seriesScrapeCache = new Map<string, { data: ScrapedSeriesMeta; timestamp: number }>();
@@ -2736,6 +2850,9 @@ function getServerWorkerBaseUrl(): string {
   const { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } =
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require("@/lib/api/worker-config") as typeof import("@/lib/api/worker-config");
+  // Vercel deployments sometimes have only the public Worker URL configured.
+  // The hostname is still allowlisted below; the shared secret remains
+  // server-only in getServerWorkerHeaders().
   const configuredUrls = [process.env.CF_PROXY_URL, process.env.NEXT_PUBLIC_CF_PROXY_URL]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value));
@@ -2830,61 +2947,53 @@ function isAnimeDetailHtml(html: string | null): html is string {
   return true;
 }
 
-async function fetchHtmlUncached(url: string): Promise<string | null> {
+async function fetchHtmlTextAttempt(
+  requestUrl: string,
+  timeoutMs: number,
+  headers: HeadersInit,
+  deadlineAt?: number
+): Promise<string | null> {
+  const remainingMs = deadlineAt ? Math.min(timeoutMs, deadlineAt - Date.now()) : timeoutMs;
+  if (remainingMs <= 0) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), remainingMs);
+  try {
+    const response = await fetch(requestUrl, { headers, signal: controller.signal });
+    if (!response.ok) return null;
+    // Keep the abort timer active while consuming the response body too.
+    const html = await response.text();
+    return is404Html(html) ? null : html;
+  } catch (error) {
+    rethrowNextControlFlow(error);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchHtmlUncached(url: string, deadlineAt?: number): Promise<string | null> {
   if (url.includes("animesalt.cx")) {
     try {
       const proxyUrl = buildServerWorkerProxyUrl(url);
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 6000);
       console.log(`[Worker Request Outbound] Proxying: ${url}`);
-      const pRes = await fetch(proxyUrl, {
-        // AnimeSalt HTML is fetched through the Worker’s public, allowlisted
-        // scraper route. Do not attach the server-only proxy secret here: a
-        // stale or missing Vercel secret would make autocomplete fall back to
-        // direct AnimeSalt egress, which is commonly challenged in production.
-        // Protected stream/Toko Worker routes continue to require the secret.
-        headers: DEFAULT_SCRAPER_HEADERS,
-        signal: controller.signal,
-        cache: "no-store",
-      });
-      clearTimeout(t);
-      if (pRes.ok) {
-        const text = await pRes.text();
-        if (!is404Html(text)) return text;
-      }
+      const workerHtml = await fetchHtmlTextAttempt(proxyUrl, 6000, DEFAULT_SCRAPER_HEADERS, deadlineAt);
+      if (workerHtml) return workerHtml;
     } catch (error) {
       rethrowNextControlFlow(error);
-      // proxy fetch error, fall back to direct
+      // If the Worker is unavailable or returns an invalid response, try direct.
     }
   }
 
-  try {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch(url, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      signal: controller.signal,
-      cache: "no-store",
-    });
-    clearTimeout(t);
-    if (res.ok) {
-      const text = await res.text();
-      if (!is404Html(text)) return text;
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // direct fetch error
-  }
-
-  return null;
+  return fetchHtmlTextAttempt(url, 3500, DEFAULT_SCRAPER_HEADERS, deadlineAt);
 }
 
 async function fetchHtmlWithWorkerFallback(
   url: string,
   diagnostics = false,
-  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
+  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void,
+  deadlineAt?: number
 ): Promise<string | null> {
-  if (!diagnostics) return fetchHtmlUncached(url);
+  if (!diagnostics) return fetchHtmlUncached(url, deadlineAt);
 
   const fetchAttempt = async (
     source: "worker-primary" | "direct-animesalt" | "worker-retry",
@@ -2903,7 +3012,6 @@ async function fetchHtmlWithWorkerFallback(
           ? DEFAULT_SCRAPER_HEADERS
           : getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
         signal: controller.signal,
-        cache: "no-store",
       });
       status = response.status;
       contentType = response.headers.get("content-type");
@@ -2971,8 +3079,15 @@ async function fetchHtmlWithWorkerFallback(
 
   // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
   if (url.includes("animesalt.cx")) {
-    const proxyHtml = await fetchAttempt("worker-primary", buildServerWorkerProxyUrl(url), 6000);
+    const remaining = deadlineAt ? deadlineAt - Date.now() : 6000;
+    const proxyHtml = remaining > 0
+      ? await fetchAttempt("worker-primary", buildServerWorkerProxyUrl(url), Math.min(6000, remaining))
+      : null;
     if (proxyHtml) return proxyHtml;
+    const directRemaining = deadlineAt ? deadlineAt - Date.now() : 3500;
+    if (directRemaining > 0) {
+      return fetchAttempt("direct-animesalt", url, Math.min(3500, directRemaining));
+    }
   }
 
   return null;
@@ -2996,11 +3111,11 @@ export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta 
   const cacheVersion = cleanId === "jujutsu-kaisen" ? "series-first-v2" : "v1";
   const request = cacheValidatedScraperResult(
     ["series-detail", cleanId, cacheVersion],
-    300,
+    21600,
     () => scrapeDirectSeriesDataUnshared(cleanId),
     (result): result is ScrapedSeriesMeta => Boolean(
       result &&
-      (result.title || result.poster || result.synopsis || result.seasons.length > 0 || result.s1Episodes.length > 0)
+      (result.poster || result.synopsis || result.s1Episodes.length > 0 || (result.postId && result.seasons.length > 0))
     )
   );
   seriesScrapeInFlight.set(cleanId, request);
@@ -3016,23 +3131,21 @@ export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta 
 async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedSeriesMeta | null> {
   try {
     const decodedSlug = normalizeSlug(cleanId);
+    const deadlineAt = Date.now() + 20_000;
     let html: string | null = null;
     let isMovie = false;
 
-    // 1. Try series page
+    // Try exact series and movie URLs concurrently, preserving series preference.
     const seriesUrl = `https://animesalt.cx/series/${encodeURIComponent(decodedSlug)}/`;
-    html = await fetchHtmlWithWorkerFallback(seriesUrl);
-    if (!isAnimeDetailHtml(html)) html = null;
-
-    if (!html) {
-      // 2. Try movie page
-      const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`;
-      html = await fetchHtmlWithWorkerFallback(movieUrl);
-      if (isAnimeDetailHtml(html)) {
-        isMovie = true;
-      } else {
-        html = null;
-      }
+    const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`;
+    const [seriesHtml, movieHtml] = await Promise.all([
+      fetchHtmlWithWorkerFallback(seriesUrl, false, undefined, deadlineAt),
+      fetchHtmlWithWorkerFallback(movieUrl, false, undefined, deadlineAt),
+    ]);
+    if (isAnimeDetailHtml(seriesHtml)) html = seriesHtml;
+    else if (isAnimeDetailHtml(movieHtml)) {
+      html = movieHtml;
+      isMovie = true;
     }
 
     // 3. Fallback: Search AnimeSalt by keyword if direct fetch failed
@@ -3041,7 +3154,7 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
       if (searchKw) {
         try {
           const sUrl = `https://animesalt.cx/?s=${encodeURIComponent(searchKw)}`;
-          const sHtml = await fetchHtmlWithWorkerFallback(sUrl);
+          const sHtml = await fetchHtmlWithWorkerFallback(sUrl, false, undefined, deadlineAt);
           if (sHtml) {
             const links = [...sHtml.matchAll(/href=["'](https:\/\/animesalt\.cx\/(?:series|movies)\/[^"']+)["']/gi)];
             const exactLink = links.find(
@@ -3049,7 +3162,7 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
             );
             if (exactLink) {
               const targetUrl = exactLink[1];
-              html = await fetchHtmlWithWorkerFallback(targetUrl);
+              html = await fetchHtmlWithWorkerFallback(targetUrl, false, undefined, deadlineAt);
               if (isAnimeDetailHtml(html)) {
                 isMovie = targetUrl.includes("/movies/");
               } else {
@@ -3356,8 +3469,8 @@ async function scrapeDirectSeasonEpisodesUncached(slug: string, season: number):
 async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise<EpisodeItem[]> {
   const cleanId = cleanAnimeSlug(slug) || slug;
   const episodes = await cacheValidatedScraperResult(
-    ["season-episodes", cleanId, String(season)],
-    120,
+    ["season-episodes", cleanId, String(season), cleanId === "jujutsu-kaisen" ? "series-episode-v2" : "v1"],
+    21600,
     () => scrapeDirectSeasonEpisodesUncached(cleanId, season),
     (result): result is EpisodeItem[] => Boolean(result?.length)
   );
@@ -3376,42 +3489,21 @@ export async function getEpisodes(
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   const seasonNum = typeof season === "string" ? parseInt(season, 10) || 1 : season;
 
-  // 1. Try remote API first if configured and responsive
-  try {
-    const url = `${API_BASE_URL}/api/episode?id=${encodeURIComponent(cleanId)}&season=${seasonNum}`;
-    const res = await fetch(url, {
-      next: { revalidate: 60 },
-    });
-    if (res.ok) {
-      const data: EpisodeResponse = await res.json();
-      if (data?.results?.episodes && data.results.episodes.length > 0) {
-        // If seasons array is missing or incomplete, ensure all available seasons are populated
-        if (!data.results.seasons || data.results.seasons.length <= 1) {
-          const allSeasons = await getAvailableSeasons(cleanId);
-          if (allSeasons.length > 1) {
-            data.results.totalSeasons = String(allSeasons.length);
-            data.results.seasons = allSeasons.map((s) => ({
-              season: String(s),
-              text: `Season ${s}`,
-            }));
-          }
-        }
-        return data;
-      }
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // remote API failed, fall back to direct upstream scraper
-  }
-
-  // 2. Direct upstream scraper (resilient, complete, zero truncation)
+  // 1. AnimeSalt episode pages are the primary source.
   try {
     const meta = await scrapeDirectSeriesData(cleanId);
     const episodes = await scrapeDirectSeasonEpisodes(cleanId, seasonNum);
     const allSeasons = meta?.seasons && meta.seasons.length > 0 ? meta.seasons : await getAvailableSeasons(cleanId);
     const seasonsList = allSeasons.length > 0 ? allSeasons : [seasonNum];
+    const onlyMovieEntry = Boolean(
+      getAnimeBySlug(cleanId)?.type === "TV" &&
+      seasonNum === 1 &&
+      episodes?.length === 1 &&
+      /^full\s+movie$/i.test(episodes[0].title.trim())
+    );
 
-    if (episodes && episodes.length > 0) {
+    if (episodes && episodes.length > 0 && !onlyMovieEntry) {
+      logDataSource("episodes", "animesalt-worker-or-direct", "success");
       return {
         success: true,
         results: {
@@ -3429,9 +3521,23 @@ export async function getEpisodes(
     console.error(`[getEpisodes] Error fetching episodes for ${cleanId} s${seasonNum}:`, err);
   }
 
-  // 3. Fallback: synthesize all episodes from metadata (AniList / mock) so all episodes exist and are playable
+  // 2. AniList metadata determines a conservative episode/season fallback.
+  const aniMeta = await fetchAniListMeta(cleanId);
+
+  // 3. Optional migration fallback to the retired episode API.
+  const legacyEpisodes = await fetchLegacyValidated(
+    "episodes",
+    `${cleanId}:${seasonNum}`,
+    `/api/episode?id=${encodeURIComponent(cleanId)}&season=${seasonNum}`,
+    (value): value is EpisodeResponse => {
+      const candidate = value as EpisodeResponse | null;
+      return Boolean(candidate?.results?.episodes?.length);
+    }
+  );
+  if (legacyEpisodes) return legacyEpisodes;
+
+  // 4. Synthesize a fallback episode list from AniList / bundled metadata.
   try {
-    const aniMeta = await fetchAniListMeta(cleanId);
     const mock = getAnimeBySlug(cleanId);
     const allSeasons = await getAvailableSeasons(cleanId);
     const seasonsList = allSeasons.length > 0 ? allSeasons : [seasonNum];
@@ -3467,169 +3573,53 @@ export async function getEpisodes(
  * Fetches all available seasons for an anime series directly from the API.
  * Returns the exact season numbers (e.g. [1, 2, 3, ..., 22]).
  */
-export async function getAvailableSeasons(
+export const getAvailableSeasons = cache(async (
   animeId: string
-): Promise<number[]> {
+): Promise<number[]> => {
   if (!animeId) return [];
   const cleanId = cleanAnimeSlug(animeId) || animeId;
 
-  // 1. Direct discovery: pulls all season buttons in a single request
+  // 1. AnimeSalt detail page contains the actual season list.
   const meta = await scrapeDirectSeriesData(cleanId);
-  if (meta && meta.seasons && meta.seasons.length > 0) {
+  const knownTvMovieCollision = Boolean(
+    getAnimeBySlug(cleanId)?.type === "TV" &&
+    (meta?.isMovie || isKnownTvMovieTitleCollision(cleanId, meta?.title))
+  );
+  if (!knownTvMovieCollision && meta && meta.seasons && meta.seasons.length > 0) {
+    logDataSource("seasons", "animesalt-worker-or-direct", "success");
     return meta.seasons;
   }
 
-  // 2. Query remote API
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/episode?id=${encodeURIComponent(cleanId)}&season=1`, {
-      next: { revalidate: 60 },
-    });
-    if (res.ok) {
-      const data: EpisodeResponse = await res.json();
-      if (Array.isArray(data?.results?.seasons) && data.results.seasons.length > 0) {
-        const sNums = data.results.seasons
-          .map((s) => parseInt(s.season, 10))
-          .filter((n) => !isNaN(n) && n > 0);
-        if (sNums.length > 0) return [...new Set(sNums)].sort((a, b) => a - b);
-      }
-      const total = parseInt(data?.results?.totalSeasons, 10);
-      if (!isNaN(total) && total > 0) {
-        return Array.from({ length: total }, (_, i) => i + 1);
-      }
+  // 2. AniList metadata can estimate sequel seasons if scraping has no list.
+  const ani = await fetchAniListMeta(cleanId);
+  const aniSeasons = parseInt(ani?.seasons || "1", 10);
+  if (aniSeasons > 1) return Array.from({ length: aniSeasons }, (_, i) => i + 1);
+
+  // 3. Optional migration fallback to the old episode API.
+  const legacy = await fetchLegacyValidated(
+    "seasons",
+    cleanId,
+    `/api/episode?id=${encodeURIComponent(cleanId)}&season=1`,
+    (value): value is EpisodeResponse => {
+      const candidate = value as EpisodeResponse | null;
+      return Boolean(candidate?.results?.seasons?.length || Number(candidate?.results?.totalSeasons) > 0);
     }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // ignore
+  );
+  if (legacy) {
+    const sNums = legacy.results?.seasons
+      ?.map((item) => parseInt(item.season, 10))
+      .filter((number) => Number.isFinite(number) && number > 0) ?? [];
+    const total = parseInt(legacy.results?.totalSeasons || "", 10);
+    if (sNums.length) return [...new Set(sNums)].sort((a, b) => a - b);
+    if (total > 0) return Array.from({ length: total }, (_, index) => index + 1);
   }
 
-  // 3. Fallback: check curated mock metadata
+  // 4. Last resort: use curated bundled metadata.
   const mock = getAnimeBySlug(cleanId);
-  if (mock?.seasons && mock.seasons > 1) {
-    return Array.from({ length: mock.seasons }, (_, i) => i + 1);
-  }
-
-  // 4. Fallback: check AniList computed seasons
-  try {
-    const ani = await fetchAniListMeta(cleanId);
-    const aniSeasons = parseInt(ani?.seasons || "1", 10);
-    if (aniSeasons > 1) {
-      return Array.from({ length: aniSeasons }, (_, i) => i + 1);
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // ignore
-  }
+  if (mock?.seasons && mock.seasons > 1) return Array.from({ length: mock.seasons }, (_, i) => i + 1);
 
   return [1];
-}
-
-/**
- * Validates whether an embed string returned by the stream API is a real, usable URL.
- *
- * Invalid values returned by the backend:
- *   - "Not Found"
- *   - "Error loading"
- *   - empty string
- *   - null / undefined
- *   - data: URIs
- *   - anything not starting with http:// or https://
- */
-export const BLOCKED_STREAM_DOMAINS = [
-  // ── Link shorteners / ad-walls ──────────────────────────────────────────────
-  "mvlink",
-  "linkskit",
-  "linkvertise",
-  "hindmovie",
-  "hshare",
-  "shortx",
-  "ouo.io",
-  "ouo.press",
-  "shareus",
-  "gofile",
-  "dropgalaxy",
-  "katfile",
-  "turbobit",
-  "rapidgator",
-  "1fichier",
-  "mediafire",
-  "mega.nz",
-  "mega.co",
-  "shorte.st",
-  "adf.ly",
-  "adfly",
-  "shrinkme",
-  "earn4link",
-  "droplink",
-  "clicksfly",
-  "gplinks",
-  "cuty.io",
-  "exe.io",
-  // ── Ad-wall video hosts (show "AdBlock/Sandbox" error in iframe) ────────────
-  "multishows",
-  "streamtape",
-  "doodstream",
-  "dood.watch",
-  "dood.la",
-  "dood.pm",
-  "dood.to",
-  "ds2play",
-  "voe.sx",
-  "voe.network",
-  "mixdrop",
-  "sendvid",
-  "uqload",
-  "upstream.to",
-  "evoload",
-  "clipwatching",
-  "waaw.tv",
-  "gounlimited",
-  "vudeo",
-  // ── Broken / Timeout / ASN-locked stream hosts ─────────────────────────────
-  "rubystm",
-  "cloudy.upns.one",
-  "upns.one",
-  "acek-cdn",
-  "dramiyos-cdn",
-  "prx-am",
-  "animesama",
-];
-
-export function isValidEmbedUrl(embed: string | null | undefined): boolean {
-  if (!embed || typeof embed !== "string") return false;
-  const trimmed = embed.trim();
-  if (trimmed === "") return false;
-  if (trimmed.toLowerCase() === "not found") return false;
-  if (trimmed.toLowerCase() === "error loading") return false;
-  if (trimmed.startsWith("data:")) return false;
-  // Reject direct downloads of archive or raw container files
-  if (/\.(mkv|zip|rar|7z|tar|gz|torrent|iso)(\?|$)/i.test(trimmed)) return false;
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-    // Reject root homepages (e.g. https://animesalt.cx/ or https://domain.com)
-    // BUT allow hash-fragment embed URLs like https://cloudy.upns.one/#igncl
-    const cleanPath = url.pathname.replace(/\/+$/, "");
-    const hashId = url.hash.replace(/^#/, "").trim();
-    if ((!cleanPath || cleanPath === "") && !hashId) return false;
-
-    const host = url.hostname.toLowerCase();
-    // Block link shorteners, ad lockers, and file download aggregator sites
-    if (BLOCKED_STREAM_DOMAINS.some((d) => host.includes(d))) return false;
-
-    // Reject entire site homepages or self-domain non-player paths
-    if (
-      host.includes("animesalt.cx") &&
-      !cleanPath.includes("/video/") &&
-      !cleanPath.includes("/embed/") &&
-      !cleanPath.includes("multi-lang-plyr")
-    ) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
+});
 
 /**
  * Fetches stream sources for a specific episode.
@@ -3646,19 +3636,16 @@ export async function getEpisodeStreams(
 ): Promise<StreamResponse | null> {
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   if (!cleanId) return null;
-  try {
-    const url = `${API_BASE_URL}/api/stream?id=${encodeURIComponent(cleanId)}&season=${season}&ep=${episode}`;
-    const res = await fetch(url, {
-      // Do NOT cache stream responses — they are ephemeral
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const data: StreamResponse = await res.json();
-    return data;
-  } catch (err) {
-    console.error("getEpisodeStreams API error:", err);
-    return null;
-  }
+  return fetchLegacyValidated(
+    "legacy-streams",
+    `${cleanId}:${season}:${episode}`,
+    `/api/stream?id=${encodeURIComponent(cleanId)}&season=${season}&ep=${episode}`,
+    (value): value is StreamResponse => {
+      const candidate = value as StreamResponse | null;
+      return Boolean(candidate?.results?.some((item) => isValidEmbedUrl(item.embed || item.url)));
+    },
+    30
+  );
 }
 
 export interface HomepageData {

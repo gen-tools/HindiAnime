@@ -1,20 +1,16 @@
-import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { AnimeGrid } from "@/components/anime/AnimeGrid";
-import { Pagination } from "@/components/ui/Pagination";
-import { ListingFilters } from "@/components/search/ListingFilters";
-import { NoResultsState } from "@/components/search/SearchStates";
-import { getLanguageCatalog, getGenreCatalog } from "@/lib/api/client";
+import { LanguageCatalogResults } from "@/components/catalog/LanguageCatalogResults";
 import { Headphones, Subtitles, Globe, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import { languages } from "@/lib/mock/languages";
 import { genres } from "@/lib/mock/genres";
-import { matchesCountry } from "@/lib/mock/countries";
 import { CANONICAL_SITE_ORIGIN, createCanonicalMetadata } from "@/lib/seo";
-import { hasFilterParamChanges, normalizeFilterParams } from "@/lib/search-filters";
+import { staticCatalog } from "@/lib/static-catalog";
+
+export const dynamicParams = true;
 
 interface LanguagePageConfig {
   h1: string;
@@ -84,6 +80,7 @@ export async function generateMetadata({
   }
 
   const config = getLanguageConfig(lang.code, lang.label);
+  const initialItems = staticCatalog.filter((anime) => anime.languages.includes(language as never));
   const siteUrl = CANONICAL_SITE_ORIGIN;
   const canonicalUrl = `${siteUrl}/language/${lang.code}`;
 
@@ -118,113 +115,16 @@ export async function generateMetadata({
 
 export default async function LanguagePage({
   params,
-  searchParams,
 }: {
   params: Promise<{ language: string }>;
-  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const { language } = await params;
-  const sParams = await searchParams;
   const normalizedLanguage = language.trim().toLowerCase();
-
-  if (normalizedLanguage !== language) {
-    const query = new URLSearchParams(sParams as Record<string, string>).toString();
-    redirect(`/language/${normalizedLanguage}${query ? `?${query}` : ""}`);
-  }
-
-  const queryLanguage = sParams.language?.toLowerCase().trim();
-  if (queryLanguage !== undefined) {
-    const nextParams = new URLSearchParams(sParams as Record<string, string>);
-    nextParams.delete("language");
-    nextParams.delete("page");
-    const qs = nextParams.toString();
-
-    if (!queryLanguage || queryLanguage === "all") {
-      redirect(`/language${qs ? `?${qs}` : ""}`);
-    }
-
-    const targetLang = languages.find((l) => l.code === queryLanguage);
-    if (targetLang) {
-      if (targetLang.code !== language) {
-        redirect(`/language/${targetLang.code}${qs ? `?${qs}` : ""}`);
-      } else {
-        redirect(`/language/${language}${qs ? `?${qs}` : ""}`);
-      }
-    } else {
-      redirect(`/language/${language}${qs ? `?${qs}` : ""}`);
-    }
-  }
-
+  if (normalizedLanguage !== language) redirect(`/language/${normalizedLanguage}`);
   const lang = languages.find((l) => l.code === language);
   if (!lang) notFound();
-
-  // If redundant or different language was provided in query param, redirect to clean route
-  if (sParams.language && sParams.language !== language) {
-    const next = new URLSearchParams(sParams as Record<string, string>);
-    const targetLang = next.get("language")!;
-    next.delete("language");
-    next.delete("page");
-    const query = next.toString() ? `?${next.toString()}` : "";
-    redirect(`/language/${targetLang}${query}`);
-  }
-
   const config = getLanguageConfig(lang.code, lang.label);
-  const filterParams = normalizeFilterParams(sParams, {
-    omit: ["language"],
-    sortOptions: ["rating", "recent", "title"],
-  });
-  if (hasFilterParamChanges(sParams, filterParams)) {
-    const query = filterParams.toString();
-    redirect(`/language/${language}${query ? `?${query}` : ""}`);
-  }
-
-  const genre = filterParams.get("genre");
-  const country = filterParams.get("country");
-  const type = filterParams.get("type");
-  const sort = filterParams.get("sort") ?? "recent";
-  const year = filterParams.get("year");
-  const page = Math.max(1, Number(filterParams.get("page")) || 1);
-
-  const catalogData = genre
-    ? await getGenreCatalog(genre, page)
-    : await getLanguageCatalog(language, page);
-
-  let items = catalogData.results;
-  const totalPages = catalogData.totalPages;
-  const years = [...new Set(items.map((a) => a.year).filter((y) => y > 0))].sort((a, b) => b - a);
-
-  if (genre) items = items.filter((a) => a.genres.includes(genre));
-  if (language) items = items.filter((a) => a.languages.includes(language as never));
-  if (country) items = items.filter((a) => matchesCountry(a, country));
-  if (type) items = items.filter((a) => a.type === type);
-  if (year) items = items.filter((a) => String(a.year) === year);
-
-  if (sort === "rating") items = [...items].sort((a, b) => (b.rating || 0) - (a.rating || 0));
-  if (sort === "recent") items = [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  if (sort === "title") items = [...items].sort((a, b) => a.title.localeCompare(b.title));
-
-  const paged = items;
-
-  function buildHref(p: number) {
-    const next = new URLSearchParams(filterParams);
-    next.set("page", String(p));
-    return `/language/${language}?${next.toString()}`;
-  }
-
-  function buildLanguageHref(nextLanguage: string) {
-    const next = new URLSearchParams(filterParams);
-    next.delete("page");
-    const query = next.toString();
-    return `/language/${nextLanguage}${query ? `?${query}` : ""}`;
-  }
-
-  function buildGenreHref(nextGenre: string) {
-    const next = new URLSearchParams(filterParams);
-    next.delete("page");
-    next.set("language", language);
-    const query = next.toString();
-    return `/genre/${nextGenre}${query ? `?${query}` : ""}`;
-  }
+  const initialItems = staticCatalog.filter((anime) => anime.languages.includes(language as never));
 
   return (
     <div className="container-page py-10">
@@ -242,7 +142,7 @@ export default async function LanguagePage({
           return (
             <Link
               key={l.code}
-              href={buildLanguageHref(l.code)}
+              href={`/language/${l.code}`}
               className={cn(
                 "rounded-full px-4 py-1.5 text-xs font-semibold whitespace-nowrap transition-all",
                 isActive
@@ -271,7 +171,7 @@ export default async function LanguagePage({
               {config.intro}
             </p>
             <p className="mt-1 text-xs text-text-muted">
-              <strong className="text-white">{items.length} titles</strong> on page {page} of {totalPages} total pages.
+              <strong className="text-white">{initialItems.length} titles</strong> in this language catalog.
             </p>
           </div>
 
@@ -290,21 +190,7 @@ export default async function LanguagePage({
 
       {/* Filters Bar */}
       <div className="mt-8">
-        <Suspense fallback={<div className="h-11" />}>
-          <ListingFilters years={years} />
-        </Suspense>
-      </div>
-
-      {/* Results */}
-      <div className="mt-8">
-        {paged.length > 0 ? (
-          <>
-            <AnimeGrid items={paged} />
-            <Pagination page={page} totalPages={totalPages} buildHref={buildHref} />
-          </>
-        ) : (
-          <NoResultsState />
-        )}
+        <LanguageCatalogResults language={language} />
       </div>
 
       {/* Internal Navigation: Popular Genres */}
@@ -316,7 +202,7 @@ export default async function LanguagePage({
           {genres.slice(0, 8).map((g) => (
             <Link
               key={g.slug}
-              href={buildGenreHref(g.slug)}
+              href={`/genre/${g.slug}?language=${language}`}
               className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
             >
               {g.label} Anime

@@ -3,11 +3,8 @@ import { createCanonicalMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { languages } from "@/lib/mock/languages";
 import { anime } from "@/lib/mock/anime";
-import {
-  getCatalogPosterItems,
-  getHomepageData,
-  getHomepagePosterCatalog,
-} from "@/lib/api/client";
+import { getCatalogPosterItems } from "@/lib/api/client";
+import { staticCatalog } from "@/lib/static-catalog";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { AnimeGrid } from "@/components/anime/AnimeGrid";
 import { Badge } from "@/components/ui/Badge";
@@ -47,11 +44,10 @@ const languageDetails: Record<
   },
 };
 
-export default async function LanguagesDirectoryPage() {
-  const homepageData = await getHomepageData();
+export default function LanguagesDirectoryPage() {
   const browseItems = getCatalogPosterItems(
     anime,
-    getHomepagePosterCatalog(homepageData)
+    staticCatalog
   );
   const getAnimeByLanguage = (code: LanguageCode) =>
     browseItems.filter((item) => item.languages.includes(code));
