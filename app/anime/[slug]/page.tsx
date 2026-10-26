@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { PosterArt } from "@/components/anime/PosterArt";
@@ -384,6 +384,9 @@ export default async function AnimeDetailPage({
       getAnimePageSeasons(cleanSlug),
       getAnimePageEpisodes(cleanSlug, seasonNum),
     ]);
+
+  const canonicalSlug = cleanAnimeSlug(resolveAnimeInfoData(apiInfo)?.anime_id || "");
+  if (canonicalSlug && canonicalSlug !== cleanSlug) redirect(`/anime/${canonicalSlug}`);
 
   // Match ONLY by exact slug
   const searchMatch = searchRes?.results?.results?.find(

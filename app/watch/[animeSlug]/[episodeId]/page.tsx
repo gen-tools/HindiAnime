@@ -326,6 +326,11 @@ export default async function WatchPage({
     isMovieRoute ? Promise.resolve(null) : getWatchPageEpisodes(cleanSlug, seasonNumber),
   ]);
 
+  const canonicalSlug = cleanAnimeSlug(resolveAnimeInfoData(apiInfo)?.anime_id || "");
+  if (canonicalSlug && canonicalSlug !== cleanSlug) {
+    redirect(`/watch/${canonicalSlug}/${episodeId}`);
+  }
+
   // Match strictly by exact slug — never hijack identity with random search results
   const searchMatch = searchRes?.results?.results?.find(
     (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
