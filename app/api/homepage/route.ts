@@ -21,7 +21,10 @@ function homepageCacheHeaders(edgeTtlSeconds: number) {
 }
 
 export async function GET() {
-  const data = await getHomepageData();
+  // This endpoint is already shared-cached at the CDN. Resolve a fresh parsed
+  // AnimeSalt feed on each cache refresh instead of reusing a failed scraper
+  // result/cooldown from the server data cache.
+  const data = await getHomepageData({ diagnostics: true });
   if (data.trendingItems.length === 0 && data.latestEpisodes.length === 0) {
     // This is a valid fallback snapshot, not a server error. The browser
     // already keeps its rendered data when the feed has no fresh activity.
