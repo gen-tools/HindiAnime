@@ -4,15 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputPath = path.join(root, "public", "search-index.json");
-const workerOrigin = (() => {
-  const configured = process.env.CF_PROXY_URL?.trim();
-  if (!configured) return "https://cloud.hindi-anime.com";
-  try {
-    return new URL(configured).origin;
-  } catch {
-    throw new Error("CF_PROXY_URL is not a valid URL");
-  }
-})();
+const backendToken = (process.env.KOYEB_AUTH_TOKEN || process.env.AUTH_TOKEN || "").trim();
 
 function decodeHtml(value) {
   return value
@@ -113,13 +105,15 @@ async function fetchPage(kind, page) {
   const target = page === 1
     ? `https://animesalt.cx/${kind}/`
     : `https://animesalt.cx/${kind}/page/${page}/`;
-  const proxy = new URL("/", workerOrigin);
+  if (!backendToken) throw new Error("KOYEB_AUTH_TOKEN is required to fetch the authenticated catalog");
+  const proxy = new URL("https://api.hindi-anime.com/proxy");
   proxy.searchParams.set("url", target);
 
   const response = await fetch(proxy, {
     headers: {
       "User-Agent": "HindiAnime-SearchIndex/1.0",
       Accept: "text/html,application/xhtml+xml",
+      Authorization: `Bearer ${backendToken}`,
     },
     signal: AbortSignal.timeout(20_000),
   });

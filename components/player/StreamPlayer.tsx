@@ -47,7 +47,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
   const servers: ValidServer[] = [];
   const seen = new Set<string>();
   const priority = (item: StreamItem) => {
-    const provider = `${item.label || ""} ${item.source || ""} ${item.sourceProvider || ""} ${item.server || ""}`;
+    const provider = `${item.label || ""} ${item.source || ""} ${item.sourceProvider || ""} ${item.server || ""} ${item.embed || ""} ${item.url || ""}`;
     if (/my\s*stream|ravok/i.test(provider)) return 0;
     if (/google\s*drive|animahd/i.test(provider)) return 1;
     if (/play\s*zen/i.test(provider)) return 2;
@@ -71,19 +71,9 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     const dedupeKey = isDirect ? `direct:${streamUrl}` : `embed:${rawEmbed || streamUrl}`;
     if (seen.has(dedupeKey)) continue;
 
-    // Our own /api/ proxy URLs and Cloudflare Worker proxy URLs are safe by
-    // construction — skip the external URL validator (which rejects root-path URLs).
-    let isWorkerProxy = false;
-    try {
-      const streamHost = new URL(streamUrl).hostname.toLowerCase();
-      isWorkerProxy =
-        streamHost === "proxy.hindi-anime.com" ||
-        streamHost === "cloud.hindi-anime.com" ||
-        streamHost.endsWith(".workers.dev");
-    } catch {
-      // Relative application API URLs are handled separately below.
-    }
-    const isOwnProxy = streamUrl.startsWith("/api/") || streamUrl.includes("/hls-proxy") || isWorkerProxy;
+    // Same-origin backend proxy URLs are safe by construction. External
+    // provider embeds still pass through the normal URL validator below.
+    const isOwnProxy = streamUrl.startsWith("/api/") || streamUrl.includes("/hls-proxy");
     const isAllowedRubyEmbed = (() => {
       if (
         item.type !== "embed" ||
