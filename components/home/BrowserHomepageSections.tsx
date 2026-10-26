@@ -9,7 +9,43 @@ import { LatestSection } from "@/components/home/LatestSection";
 import { AllAnimeSection } from "@/components/home/AllAnimeSection";
 import { MovieSection } from "@/components/home/MovieSection";
 import { FadeIn } from "@/components/ui/FadeIn";
-import type { HomepageData } from "@/lib/api/client";
+import {
+  mapHomepageFeedToData,
+  parseHomepageSourceHtml,
+  type HomepageData,
+} from "@/lib/api/client";
+import type { HomepageApiResponse } from "@/types/api";
+import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
+
+function getWorkerHomepageUrl(): string {
+  let workerOrigin = DEFAULT_WORKER_BASE_URL;
+  try {
+    const configured = new URL(process.env.NEXT_PUBLIC_CF_PROXY_URL || DEFAULT_WORKER_BASE_URL);
+    if (configured.protocol === "https:" && ALLOWED_WORKER_HOSTS.has(configured.hostname)) {
+      workerOrigin = configured.origin;
+    }
+  } catch {
+    // Use the allowlisted default Worker URL.
+  }
+
+  const url = new URL("/", workerOrigin);
+  url.searchParams.set("url", "https://animesalt.cx/");
+  return url.toString();
+}
+
+async function fetchWorkerHomepage(signal: AbortSignal): Promise<HomepageData> {
+  const response = await fetch(getWorkerHomepageUrl(), { signal, cache: "default" });
+  if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
+    throw new Error(`Homepage Worker returned ${response.status}`);
+  }
+  const html = await response.text();
+  if (new TextEncoder().encode(html).byteLength > 1024 * 1024) {
+    throw new Error("Homepage Worker response exceeded the size limit");
+  }
+  const feed = parseHomepageSourceHtml(html);
+  if (!feed) throw new Error("Homepage Worker HTML had no recognized data sections");
+  return mapHomepageFeedToData(feed);
+}
 
 export function BrowserHomepageSections({ initialData }: { initialData: HomepageData }) {
   const [data, setData] = useState(initialData);
@@ -19,11 +55,23 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
 
   useEffect(() => {
     let active = true;
-    fetch("/api/homepage")
-      .then(async (response) => {
+    const controller = new AbortController();
+    const refreshHomepage = async () => {
+      try {
+        return await fetchWorkerHomepage(controller.signal);
+      } catch (workerError) {
+        if (controller.signal.aborted) throw workerError;
+        console.warn("[Homepage] Worker feed unavailable; trying the Vercel feed.");
+        const response = await fetch("/api/homepage", { signal: controller.signal, cache: "no-store" });
         if (!response.ok) throw new Error(`Homepage refresh returned ${response.status}`);
-        return response.json() as Promise<HomepageData>;
-      })
+        const payload: unknown = await response.json();
+        return payload && typeof payload === "object" && "data" in payload
+          ? mapHomepageFeedToData(payload as HomepageApiResponse)
+          : payload as HomepageData;
+      }
+    };
+
+    void refreshHomepage()
       .then((freshData) => {
         // A fallback hero/popular list is not proof that the live activity feed
         // loaded. Require real trending or fresh-drop rows before replacing the
@@ -36,21 +84,27 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
         if (active && hasFreshActivity) {
           setData((current) => ({
             ...freshData,
-            heroItems: freshData.heroItems.length > 0 ? freshData.heroItems : current.heroItems,
+            // Keep the above-the-fold hero stable after first paint. Replacing
+            // it during the client refresh can swap the large image and change
+            // title wrapping, contributing to mobile and desktop layout shift.
+            heroItems: current.heroItems.length > 0 ? current.heroItems : freshData.heroItems,
             trendingItems: freshData.trendingItems.length > 0 ? freshData.trendingItems : current.trendingItems,
             latestEpisodes: freshData.latestEpisodes.length > 0 ? freshData.latestEpisodes : current.latestEpisodes,
           }));
         }
       })
       .catch((error: unknown) => {
-        if (error instanceof Error && error.name !== "AbortError") {
+        if (error instanceof Error && error.name !== "AbortError" && !controller.signal.aborted) {
           console.warn("[Homepage] Refresh failed; retaining current data.", error.message);
         }
       })
       .finally(() => {
         if (active) setIsLoading(false);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, []);
 
   const displayHeroItems = data.heroItems.length > 0
