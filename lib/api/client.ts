@@ -1591,6 +1591,7 @@ export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null
 }
 
 let homepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
+let directHomepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
 let homepageFeedInFlight: Promise<HomepageApiResponse | null> | null = null;
 
 type HomepageSectionCounts = {
@@ -1836,8 +1837,8 @@ export function parseHomepageSourceHtml(
 }
 
 async function scrapeDirectHomepageFeedUncached(diagnostics = false): Promise<HomepageApiResponse | null> {
-  if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
-    return homepageFeedCache.data;
+  if (directHomepageFeedCache && Date.now() - directHomepageFeedCache.timestamp < CACHE_TTL_MS) {
+    return directHomepageFeedCache.data;
   }
 
   const startedAt = Date.now();
@@ -1860,7 +1861,7 @@ async function scrapeDirectHomepageFeedUncached(diagnostics = false): Promise<Ho
     const feed = parseHomepageSourceHtml(html, diagnostics, fetchDiagnostic);
     if (!feed) return null;
 
-    homepageFeedCache = { data: feed, timestamp: Date.now() };
+    directHomepageFeedCache = { data: feed, timestamp: Date.now() };
     return feed;
   } catch (err) {
     rethrowNextControlFlow(err);
@@ -1902,12 +1903,17 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
 
   const startedAt = Date.now();
   try {
-    const data = await fetchBackendData<HomepageApiResponse>("/api/homepage");
-    if (data && hasHomepageItems(data) && data.data?.success !== false) {
+    // The authenticated API request remains the authorization gate. Once it
+    // succeeds, prefer AnimeSalt's live rankings and activity feed.
+    const apiFeed = await fetchBackendData<HomepageApiResponse>("/api/homepage");
+    if (apiFeed && hasHomepageItems(apiFeed) && apiFeed.data?.success !== false) {
+      backendAuthorizationCache = { authorized: true, expiresAt: Date.now() + 30_000 };
+      const animeSaltFeed = await scrapeDirectHomepageFeed(diagnostics);
+      const data = animeSaltFeed && hasHomepageItems(animeSaltFeed) ? animeSaltFeed : apiFeed;
       homepageFeedCache = { data, timestamp: Date.now() };
       logHomepageSsr(diagnostics, {
-        source: "api.hindi-anime.com",
-        attempt: "authenticated-homepage",
+        source: data === animeSaltFeed ? "animesalt.cx" : "api.hindi-anime.com",
+        attempt: data === animeSaltFeed ? "authenticated-animesalt-homepage" : "authenticated-api-fallback",
         outcome: "success",
         elapsedMs: Date.now() - startedAt,
         sectionCounts: getHomepageSectionCounts(data),
@@ -2443,24 +2449,186 @@ function isAnimeDetailHtml(html: string | null): html is string {
   return true;
 }
 
-async function fetchHtmlUncached(_url: string): Promise<string | null> {
-  // Scraper disabled: frontend must not scrape AnimeSalt or call Cloudflare Workers on Vercel.
-  return null;
-}
-
 async function fetchHtmlWithWorkerFallback(
-  _url: string,
-  _diagnostics = false,
-  _onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
+  url: string,
+  diagnostics = false,
+  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
 ): Promise<string | null> {
-  // Scraper disabled: frontend must not scrape AnimeSalt or call Cloudflare Workers on Vercel.
-  return null;
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!["animesalt.cx", "www.animesalt.cx"].includes(parsedUrl.hostname.toLowerCase())) return null;
+
+  const attempt = async (
+    source: "worker-primary" | "direct-animesalt",
+    requestUrl: string,
+    timeoutMs: number
+  ): Promise<string | null> => {
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let status: number | null = null;
+    let contentType: string | null = null;
+    try {
+      const response = await fetch(requestUrl, {
+        headers: DEFAULT_SCRAPER_HEADERS,
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      status = response.status;
+      contentType = response.headers.get("content-type");
+      if (!response.ok) {
+        logHomepageSsr(diagnostics, {
+          source,
+          attempt: "fetch",
+          outcome: "non-ok-status",
+          status,
+          contentType,
+          elapsedMs: Date.now() - startedAt,
+          errorCategory: "http-status",
+        });
+        return null;
+      }
+
+      const html = await response.text();
+      if (is404Html(html)) {
+        logHomepageSsr(diagnostics, {
+          source,
+          attempt: "fetch",
+          outcome: "invalid-response",
+          status,
+          contentType,
+          responseBytes: new TextEncoder().encode(html).byteLength,
+          elapsedMs: Date.now() - startedAt,
+          errorCategory: "challenge-or-not-found-html",
+        });
+        return null;
+      }
+      const details = {
+        status: response.status,
+        contentType,
+        responseBytes: new TextEncoder().encode(html).byteLength,
+      };
+      onSuccessfulFetch?.(details);
+      logHomepageSsr(diagnostics, {
+        source,
+        attempt: "fetch",
+        outcome: "success",
+        ...details,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return html;
+    } catch (error) {
+      rethrowNextControlFlow(error);
+      logHomepageSsr(diagnostics, {
+        source,
+        attempt: "fetch",
+        outcome: "error",
+        status,
+        contentType,
+        elapsedMs: Date.now() - startedAt,
+        errorCategory: controller.signal.aborted ? "timeout" : "request-error",
+      });
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const workerUrl = buildServerWorkerProxyUrl(url);
+  const workerHtml = await attempt("worker-primary", workerUrl, 6000);
+  if (workerHtml) return workerHtml;
+  return attempt("direct-animesalt", url, 3500);
 }
 
-export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
+async function scrapeAnimeSaltSeriesData(cleanId: string): Promise<ScrapedSeriesMeta | null> {
+  const slug = normalizeSlug(cleanId);
+  const candidates = [
+    { url: `https://animesalt.cx/series/${encodeURIComponent(slug)}/`, isMovie: false },
+    { url: `https://animesalt.cx/movies/${encodeURIComponent(slug)}/`, isMovie: true },
+  ];
+  let html: string | null = null;
+  let isMovie = false;
+
+  for (const candidate of candidates) {
+    const page = await fetchHtmlWithWorkerFallback(candidate.url);
+    if (isAnimeDetailHtml(page)) {
+      html = page;
+      isMovie = candidate.isMovie;
+      break;
+    }
+  }
+
+  if (!html) {
+    const query = slug.replace(/[【】\[\]]/g, " ").replace(/-/g, " ").trim();
+    if (query) {
+      const searchHtml = await fetchHtmlWithWorkerFallback(`https://animesalt.cx/?s=${encodeURIComponent(query)}`);
+      const links = [...(searchHtml || "").matchAll(/href=["'](https:\/\/animesalt\.cx\/(?:series|movies)\/[^"']+)["']/gi)];
+      const exact = links.find((match) => cleanAnimeSlug(match[1]) === cleanId);
+      if (exact) {
+        const detailUrl = exact[1];
+        const page = await fetchHtmlWithWorkerFallback(detailUrl);
+        if (isAnimeDetailHtml(page)) {
+          html = page;
+          isMovie = detailUrl.includes("/movies/");
+        }
+      }
+    }
+  }
+  if (!html) return null;
+
+  const overviewMatch =
+    html.match(/id=["']overview-text["'][^>]*>([\s\S]*?)<\/div>/i) ||
+    html.match(/<div[^>]*class=["'][^"']*(?:description|entry-content|synopsis)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
+  const overviewHtml = overviewMatch?.[1] || "";
+  const paragraph = overviewHtml.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] || overviewHtml;
+  const metaDescription =
+    html.match(/<meta\s+(?:property=["']og:description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:description["'])/i) ||
+    html.match(/<meta\s+(?:name=["']description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+name=["']description["'])/i);
+  const rawSynopsis = paragraph || metaDescription?.[1] || metaDescription?.[2] || "";
+  const synopsisText = decodeHtmlEntities(rawSynopsis.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+  const synopsis = synopsisText.length > 15 && !synopsisText.toLowerCase().startsWith("language:")
+    ? synopsisText
+    : undefined;
+
+  const rawTitle =
+    html.match(/<h1[^>]*class=["'][^"']*entry-title[^"']*["'][^>]*>([^<]+)<\/h1>/i)?.[1] ||
+    html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || "";
+  const title = decodeHtmlEntities(rawTitle).replace(/\s*-\s*Anime\s*Salt.*$/i, "").trim() || undefined;
+  const rawPoster =
+    html.match(/(?:let|var)\s+image\s*=["']((?:https:)?\/\/[^"']+)["']/i)?.[1] ||
+    html.match(/<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i)?.[1] ||
+    html.match(/<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i)?.[2] || "";
+  const poster = rawPoster.startsWith("//") ? `https:${rawPoster}` : rawPoster || undefined;
+  const postId =
+    html.match(/(?:data-postid|data-post-id|post_id|postId)=["']?(\d+)/i)?.[1] ||
+    html.match(/[?&]post=(\d+)/i)?.[1] || "";
+
+  return {
+    postId,
+    seasons: [1],
+    s1Episodes: parseEpisodesFromHtml(html),
+    synopsis,
+    title,
+    poster,
+    backdrop: poster,
+    isMovie,
+  };
+}
+
+export async function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
   const cleanId = cleanAnimeSlug(slug) || slug;
-  if (!cleanId) return Promise.resolve(null);
-  return scrapeDirectSeriesDataUnshared(cleanId);
+  if (!cleanId) return null;
+  if (typeof window !== "undefined" || !(await isBackendAuthorized())) return null;
+  return cacheValidatedScraperResult(
+    ["series-detail", cleanId],
+    300,
+    () => scrapeDirectSeriesDataUnshared(cleanId),
+    (result): result is ScrapedSeriesMeta => Boolean(result)
+  );
 }
 
 async function fetchBackendData<T>(path: string): Promise<T | null> {
@@ -2492,7 +2660,27 @@ async function fetchBackendData<T>(path: string): Promise<T | null> {
   }
 }
 
+let backendAuthorizationCache: { authorized: boolean; expiresAt: number } | null = null;
+
+async function isBackendAuthorized(): Promise<boolean> {
+  if (!(process.env.KOYEB_AUTH_TOKEN || process.env.AUTH_TOKEN || "").trim()) return false;
+  if (backendAuthorizationCache && backendAuthorizationCache.expiresAt > Date.now()) {
+    return backendAuthorizationCache.authorized;
+  }
+
+  const response = await fetchBackendData<{ success?: boolean; data?: { success?: boolean } }>("/api/homepage");
+  const authorized = Boolean(response && response.success !== false && response.data?.success !== false);
+  backendAuthorizationCache = {
+    authorized,
+    expiresAt: Date.now() + (authorized ? 30_000 : 5_000),
+  };
+  return authorized;
+}
+
 async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedSeriesMeta | null> {
+  const animeSaltData = await scrapeAnimeSaltSeriesData(cleanId);
+  if (animeSaltData?.synopsis || animeSaltData?.s1Episodes.length) return animeSaltData;
+
   try {
     const backendData = await fetchBackendData<{
       success: boolean;
@@ -2515,10 +2703,10 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
         postId: d.postId || "",
         seasons: Array.isArray(d.seasonsList) && d.seasonsList.length > 0 ? d.seasonsList : [1],
         s1Episodes: Array.isArray(d.s1Episodes) ? d.s1Episodes : [],
-        synopsis: d.overview,
-        title: d.title,
-        poster: d.poster,
-        backdrop: d.backdrop,
+        synopsis: animeSaltData?.synopsis || d.overview,
+        title: animeSaltData?.title || d.title,
+        poster: animeSaltData?.poster || d.poster,
+        backdrop: animeSaltData?.backdrop || d.backdrop,
         isMovie: d.type === "Movie",
         genres: d.genres,
       };
@@ -2526,7 +2714,7 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
   } catch {
     // Backend unavailable or failed
   }
-  return null;
+  return animeSaltData;
 }
 
 async function scrapeDirectSeasonEpisodesUncached(slug: string, season: number): Promise<EpisodeItem[]> {
@@ -2792,6 +2980,25 @@ export function getFallbackHomepageData(): HomepageData {
   };
 }
 
+async function enrichHomepageHeroSynopses(items: Anime[]): Promise<Anime[]> {
+  if (typeof window !== "undefined" || items.length === 0) return items;
+  const enriched = [...items];
+  // Keep AnimeSalt request fan-out bounded while using its title pages for real
+  // hero descriptions. Items without an AnimeSalt synopsis keep their current
+  // metadata and do not block other sections from rendering.
+  for (let offset = 0; offset < Math.min(items.length, 6); offset += 2) {
+    const batch = items.slice(offset, Math.min(offset + 2, 6));
+    const results = await Promise.all(batch.map(async (item) => {
+      const metadata = await scrapeDirectSeriesData(item.slug);
+      return metadata?.synopsis
+        ? { ...item, synopsis: metadata.synopsis, poster: metadata.poster || item.poster }
+        : item;
+    }));
+    results.forEach((item, index) => { enriched[offset + index] = item; });
+  }
+  return enriched;
+}
+
 export function mapHomepageFeedToData(feed: HomepageApiResponse): HomepageData {
   const sections = feed.data?.results;
   if (!sections) return getFallbackHomepageData();
@@ -2889,8 +3096,7 @@ export async function getHomepageData(options: { diagnostics?: boolean } = {}): 
   }
 
   const result = {
-    // Do not delay the initial Hero render on optional per-title synopsis APIs.
-    heroItems: mapped.heroItems,
+    heroItems: await enrichHomepageHeroSynopses(mapped.heroItems),
     latestEpisodes: mapped.latestEpisodes,
     trendingItems: mapped.trendingItems,
     popularItems: mapped.popularItems,

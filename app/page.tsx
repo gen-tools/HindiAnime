@@ -13,6 +13,7 @@ import { createCanonicalMetadata } from "@/lib/seo";
 // Always re-check the server credential before rendering API-backed homepage data.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 export const metadata: Metadata = createCanonicalMetadata("/");
 
