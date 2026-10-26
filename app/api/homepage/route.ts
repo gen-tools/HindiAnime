@@ -2,15 +2,20 @@ import { NextResponse } from "next/server";
 import { getHomepageData } from "@/lib/api/client";
 
 export const runtime = "nodejs";
-const HOMEPAGE_ISR_SECONDS = 900;
-// Keep the durable Vercel snapshot and scraper data cached for 15 minutes.
-export const revalidate = 900;
+const HOMEPAGE_CDN_SECONDS = 900;
+// The live feed is shared across visitors and is cached at Vercel's CDN. Keep
+// the route itself dynamic so refreshing this JSON does not create durable ISR
+// output writes; getHomepageData still uses the validated 15-minute data cache.
+export const dynamic = "force-dynamic";
 
 function homepageCacheHeaders(edgeTtlSeconds: number) {
+  const sharedCacheControl = `public, max-age=0, s-maxage=${edgeTtlSeconds}, stale-while-revalidate=300`;
   return {
     // Visitors should revalidate in their browser; shared edges may reuse this
-    // public feed for a short, explicit interval.
-    "Cache-Control": `public, max-age=0, s-maxage=${HOMEPAGE_ISR_SECONDS}`,
+    // public feed for a short, explicit interval. Empty fallbacks use the
+    // shorter TTL passed by GET so an upstream hiccup is not cached as data.
+    "Cache-Control": sharedCacheControl,
+    "Vercel-CDN-Cache-Control": `public, s-maxage=${edgeTtlSeconds}, stale-while-revalidate=300`,
     "Cloudflare-CDN-Cache-Control": `public, max-age=${edgeTtlSeconds}`,
   };
 }
@@ -27,6 +32,6 @@ export async function GET() {
   }
 
   return NextResponse.json(data, {
-    headers: homepageCacheHeaders(300),
+    headers: homepageCacheHeaders(HOMEPAGE_CDN_SECONDS),
   });
 }
