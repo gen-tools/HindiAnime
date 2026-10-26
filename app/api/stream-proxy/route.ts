@@ -76,9 +76,16 @@ export async function GET(request: Request) {
       headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
     });
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (/HTTP 404\b/.test(errorMessage)) {
+      return NextResponse.json(
+        { success: false, message: "No playable streams are available for this episode", results: [] },
+        { status: 404, headers: { "Cache-Control": "private, no-store" } }
+      );
+    }
     console.error(
       "[api/stream-proxy] Backend fetch failed:",
-      err instanceof Error ? err.message : err
+      errorMessage
     );
     return NextResponse.json(
       { success: false, message: "Stream resolver temporarily unavailable", results: [] },

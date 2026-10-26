@@ -862,7 +862,7 @@ function UnavailableState({
           Video source unavailable
         </p>
         <p className="mt-1 text-sm text-text-secondary">
-          Could not load this server. Please try switching to another server.
+          No playable sources were returned for this episode. Try another episode.
         </p>
       </div>
       {hasMoreServers && onNextServer && (

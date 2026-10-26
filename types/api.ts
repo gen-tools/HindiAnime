@@ -150,17 +150,13 @@ export interface SeasonItem {
   text: string;
 }
 
-/**
- * NOTE: The real API response does NOT have an `episode` field.
- * The `season` field contains the episode number (e.g. "1" = Episode 1).
- * The actual season is determined by the ?season= query parameter.
- */
 export interface EpisodeItem {
   title: string;
-  /** This is actually the episode number in the API response */
-  season: string;
-  /** Not present in API response — always undefined */
-  episode?: string;
+  /** Legacy API payloads use `season` for the episode number. */
+  season: string | number;
+  episode?: string | number;
+  /** Current API payloads provide the episode number separately. */
+  number?: string | number;
   image: string;
 }
 

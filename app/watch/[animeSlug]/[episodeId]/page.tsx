@@ -44,6 +44,7 @@ import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
+import { koyebFetch } from "@/lib/api/koyeb-client";
 
 const getWatchPageBaseData = cache(async (slug: string) => {
   const searchKeyword = formatDisplayTitle(slug).toLowerCase();
@@ -57,6 +58,31 @@ const getWatchPageBaseData = cache(async (slug: string) => {
 
 const getWatchPageEpisodes = cache((slug: string, season: number) => getEpisodes(slug, season));
 const getWatchPageSeasons = cache((slug: string) => getAvailableSeasons(slug));
+const getWatchPageHomepageSynopsis = cache(async (slug: string): Promise<string | null> => {
+  try {
+    const payload = await koyebFetch<Record<string, unknown>>("/api/homepage", { timeoutSeconds: 20 });
+    const roots = [payload, payload.data as Record<string, unknown> | undefined].filter(
+      (value): value is Record<string, unknown> => Boolean(value && typeof value === "object")
+    );
+    const items = roots.flatMap((root) =>
+      Object.values(root).flatMap((value) => Array.isArray(value) ? value : [])
+    );
+    const matches = items.filter((value): value is Record<string, unknown> => {
+      if (!value || typeof value !== "object") return false;
+      const item = value as Record<string, unknown>;
+      const itemSlug = item.slug ?? item.id ?? item.anime_id ?? item.animeSlug;
+      return typeof itemSlug === "string" && cleanAnimeSlug(itemSlug) === slug;
+    });
+    const synopsis = matches
+      .map((item) => item.synopsis ?? item.overview ?? item.description)
+      .find((value): value is string =>
+        typeof value === "string" && value.trim().length > 20 && value !== SYNOPSIS_FALLBACK
+      );
+    return synopsis?.trim() ?? null;
+  } catch {
+    return null;
+  }
+});
 
 function createFallbackAnime(slug: string): Anime {
   const mock = getAnimeBySlug(slug);
@@ -454,6 +480,14 @@ export default async function WatchPage({
     anime = { ...anime, synopsis: directData.synopsis };
   } else if (!wrongMovieDetail && typeof movieData?.overview === "string" && (!anime.synopsis || anime.synopsis === SYNOPSIS_FALLBACK)) {
     anime = { ...anime, synopsis: movieData.overview };
+  }
+
+  if (
+    !wrongMovieDetail &&
+    (!anime.synopsis || anime.synopsis === SYNOPSIS_FALLBACK || anime.synopsis === "No synopsis available.")
+  ) {
+    const homepageSynopsis = await getWatchPageHomepageSynopsis(cleanSlug);
+    if (homepageSynopsis) anime = { ...anime, synopsis: homepageSynopsis };
   }
 
   // Determine available seasons

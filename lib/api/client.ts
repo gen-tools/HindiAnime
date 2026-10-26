@@ -621,12 +621,8 @@ export function mapMovieInfoToAnime(
 /**
  * Maps API episode item to the internal Episode model.
  *
- * CRITICAL: The upstream API does NOT have an `episode` field.
- * The `season` field in each episode object actually contains the EPISODE number.
- * Example: { title: "Homecoming", season: "1", image: "..." } = Season 1, Episode 1
- *          { title: "...",         season: "2", image: "..." } = Season 1, Episode 2
- *
- * The real season number comes from the ?season= query param (seasonOverride).
+ * Current payloads provide a separate `number` field; older payloads encoded
+ * the episode number in `season`. The route's season query stays authoritative.
  */
 export function mapApiEpisodeToEpisode(
   item: EpisodeItem,
@@ -639,9 +635,8 @@ export function mapApiEpisodeToEpisode(
 ): Episode {
   const mock = getAnimeBySlug(animeSlug);
   if (mock?.isMock) animePoster = MOCK_ARTWORK_URL;
-  // item.episode does not exist in the real API — item.season is the episode number
-  // If parsed number is 0 or NaN, fall back to 1-based array index
-  const parsedNum = parseInt(item.episode || item.season, 10);
+  // Support current `number` and the legacy `season` convention.
+  const parsedNum = Number.parseInt(String(item.episode ?? item.number ?? item.season ?? ""), 10);
   const epNum = isNaN(parsedNum) || parsedNum < 1 ? arrayIndex + 1 : parsedNum;
   const seasonNum = seasonOverride;
   // Use arrayIndex as tie-breaker to guarantee globally unique IDs across the list

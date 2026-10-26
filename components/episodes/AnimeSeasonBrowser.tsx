@@ -48,7 +48,7 @@ export function AnimeSeasonBrowser({
       const data = (await response.json()) as { episodes?: EpisodeItem[] };
       if (Array.isArray(data.episodes) && data.episodes.length > 0) {
         setEpisodes(data.episodes.map((item, index) => {
-          const parsedNumber = Number.parseInt(item.episode || item.season, 10);
+          const parsedNumber = Number.parseInt(String(item.episode ?? item.number ?? item.season ?? ""), 10);
           const number = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : index + 1;
           const thumbnail = typeof item.image === "string" && /^https?:\/\//i.test(item.image) ? item.image : animePoster;
           return {
