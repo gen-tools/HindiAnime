@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,7 +89,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
 
 // Helper to determine if an Origin is allowed for CORS
 function isOriginAllowed(origin: string | undefined): boolean {
-  if (!origin) return true; // Server-to-server or direct curl
+  if (!origin) return false;
   if (configuredAllowedOrigins.includes('*')) return true;
   if (DEFAULT_ALLOWED_ORIGINS.includes(origin)) return true;
   if (origin.endsWith('.vercel.app')) return true;
@@ -96,21 +97,55 @@ function isOriginAllowed(origin: string | undefined): boolean {
   return false;
 }
 
-// ── Bearer token middleware — protects all API routes except /api/health ──────
-// Token is read from process.env.AUTH_TOKEN; if unset, auth is skipped (dev mode).
-// Never log the token value or expose it in any error response.
-function requireAuthToken(req: Request, res: Response, next: NextFunction) {
-  if (!AUTH_TOKEN) return next(); // auth disabled in dev when env var is absent
+function isRefererAllowed(referer: string | undefined): boolean {
+  if (!referer) return false;
+  try {
+    const origin = new URL(referer).origin;
+    return isOriginAllowed(origin);
+  } catch {
+    return false;
+  }
+}
+
+// ── Security guard: permits requests ONLY from approved Frontend (Origin/Referer) or with AUTH_TOKEN ──
+function requireAuthOrFrontendOrigin(req: Request, res: Response, next: NextFunction) {
+  // 1. Health check is always public
+  if (req.path === '/health' || req.path === '/api/health') return next();
+
+  // 2. Check Bearer token (server-to-server SSR calls from Vercel frontend)
   const authHeader = req.headers.authorization || '';
   const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (!provided || provided !== AUTH_TOKEN) {
-    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  if (AUTH_TOKEN && provided === AUTH_TOKEN) {
+    return next();
   }
+
+  // 3. Check browser Origin header (fetch/XHR from frontend player)
+  const origin = req.headers.origin as string | undefined;
+  if (origin && isOriginAllowed(origin)) {
+    return next();
+  }
+
+  // 4. Check browser Referer header (media player segment requests, embeds)
+  const referer = req.headers.referer as string | undefined;
+  if (referer && isRefererAllowed(referer)) {
+    return next();
+  }
+
+  // 5. If AUTH_TOKEN is configured and request has neither valid token nor allowed origin/referer
+  if (AUTH_TOKEN) {
+    return res.status(401).json({
+      success: false,
+      message: 'Unauthorized: Access restricted to authorized frontend and clients only',
+    });
+  }
+
+  // 6. In development mode (no AUTH_TOKEN set), allow local/test requests
   next();
 }
 
 // Main Express app setup
-async function startServer() {
+export async function createApp() {
+
   const app = express();
   app.set('trust proxy', true);
 
@@ -126,7 +161,7 @@ async function startServer() {
   app.use(
     cors({
       origin: (origin, callback) => {
-        if (isOriginAllowed(origin)) {
+        if (!origin || isOriginAllowed(origin)) {
           callback(null, true);
         } else {
           callback(new Error('CORS: origin not allowed'));
@@ -163,19 +198,16 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
   // ── Auth token guard: applied to all /api/* routes except /api/health ────────
-  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-    if (req.path === '/health') return next();
-    return requireAuthToken(req, res, next);
-  });
+  app.use('/api', requireAuthOrFrontendOrigin);
   // Also guard the legacy non-prefixed routes that are equivalent to protected /api endpoints
   app.use(['/stream', '/catalog', '/animesalt-catalog', '/hls-proxy', '/proxy',
            '/animesalt-stream', '/playzen-stream', '/animahd-stream',
            '/animahd-search', '/animahd-episodes', '/gdrive-stream'],
-    requireAuthToken
+    requireAuthOrFrontendOrigin
   );
 
-  // ── Route: /api/health ────────────────────────────────────────────────────────
-  app.get('/api/health', (req, res) => {
+  // ── Route: /api/health & /health (Public for UptimeRobot monitoring) ─────────
+  app.get(['/api/health', '/health'], (req, res) => {
     res.json({
       status: 'ok',
       service: 'AnimeStream Proxy Backend (Node.js)',
@@ -475,9 +507,13 @@ async function startServer() {
 
       // If user requested AnimeSalt specifically, return all resolved AnimeSalt items directly
       if (sourceFilter === 'animesalt') {
+        const wantsHls = req.query.hls === 'true';
+        // Prioritize embed sources first to eliminate Vercel serverless video bandwidth
         const sortedItems = [...(animeSaltItems || [])].sort((a: any, b: any) => {
-          if (a.type === 'hls' && b.type !== 'hls') return -1;
-          if (a.type !== 'hls' && b.type === 'hls') return 1;
+          if (!wantsHls) {
+            if (a.type === 'embed' && b.type !== 'embed') return -1;
+            if (a.type !== 'embed' && b.type === 'embed') return 1;
+          }
           if (a.audioLanguage === 'hi' && b.audioLanguage !== 'hi') return -1;
           if (a.audioLanguage !== 'hi' && b.audioLanguage === 'hi') return 1;
           return 0;
@@ -485,43 +521,45 @@ async function startServer() {
 
         const byLanguage: Record<string, { sources: any[] }> = {};
 
-        const enrichedSalt = sortedItems.map((item: any, idx: number) => {
-          const num = idx + 1;
-          const cleanLabel = (item.label || '').replace(/^AnimeSalt\s*·?\s*/, '').replace(/^Server(?:\s+\d+)?\s*·?\s*/, '');
-          const langCode = item.audioLanguage || 'hi';
+        const enrichedSalt = sortedItems
+          .filter((item: any) => wantsHls || item.type !== 'hls' || !item.directHlsUrl)
+          .map((item: any, idx: number) => {
+            const num = idx + 1;
+            const cleanLabel = (item.label || '').replace(/^AnimeSalt\s*·?\s*/, '').replace(/^Server(?:\s+\d+)?\s*·?\s*/, '');
+            const langCode = item.audioLanguage || 'hi';
 
-          if (item.type === 'hls' && item.directHlsUrl) {
-            const streamUrl = item.directHlsUrl;
-            const referer = item.referer || 'https://ravok.buzz/';
-            const origin = item.origin || 'https://ravok.buzz';
-            const p = new URLSearchParams({ url: streamUrl, referer, origin });
-            if (PROXY_SECRET) {
-              const exp = Math.floor(Date.now() / 1000) + 86400;
-              p.set('exp', String(exp));
-              p.set('sig', generateHlsToken(streamUrl, referer, origin, exp, PROXY_SECRET));
+            if (wantsHls && item.type === 'hls' && item.directHlsUrl) {
+              const streamUrl = item.directHlsUrl;
+              const referer = item.referer || 'https://ravok.buzz/';
+              const origin = item.origin || 'https://ravok.buzz';
+              const p = new URLSearchParams({ url: streamUrl, referer, origin });
+              if (PROXY_SECRET) {
+                const exp = Math.floor(Date.now() / 1000) + 86400;
+                p.set('exp', String(exp));
+                p.set('sig', generateHlsToken(streamUrl, referer, origin, exp, PROXY_SECRET));
+              }
+              const hlsProxyUrl = `${requestOrigin}/hls-proxy?${p.toString()}`;
+              const resObj = {
+                ...item,
+                server: `Server ${num}`,
+                label: `Server ${num} · ${cleanLabel || 'Hindi Dub HLS ⚡ (Multi-Audio)'}`,
+                url: hlsProxyUrl,
+                hlsProxyUrl,
+              };
+              if (!byLanguage[langCode]) byLanguage[langCode] = { sources: [] };
+              byLanguage[langCode].sources.push(resObj);
+              return resObj;
             }
-            const hlsProxyUrl = `${requestOrigin}/hls-proxy?${p.toString()}`;
+
             const resObj = {
               ...item,
               server: `Server ${num}`,
-              label: `Server ${num} · ${cleanLabel || 'Hindi Dub HLS ⚡ (Multi-Audio)'}`,
-              url: hlsProxyUrl,
-              hlsProxyUrl,
+              label: `Server ${num} · ${cleanLabel || 'AnimeSalt Embed'}`,
             };
             if (!byLanguage[langCode]) byLanguage[langCode] = { sources: [] };
             byLanguage[langCode].sources.push(resObj);
             return resObj;
-          }
-
-          const resObj = {
-            ...item,
-            server: `Server ${num}`,
-            label: `Server ${num} · ${cleanLabel || 'AnimeSalt Embed'}`,
-          };
-          if (!byLanguage[langCode]) byLanguage[langCode] = { sources: [] };
-          byLanguage[langCode].sources.push(resObj);
-          return resObj;
-        });
+          });
 
         const responsePayload = {
           success: true,
@@ -563,52 +601,65 @@ async function startServer() {
       }
 
       // ── Clean Multi-Source Priority Assembly ──────────────────────────────────
-      // Slot 1: Server 1 — Direct Multi-Audio HLS Stream (HindiAnime Player)
-      const saltHls = (animeSaltItems || []).find((s: any) => s.type === 'hls' && s.directHlsUrl);
+      const wantsHls = req.query.hls === 'true';
 
-      if (saltHls) {
-        const streamUrl = saltHls.directHlsUrl;
-        const referer = saltHls.referer || 'https://ravok.buzz/';
-        const origin = saltHls.origin || 'https://ravok.buzz';
-        const p = new URLSearchParams({ url: streamUrl, referer, origin });
-        if (PROXY_SECRET) {
-          const exp = Math.floor(Date.now() / 1000) + 86400;
-          p.set('exp', String(exp));
-          p.set('sig', generateHlsToken(streamUrl, referer, origin, exp, PROXY_SECRET));
-        }
-        const hlsProxyUrl = `${requestOrigin}/hls-proxy?${p.toString()}`;
-        list.push({
-          server: 'Server 1',
-          label: 'Server 1 · 🇮🇳 Hindi Dub HLS ⚡ (Multi-Audio) [HindiAnime Player]',
-          embed: saltHls.embed || streamUrl,
-          url: hlsProxyUrl,
-          hlsProxyUrl,
-          directHlsUrl: streamUrl,
-          type: 'hls',
-          audioLanguage: 'hi',
-          languageLabel: '🇮🇳 Hindi Dub (Multi-Audio)',
-          adFree: true,
-          headers: { Referer: referer, Origin: origin },
-          source: 'HindiAnime-HLS',
-        });
-        usedUrls.add(streamUrl);
-        // Note: Do NOT block saltHls.embed here so MyStream iframe embed can be used in Server 2!
-      }
-
-      // Slot 2: Server 2 — AnimeSalt MyStream (ravok.buzz iframe embed)
+      // Slot 1: Server 1 — AnimeSalt MyStream (Ad-Free Direct Embed)
       const myStream = (animeSaltItems || []).find(
         (s: any) => (s.embed || '').includes('ravok.buzz') && s.type === 'embed' && !usedUrls.has(s.embed || '')
       ) || (animeSaltItems || []).find(
         (s: any) => (s.embed || '').includes('ravok.buzz') && s.type === 'embed'
+      ) || (animeSaltItems || []).find(
+        (s: any) => s.embed && !usedUrls.has(s.embed)
       );
       if (myStream) {
-        addSalt(myStream, `Server ${list.length + 1} · ⚡ MyStream (AnimeSalt Embed)`);
+        addSalt(myStream, `Server ${list.length + 1} · ⚡ AnimeSalt MyStream (Ad-Free Player)`);
       }
 
-      // Slot 3: Server 3 — Google Drive 1080p Cloud Stream (AnimaHD)
-      const ahEmbed = (animaHdItems || []).find((s: any) => s.type === 'embed' && !usedUrls.has(s.embed || ''));
+      // Slot 2: Server 2 — Google Drive 1080p Cloud Stream (AnimaHD)
+      const ahEmbed = (animaHdItems || []).find((s: any) => s.type === 'embed' && !usedUrls.has(s.embed || '')) ||
+                      (animaHdItems || []).find((s: any) => s.type === 'embed');
       if (ahEmbed) {
         addAnimaHd(ahEmbed, `Server ${list.length + 1} · 🎬 Google Drive 1080p HD (AnimaHD)`);
+      }
+
+      // Slot 3: Server 3 — PlayZen Direct Embed / Stream
+      const pzDirect = playZenItems.find((s: any) => s.qualities && s.qualities.length > 0 && !usedUrls.has(s.embed || s.url || '')) ||
+                       playZenItems.find((s: any) => !usedUrls.has(s.embed || s.url || ''));
+      if (pzDirect) {
+        const qStr = pzDirect.qualities?.map((q: any) => q.quality).join(' / ') || '720p HD / 480p SD';
+        addPlayZen(pzDirect, `Server ${list.length + 1} · ⚡ PlayZen Direct Stream (${qStr})`);
+      }
+
+      // (Optional) HLS Proxy Slot only if explicitly requested via ?hls=true
+      if (wantsHls) {
+        const saltHls = (animeSaltItems || []).find((s: any) => s.type === 'hls' && s.directHlsUrl);
+        if (saltHls) {
+          const streamUrl = saltHls.directHlsUrl;
+          const referer = saltHls.referer || 'https://ravok.buzz/';
+          const origin = saltHls.origin || 'https://ravok.buzz';
+          const p = new URLSearchParams({ url: streamUrl, referer, origin });
+          if (PROXY_SECRET) {
+            const exp = Math.floor(Date.now() / 1000) + 86400;
+            p.set('exp', String(exp));
+            p.set('sig', generateHlsToken(streamUrl, referer, origin, exp, PROXY_SECRET));
+          }
+          const hlsProxyUrl = `${requestOrigin}/hls-proxy?${p.toString()}`;
+          list.push({
+            server: `Server ${list.length + 1}`,
+            label: `Server ${list.length + 1} · 🇮🇳 Hindi Dub HLS ⚡ (Multi-Audio) [Proxy]`,
+            embed: saltHls.embed || streamUrl,
+            url: hlsProxyUrl,
+            hlsProxyUrl,
+            directHlsUrl: streamUrl,
+            type: 'hls',
+            audioLanguage: 'hi',
+            languageLabel: '🇮🇳 Hindi Dub (Multi-Audio)',
+            adFree: true,
+            headers: { Referer: referer, Origin: origin },
+            source: 'HindiAnime-HLS',
+          });
+          usedUrls.add(streamUrl);
+        }
       }
 
       // Slot 4: Server 4 — Abyss Multi-Audio (combining all regional dubs into one server)
@@ -1649,8 +1700,8 @@ async function startServer() {
     next(err);
   });
 
-  // ── Vite Dev Middleware or Production Static Files ────────────────────────────
-  if (!IS_PROD) {
+    // ── Vite Dev Middleware or Production Static Files ────────────────────────────
+  if (!IS_PROD && !process.env.VERCEL) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1658,24 +1709,40 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
+    const distPath = path.resolve(__dirname, 'dist');
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api') || req.path === '/stream' || req.path === '/catalog' || req.path === '/hls-proxy') {
+          return next();
+        }
+        res.sendFile(path.resolve(distPath, 'index.html'));
+      });
+    } else {
+      app.get('/', (req, res) => {
+        res.json({ status: 'ok', service: 'AnimeStream Proxy Backend', version: '2.0.0' });
+      });
+    }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 AnimeStream Proxy Backend running at http://0.0.0.0:${PORT}`);
-    console.log(`📡 Ready to serve Next.js frontend with CORS and bypass blockers!`);
-    console.log(`   - Stream Resolver: GET http://0.0.0.0:${PORT}/stream?id=solo-leveling&season=1&ep=1`);
-    console.log(`   - HLS Video Proxy: GET http://0.0.0.0:${PORT}/hls-proxy?url=...`);
-    console.log(`   - Catalog Crawler: GET http://0.0.0.0:${PORT}/catalog?kind=series&page=1`);
-    console.log(`   - General Proxy:   GET http://0.0.0.0:${PORT}/?url=https://animesalt.cx/`);
-    console.log(`   - Health Check:    GET http://0.0.0.0:${PORT}/api/health\n`);
+  return app;
+}
+
+if (!process.env.VERCEL && !process.env.VERCEL_ENV) {
+  createApp().then((app) => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`\n🚀 AnimeStream Proxy Backend running at http://0.0.0.0:${PORT}`);
+      console.log(`📡 Ready to serve Next.js frontend with CORS and bypass blockers!`);
+      console.log(`   - Stream Resolver: GET http://0.0.0.0:${PORT}/stream?id=solo-leveling&season=1&ep=1`);
+      console.log(`   - HLS Video Proxy: GET http://0.0.0.0:${PORT}/hls-proxy?url=...`);
+      console.log(`   - Catalog Crawler: GET http://0.0.0.0:${PORT}/catalog?kind=series&page=1`);
+      console.log(`   - General Proxy:   GET http://0.0.0.0:${PORT}/?url=https://animesalt.cx/`);
+      console.log(`   - Health Check:    GET http://0.0.0.0:${PORT}/api/health\n`);
+    });
+  }).catch((err) => {
+    console.error('Fatal server startup error:', err);
+    process.exit(1);
   });
 }
 
-startServer().catch((err) => {
-  console.error('Fatal server startup error:', err);
-  process.exit(1);
-});
+export default createApp;
