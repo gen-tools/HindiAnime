@@ -93,6 +93,10 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
 
   useEffect(() => {
     setMounted(true);
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab === "continue" || tab === "favorites" || tab === "history" || tab === "settings") {
+      setActiveTab(tab);
+    }
 
     // One-time migration: clear stale IndexedDB records that have cross-contaminated
     // poster URLs (wrong anime images saved before the poster extraction fix).
@@ -448,6 +452,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     <div className="mt-3 flex items-center justify-between gap-2">
                       <Link
                         href={buildStoredWatchHref(item)}
+                        prefetch={false}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-green-primary px-3 py-1.5 text-xs font-semibold text-white shadow-md transition-all hover:bg-green-bright hover:text-black active:scale-95"
                       >
                         <Play className="h-3.5 w-3.5 fill-current" />
@@ -580,6 +585,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     <div className="min-w-0">
                       <Link
                         href={buildStoredWatchHref(item)}
+                        prefetch={false}
                         className="font-display font-semibold text-text-primary hover:text-green-light line-clamp-1 transition-colors"
                       >
                         {item.animeTitle}
@@ -598,6 +604,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     </span>
                     <Link
                       href={buildStoredWatchHref(item)}
+                      prefetch={false}
                       className="inline-flex items-center gap-1 rounded-lg border border-border-line bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary hover:border-green-primary/50 hover:text-white"
                     >
                       <Play className="h-3 w-3" />

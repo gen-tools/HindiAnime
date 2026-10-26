@@ -114,11 +114,11 @@ export function AnimeHero({ items }: { items: Anime[] }) {
             </div>
           )}
 
-          {item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK && (
-            <p className="line-clamp-2 max-w-xl text-xs leading-relaxed text-text-secondary sm:line-clamp-3 sm:text-sm md:text-[15px]">
-              {item.synopsis}
-            </p>
-          )}
+                    <p className="line-clamp-2 max-w-xl text-xs leading-relaxed text-text-secondary sm:line-clamp-3 sm:text-sm md:text-[15px]">
+            {item.synopsis && item.synopsis !== SYNOPSIS_FALLBACK
+              ? item.synopsis
+              : `Stream ${item.title} in Hindi Dub and original Japanese audio in full HD.`}
+          </p>
           {item.languages?.length > 0 && <LanguageBadges languages={item.languages} max={4} className="text-xs" />}
 
           <div className="mt-2 flex flex-wrap items-center gap-2.5 sm:gap-3">

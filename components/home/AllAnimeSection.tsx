@@ -113,9 +113,9 @@ export function AllAnimeSection({
             onScroll={checkScroll}
             className="no-scrollbar -mx-1 flex gap-4 overflow-x-auto scroll-smooth px-1 pb-2 pt-2"
           >
-            {items.map((item) => (
+            {items.map((item, index) => (
               <AnimeCard
-                key={item.id}
+                key={`${item.id}-${index}`}
                 item={item}
                 className="w-[150px] shrink-0 sm:w-[168px] md:w-[180px]"
               />

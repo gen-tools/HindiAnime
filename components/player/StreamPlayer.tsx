@@ -15,10 +15,9 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { HindiAnimePlayer } from "./HindiAnimePlayer";
 import { StreamItem } from "@/types/api";
 import { isValidEmbedUrl } from "@/lib/api/client";
-import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
-import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl } from "@/lib/animesalt-stream";
 
 const MAX_AUTOMATIC_STREAM_RETRIES = 2;
 const STREAM_RETRY_BASE_DELAY_MS = 1_000;
@@ -59,7 +58,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
 
     if (!streamUrl || typeof streamUrl !== "string") continue;
     // Deduplicate on raw embed URL so the same raw source doesn't appear twice
-    const dedupeKey = rawEmbed || streamUrl;
+    const dedupeKey = isDirect ? `direct:${streamUrl}` : `embed:${rawEmbed || streamUrl}`;
     if (seen.has(dedupeKey)) continue;
 
     // Our own /api/ proxy URLs and Cloudflare Worker proxy URLs are safe by
@@ -74,7 +73,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     } catch {
       // Relative application API URLs are handled separately below.
     }
-    const isOwnProxy = streamUrl.startsWith("/api/") || isWorkerProxy;
+    const isOwnProxy = streamUrl.startsWith("/api/") || streamUrl.includes("/hls-proxy") || isWorkerProxy;
     const isAllowedRubyEmbed = (() => {
       if (
         item.type !== "embed" ||
@@ -125,18 +124,10 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     });
   }
 
-  const animeSaltHindiIndex = servers.findIndex((server) =>
-    /animesalt/i.test(server.label) && /hindi|mystream/i.test(server.label)
-  );
-  if (animeSaltHindiIndex > 0) {
-    const [animeSaltHindi] = servers.splice(animeSaltHindiIndex, 1);
-    servers.unshift(animeSaltHindi);
-  }
-
-  return servers.map((server, index) => ({
+    return servers.map((server, index) => ({
     ...server,
     server: `Server ${index + 1}`,
-    label: `Server ${index + 1}${server.displayLanguage ? ` · ${server.displayLanguage}` : ""}`,
+    label: server.label || `Server ${index + 1}`,
   }));
 }
 
@@ -173,12 +164,7 @@ function parseStreamResponse(text: string): { results?: StreamItem[] } | null {
   return latest;
 }
 
-function hasAnimeSaltResult(data: { results?: StreamItem[] } | null): boolean {
-  return Boolean(data?.results?.some((item) =>
-    item.sourceProvider?.toLowerCase() === "animesalt" ||
-    /animesalt|ravok\.buzz/i.test(`${item.server || ""} ${item.label || ""} ${item.embed || ""}`)
-  ));
-}
+
 
 interface DocumentPictureInPictureController {
   window: Window | null;
@@ -193,10 +179,6 @@ type WebkitPictureInPictureVideo = HTMLVideoElement & {
   webkitSupportsPresentationMode?: (mode: string) => boolean;
   webkitSetPresentationMode?: (mode: string) => void;
 };
-
-// Stream aggregation runs through /api/stream-proxy. If its server-side
-// AnimeSalt fetch is missing, the browser fetches AnimeSalt through the public
-// Worker proxy and submits the HTML back to that same route for parsing.
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -429,82 +411,41 @@ export function StreamPlayer({
       return true;
     };
 
-    const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
+    const streamQs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}&source=all`;
 
     try {
-      // Start with the server-side aggregator, then use the browser Worker
-      // fallback below if the server response has no AnimeSalt source.
+      // ── Primary: call the Express backend directly from the browser.
+      // This bypasses Vercel API routes completely, saving Vercel CPU quota.
       let data: { results?: StreamItem[] } | null = null;
 
-      try {
-        const res = await fetch(`/api/stream-proxy${qs}`, { signal: controller.signal });
-        if (res.ok) {
-          data = parseStreamResponse(await res.text());
-        }
-      } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) return;
-      }
+      const backendBase = (process.env.NEXT_PUBLIC_BACKEND_URL || "").trim().replace(/\/+$/, "");
 
-      // Production server egress can fail to retrieve AnimeSalt while the same
-      // Worker endpoint is reachable from the viewer's browser. Use the existing
-      // POST route to parse that browser-fetched HTML and merge it with Toko.
-      if (!isCurrentRequest()) return;
-      if (!hasAnimeSaltResult(data)) {
-        const configuredWorkerUrl = (process.env.NEXT_PUBLIC_CF_PROXY_URL || DEFAULT_WORKER_BASE_URL).trim();
-        let workerOrigin: string | null = null;
+      if (backendBase) {
         try {
-          const parsed = new URL(configuredWorkerUrl.split("?")[0].replace(/\/+$/, ""));
-          if (parsed.protocol === "https:" && ALLOWED_WORKER_HOSTS.has(parsed.hostname)) workerOrigin = parsed.origin;
-        } catch {
-          // Keep the initial server-side results if public Worker configuration is invalid.
-        }
-
-        const animeSaltTargets = isMovie
-          ? [buildAnimeSaltMovieUrl(animeSlug)]
-          : buildAnimeSaltEpisodeCandidates(animeSlug, season, episode);
-
-        if (workerOrigin) {
-          for (const targetUrl of animeSaltTargets) {
-            try {
-              const workerUrl = new URL("/", workerOrigin);
-              workerUrl.searchParams.set("url", targetUrl);
-              const htmlResponse = await fetch(workerUrl, {
-                signal: controller.signal,
-                cache: "no-store",
-                headers: { Accept: "text/html" },
-              });
-              if (!htmlResponse.ok || !(htmlResponse.headers.get("content-type") || "").toLowerCase().includes("text/html")) continue;
-
-              const animeSaltHtml = await htmlResponse.text();
-              if (new TextEncoder().encode(animeSaltHtml).byteLength > 512 * 1024) continue;
-
-              const parsedResponse = await fetch("/api/stream-proxy", {
-                method: "POST",
-                signal: controller.signal,
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  id: animeSlug,
-                  season,
-                  ep: episode,
-                  isMovie,
-                  animeSaltTargetUrl: targetUrl,
-                  animeSaltHtml,
-                }),
-              });
-              if (!parsedResponse.ok) continue;
-              const parsedData = parseStreamResponse(await parsedResponse.text());
-              if (hasAnimeSaltResult(parsedData)) {
-                data = parsedData;
-                break;
-              }
-            } catch (error) {
-              if (isAbortError(error) || controller.signal.aborted) return;
-              // Try the next supported AnimeSalt episode alias.
-            }
-          }
+          const res = await fetch(`${backendBase}/api/stream${streamQs}`, {
+            signal: controller.signal,
+            headers: {
+              Accept: "application/json",
+              ...(process.env.NEXT_PUBLIC_AUTH_TOKEN ? { Authorization: `Bearer ${process.env.NEXT_PUBLIC_AUTH_TOKEN}` } : {}),
+            },
+          });
+          if (res.ok) data = parseStreamResponse(await res.text());
+        } catch (error) {
+          if (isAbortError(error) || controller.signal.aborted) return;
         }
       }
 
+      // ── Fallback: Vercel edge route (only when backend is unreachable).
+      if (!isCurrentRequest()) return;
+      if (!data || !Array.isArray(data.results) || data.results.length === 0) {
+        try {
+          const fallbackQs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
+          const res = await fetch(`/api/stream-proxy${fallbackQs}`, { signal: controller.signal });
+          if (res.ok) data = parseStreamResponse(await res.text());
+        } catch (error) {
+          if (isAbortError(error) || controller.signal.aborted) return;
+        }
+      }
       if (!isCurrentRequest()) return;
       const parsed = parseServers(data?.results ?? []);
       if (parsed.length === 0) {
@@ -630,13 +571,18 @@ export function StreamPlayer({
         {state === "ready" && activeServer && (
           <>
             {activeServer.type === "hls" && activeServer.url ? (
-              <HlsPlayer
+              <HindiAnimePlayer
                 key={activeServer.id}
-                url={activeServer.url}
-                rawUrl={activeServer.url !== activeServer.embed ? activeServer.embed : undefined}
-                title={episodeTitle}
-                reloadKey={reloadKey}
-                onError={handleDirectPlaybackError}
+                src={activeServer.url}
+                animeTitle={episodeTitle || animeSlug.replace(/-/g, " ")}
+                season={season}
+                episode={episode}
+                logoUrl="/hindi-anime-logo-transparent.png"
+                autoPlay={true}
+                className="w-full h-full !aspect-auto !rounded-none !border-0 !shadow-none"
+                onError={(err) => {
+                  console.warn("[HindiAnimePlayer] playback error:", err);
+                }}
               />
             ) : activeServer.type === "mp4" && activeServer.url ? (
               <Mp4Player
@@ -651,14 +597,16 @@ export function StreamPlayer({
                 key={`${activeServer.id}:${activeServer.embed}`}
                 embed={activeServer.embed}
                 title={episodeTitle}
+                animeSlug={animeSlug}
+                season={season}
+                episode={episode}
                 reloadKey={reloadKey}
                 restrictNavigation={activeServer.restrictNavigation}
               />
             )}
-
-          </>
+</>
         )}
-        {state === "ready" && activeServer && (activeServer.languageSources?.length || 0) > 1 && (
+        {state === "ready" && activeServer && activeServer.type !== "hls" && (activeServer.languageSources?.length || 0) > 1 && (
           <>
             <button
               type="button"
@@ -995,18 +943,22 @@ function ErrorState({
 function EmbedFrame({
   embed,
   title,
+  animeSlug,
+  season,
+  episode,
   reloadKey,
   restrictNavigation = false,
 }: {
   embed: string;
   title: string;
+  animeSlug?: string;
+  season?: number;
+  episode?: number;
   reloadKey: number;
   restrictNavigation?: boolean;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Cache-bust only on manual reload so a stale embed is re-fetched; the
-  // initial render always uses the original `embed` URL untouched.
   const srcUrl =
     reloadKey > 0
       ? embed.includes("?")
@@ -1015,25 +967,55 @@ function EmbedFrame({
       : embed;
 
   return (
-    <iframe
-      ref={iframeRef}
-      key={`${embed}-${reloadKey}`}
-      src={srcUrl}
-      title={title}
-      className="absolute inset-0 h-full w-full border-0"
-      sandbox={restrictNavigation ? "allow-scripts allow-same-origin allow-presentation" : undefined}
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-      allowFullScreen
-      // @ts-expect-error legacy browser attributes
-      webkitallowfullscreen="true"
-      mozallowfullscreen="true"
-      loading="eager"
-      referrerPolicy="strict-origin-when-cross-origin"
-    />
+    <div className="relative w-full h-full group">
+      <iframe
+        ref={iframeRef}
+        key={`${embed}-${reloadKey}`}
+        src={srcUrl}
+        title={title}
+        className="absolute inset-0 h-full w-full border-0"
+        sandbox={restrictNavigation ? "allow-scripts allow-same-origin allow-presentation" : undefined}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+        allowFullScreen
+        // @ts-expect-error legacy browser attributes
+        webkitallowfullscreen="true"
+        mozallowfullscreen="true"
+        loading="eager"
+        referrerPolicy="strict-origin-when-cross-origin"
+      />
+
+      {/* Overlay Header: Logo + S01 E01 Badge on Left, Anime Name on Right (Clean Player Overlay) */}
+      <div className="absolute top-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex items-center justify-between pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10">
+        {/* Left: Logo + Season/Episode Badge */}
+        <div className="flex items-center gap-2 sm:gap-3 pointer-events-auto">
+          <img
+            src="/hindi-anime-logo-transparent.png"
+            alt="Hindi Anime"
+            className="h-6 sm:h-7 w-auto object-contain bg-transparent drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] filter"
+          />
+          {(season !== undefined || episode !== undefined) && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-green-500/40 text-[11px] sm:text-xs font-semibold text-white shadow-lg">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+              <span>
+                {season ? `S${String(season).padStart(2, '0')}` : 'S01'}{' '}
+                {episode ? `E${String(episode).padStart(2, '0')}` : 'E01'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Anime Title */}
+        <div className="flex items-center gap-2 sm:gap-3 pointer-events-auto">
+          <span className="text-xs font-semibold text-white drop-shadow truncate max-w-[200px]">
+            {animeSlug || title}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
-// ─── Native / HLS.js Player ──────────────────────────────────────────────────
+// ──────────────────────────────────────────
 
 function HlsPlayer({
   url,

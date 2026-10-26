@@ -116,7 +116,7 @@ export function MovieSpotlight({ items }: { items: Anime[] }) {
               <div className="flex items-center gap-2" role="tablist" aria-label="Featured movies">
                 {items.map((slide, slideIndex) => (
                   <button
-                    key={slide.slug}
+                    key={`${slide.slug}-${slideIndex}`}
                     type="button"
                     onClick={() => selectSlide(slideIndex)}
                     role="tab"

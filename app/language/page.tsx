@@ -14,6 +14,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Globe, Headphones, Subtitles, ArrowRight, Sparkles, Flame } from "lucide-react";
 import type { LanguageCode } from "@/types/language";
 
+export const revalidate = 3600;
+
 export const metadata: Metadata = createCanonicalMetadata("/language", {
   title: "Browse Anime by Language | Hindi, Tamil & Telugu Dubbed",
   description:

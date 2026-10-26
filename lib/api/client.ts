@@ -2830,151 +2830,17 @@ function isAnimeDetailHtml(html: string | null): html is string {
   return true;
 }
 
-async function fetchHtmlUncached(url: string): Promise<string | null> {
-  if (url.includes("animesalt.cx")) {
-    try {
-      const proxyUrl = buildServerWorkerProxyUrl(url);
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 6000);
-      console.log(`[Worker Request Outbound] Proxying: ${url}`);
-      const pRes = await fetch(proxyUrl, {
-        // AnimeSalt HTML is fetched through the Worker’s public, allowlisted
-        // scraper route. Do not attach the server-only proxy secret here: a
-        // stale or missing Vercel secret would make autocomplete fall back to
-        // direct AnimeSalt egress, which is commonly challenged in production.
-        // Protected stream/Toko Worker routes continue to require the secret.
-        headers: DEFAULT_SCRAPER_HEADERS,
-        signal: controller.signal,
-        cache: "no-store",
-      });
-      clearTimeout(t);
-      if (pRes.ok) {
-        const text = await pRes.text();
-        if (!is404Html(text)) return text;
-      }
-    } catch (error) {
-      rethrowNextControlFlow(error);
-      // proxy fetch error, fall back to direct
-    }
-  }
-
-  try {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch(url, {
-      headers: DEFAULT_SCRAPER_HEADERS,
-      signal: controller.signal,
-      cache: "no-store",
-    });
-    clearTimeout(t);
-    if (res.ok) {
-      const text = await res.text();
-      if (!is404Html(text)) return text;
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // direct fetch error
-  }
-
+async function fetchHtmlUncached(_url: string): Promise<string | null> {
+  // Scraper disabled: frontend must not scrape AnimeSalt or call Cloudflare Workers on Vercel.
   return null;
 }
 
 async function fetchHtmlWithWorkerFallback(
-  url: string,
-  diagnostics = false,
-  onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
+  _url: string,
+  _diagnostics = false,
+  _onSuccessfulFetch?: (details: HomepageFetchDiagnostic) => void
 ): Promise<string | null> {
-  if (!diagnostics) return fetchHtmlUncached(url);
-
-  const fetchAttempt = async (
-    source: "worker-primary" | "direct-animesalt" | "worker-retry",
-    requestUrl: string,
-    timeoutMs: number
-  ): Promise<string | null> => {
-    const startedAt = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let status: number | null = null;
-    let contentType: string | null = null;
-    try {
-      console.log(`[Worker Request Outbound] Diagnostics fetch: ${requestUrl}`);
-      const response = await fetch(requestUrl, {
-        headers: source === "direct-animesalt"
-          ? DEFAULT_SCRAPER_HEADERS
-          : getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
-        signal: controller.signal,
-        cache: "no-store",
-      });
-      status = response.status;
-      contentType = response.headers.get("content-type");
-      if (!response.ok) {
-        const responseBytes = diagnostics
-          ? await response.clone().arrayBuffer().then((body) => body.byteLength).catch(() => null)
-          : null;
-        logHomepageSsr(diagnostics, {
-          source,
-          attempt: "fetch",
-          outcome: "non-ok-status",
-          status,
-          contentType,
-          responseBytes,
-          elapsedMs: Date.now() - startedAt,
-          errorCategory: "http-status",
-        });
-        return null;
-      }
-
-      const html = await response.text();
-      const responseBytes = new TextEncoder().encode(html).byteLength;
-      if (is404Html(html)) {
-        logHomepageSsr(diagnostics, {
-          source,
-          attempt: "fetch",
-          outcome: "invalid-response",
-          status,
-          contentType,
-          responseBytes,
-          elapsedMs: Date.now() - startedAt,
-          errorCategory: "challenge-or-not-found-html",
-        });
-        return null;
-      }
-
-      const details = { status: response.status, contentType, responseBytes };
-      onSuccessfulFetch?.(details);
-      logHomepageSsr(diagnostics, {
-        source,
-        attempt: "fetch",
-        outcome: "success",
-        ...details,
-        elapsedMs: Date.now() - startedAt,
-      });
-      return html;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      logHomepageSsr(diagnostics, {
-        source,
-        attempt: "fetch",
-        outcome: "error",
-        status,
-        contentType,
-        elapsedMs: Date.now() - startedAt,
-        errorCategory: controller.signal.aborted || error.name === "AbortError" || error.name === "TimeoutError"
-          ? "timeout"
-          : "request-error",
-      });
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
-  // For animesalt.cx requests, query via Worker proxy first to bypass Cloudflare challenge
-  if (url.includes("animesalt.cx")) {
-    const proxyHtml = await fetchAttempt("worker-primary", buildServerWorkerProxyUrl(url), 6000);
-    if (proxyHtml) return proxyHtml;
-  }
-
+  // Scraper disabled: frontend must not scrape AnimeSalt or call Cloudflare Workers on Vercel.
   return null;
 }
 
@@ -3013,315 +2879,65 @@ export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta 
   return request;
 }
 
+async function fetchBackendData<T>(path: string): Promise<T | null> {
+  if (typeof window !== "undefined") return null;
+  const baseUrl = (process.env.KOYEB_BACKEND_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "").trim().replace(/\/+$/, "");
+  if (!baseUrl) return null;
+  const token = (process.env.KOYEB_AUTH_TOKEN || process.env.AUTH_TOKEN || "").trim();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${baseUrl}${path}`, {
+      headers,
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedSeriesMeta | null> {
   try {
-    const decodedSlug = normalizeSlug(cleanId);
-    let html: string | null = null;
-    let isMovie = false;
-
-    // 1. Try series page
-    const seriesUrl = `https://animesalt.cx/series/${encodeURIComponent(decodedSlug)}/`;
-    html = await fetchHtmlWithWorkerFallback(seriesUrl);
-    if (!isAnimeDetailHtml(html)) html = null;
-
-    if (!html) {
-      // 2. Try movie page
-      const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`;
-      html = await fetchHtmlWithWorkerFallback(movieUrl);
-      if (isAnimeDetailHtml(html)) {
-        isMovie = true;
-      } else {
-        html = null;
-      }
-    }
-
-    // 3. Fallback: Search AnimeSalt by keyword if direct fetch failed
-    if (!html) {
-      const searchKw = decodedSlug.replace(/[【】\[\]]/g, " ").replace(/-/g, " ").trim();
-      if (searchKw) {
-        try {
-          const sUrl = `https://animesalt.cx/?s=${encodeURIComponent(searchKw)}`;
-          const sHtml = await fetchHtmlWithWorkerFallback(sUrl);
-          if (sHtml) {
-            const links = [...sHtml.matchAll(/href=["'](https:\/\/animesalt\.cx\/(?:series|movies)\/[^"']+)["']/gi)];
-            const exactLink = links.find(
-              (match) => cleanAnimeSlug(match[1]) === decodedSlug
-            );
-            if (exactLink) {
-              const targetUrl = exactLink[1];
-              html = await fetchHtmlWithWorkerFallback(targetUrl);
-              if (isAnimeDetailHtml(html)) {
-                isMovie = targetUrl.includes("/movies/");
-              } else {
-                html = null;
-              }
-            }
-          }
-        } catch (error) {
-          rethrowNextControlFlow(error);
-          // search fallback error ignored
-        }
-      }
-    }
-
-    if (!html) {
-      return null;
-    }
-
-    // Parse Synopsis / Overview
-    let synopsis: string | undefined;
-    const overviewMatch =
-      html.match(/id=["']overview-text["'][^>]*>([\s\S]*?)<\/div>/i) ||
-      html.match(/<div[^>]*class=["'][^"']*(?:description|entry-content|synopsis)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
-    if (overviewMatch) {
-      // Pick the first <p> or the whole block
-      const pMatch = overviewMatch[1].match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-      const rawText = pMatch ? pMatch[1] : overviewMatch[1];
-      const clean = decodeHtmlEntities(
-        rawText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-      );
-      if (clean && clean.length > 15 && !clean.toLowerCase().startsWith("language:")) {
-        synopsis = clean;
-      }
-    }
-
-    // Fallback: meta og:description or description
-    if (!synopsis) {
-      const metaDesc =
-        html.match(/<meta\s+(?:property=["']og:description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:description["'])/i) ||
-        html.match(/<meta\s+(?:name=["']description["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+name=["']description["'])/i);
-      if (metaDesc) {
-        const clean = decodeHtmlEntities(metaDesc[1] || metaDesc[2] || "").trim();
-        if (clean && clean.length > 15) {
-          synopsis = clean;
-        }
-      }
-    }
-
-    // Parse Title & clean brackets
-    const titleMatch =
-      html.match(/<h1[^>]*class=["'][^"']*entry-title[^"']*["'][^>]*>([^<]+)<\/h1>/i) ||
-      html.match(/<title>([^<]+)<\/title>/i);
-    let title: string | undefined;
-    if (titleMatch) {
-      const rawTitle = decodeHtmlEntities(titleMatch[1])
-        .replace(/\s*-\s*Anime\s*Salt.*$/i, "")
-        .trim();
-      const unbracketed = rawTitle.replace(/^[【\[\s]+|[】\]\s]+$/g, "").trim();
-      title = unbracketed || rawTitle;
-      if (title && (title.toLowerCase().includes("404") || title.toLowerCase().includes("not found"))) {
-        title = undefined;
-      }
-    }
-
-    // Parse Poster
-    let poster: string | undefined;
-
-    // ── Strategy 1: JavaScript variable on the detail page ───────────────────
-    // AnimeSalt injects: let image = "//image.tmdb.org/t/p/w500/<hash>.jpg";
-    // This variable is always scoped to the current title — it is the most
-    // reliable single-poster signal and is set before the recommendation grid.
-    {
-      const scriptVarMatch =
-        html.match(/(?:let|var)\s+image\s*=\s*["']((?:https:)?\/\/[^"']+)["']/i);
-      if (scriptVarMatch) {
-        let p = scriptVarMatch[1];
-        if (p.startsWith("//")) p = "https:" + p;
-        if (p && !p.startsWith("data:") && !p.includes("logo") && !p.includes("icon")) {
-          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
-        }
-      }
-    }
-
-    // ── Strategy 2: Hero inline-styled poster img (above <h1>) ───────────────
-    // AnimeSalt renders the detail-page poster with inline style="height: 14rem".
-    // This image always belongs to the current title and appears before the
-    // recommendation section so there is no cross-contamination from other cards.
-    if (!poster) {
-      const heroImgMatch =
-        // Matches: <img style="height: 14rem; ..." data-src="..." ...>
-        html.match(/<img[^>]+style=["'][^"']*14rem[^"']*["'][^>]+data-src=["']((?:https:)?\/\/[^"']+)["']/i) ||
-        html.match(/<img[^>]+data-src=["']((?:https:)?\/\/[^"']+)["'][^>]+style=["'][^"']*14rem[^"']*["']/i) ||
-        // Matches: <img alt="Image Title"> which is unique to the main hero poster
-        html.match(/<img[^>]+alt=["']Image\s+[^"']{3,80}["'][^>]+data-src=["']((?:https:)?\/\/[^"']+)["']/i) ||
-        html.match(/<img[^>]+data-src=["']((?:https:)?\/\/[^"']+)["'][^>]+alt=["']Image\s+[^"']{3,80}["']/i);
-
-      if (heroImgMatch) {
-        let p = heroImgMatch[1];
-        if (p.startsWith("//")) p = "https:" + p;
-        if (p && !p.startsWith("data:") && !p.includes("logo") && !p.includes("icon") && !p.includes("AnimeSalt")) {
-          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
-        }
-      }
-    }
-
-    // ── Strategy 3: TPostImg class (series/movie theme image class) ───────────
-    if (!poster) {
-      const tPostImgMatch =
-        html.match(/<img[^>]+class=["'][^"']*TPostImg[^"']*["'][^>]+(?:data-src|src)=["']([^"']+)["']/i);
-      if (tPostImgMatch) {
-        let p = tPostImgMatch[1];
-        if (p.startsWith("//")) p = "https:" + p;
-        if (p && !p.startsWith("data:")) {
-          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
-        }
-      }
-    }
-
-    // ── Strategy 4: og:image (last resort) ───────────────────────────────────
-    // WARNING: AnimeSalt's WordPress theme sometimes sets og:image to the site
-    // logo (AnimeSalticon.png) instead of the post image; filter those out.
-    if (!poster) {
-      const ogImageMatch = html.match(
-        /<meta\s+(?:property=["']og:image["']\s+content=["']([^"']+)["']|content=["']([^"']+)["']\s+property=["']og:image["'])/i
-      );
-      if (ogImageMatch) {
-        let p = (ogImageMatch[1] || ogImageMatch[2] || "").trim();
-        if (p.startsWith("//")) p = "https:" + p;
-        if (
-          p &&
-          !p.startsWith("data:") &&
-          !p.includes("AnimeSalticon") &&
-          !p.includes("cropped-") &&
-          !p.includes("favicon") &&
-          !p.includes("logo")
-        ) {
-          poster = p;
-        }
-      }
-    }
-
-    // ── Strategy 5: raw src on TMDB images (very last resort) ─────────────────
-    if (!poster) {
-      const pSrcMatch =
-        html.match(/src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/w(?:342|500)\/[^"']+)["']/i) ||
-        html.match(/src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/[^"']+)["']/i);
-      if (pSrcMatch) {
-        let p = pSrcMatch[1];
-        if (p.startsWith("//")) p = "https:" + p;
-        if (!p.startsWith("data:")) {
-          poster = p.replace(/\/w(?:185|342|200|300)\//, "/w500/");
-        }
-      }
-    }
-
-    // Parse Backdrop: Look for data-src on TPostBg or TMDB w1280 / original
-    let backdrop: string | undefined;
-    const bDataMatch =
-      html.match(/<img[^>]+class=["'][^"']*TPostBg[^"']*["'][^>]+data-src=["']([^"']+)["']/i) ||
-      html.match(/<img[^>]+data-src=["']([^"']+)["'][^>]+class=["'][^"']*TPostBg[^"']*["']/i) ||
-      html.match(/data-src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/(?:w1280|original)\/[^"']+)["']/i);
-
-    if (bDataMatch) {
-      let b = bDataMatch[1];
-      if (b.startsWith("//")) b = "https:" + b;
-      if (!b.startsWith("data:")) backdrop = b;
-    }
-
-    if (!backdrop) {
-      const bSrcMatch = html.match(
-        /src=["']((?:https:)?\/\/image\.tmdb\.org\/t\/p\/(?:w1280|original)\/[^"']+)["']/i
-      );
-      if (bSrcMatch) {
-        let b = bSrcMatch[1];
-        if (b.startsWith("//")) b = "https:" + b;
-        if (!b.startsWith("data:")) backdrop = b;
-      }
-    }
-
-    // Some title pages publish only the wide hero image. It still belongs to
-    // this exact anime, so use it for the portrait card (cropped by the UI)
-    // instead of falling back to an unrelated legacy API poster.
-    if (!poster && backdrop) {
-      poster = backdrop;
-    }
-
-    if (!backdrop && poster) {
-      backdrop = poster;
-    }
-
-    // Parse Genres
-    const genreMatches = [...html.matchAll(/\/category\/genre\/([a-zA-Z0-9_-]+)/gi)];
-    const nonGenreTags = new Set(["animation", "adult-cast", "award-winning", "subbed", "dubbed", "hindi", "english"]);
-    const scrapedGenres = [...new Set(genreMatches.map((m) => m[1].toLowerCase().trim()))].filter(
-      (g) => g && !nonGenreTags.has(g) && !g.startsWith("page")
-    );
-    const mockGenres = getAnimeBySlug(cleanId)?.genres || [];
-    const genres = scrapedGenres.length > 0 ? scrapedGenres : mockGenres;
-
-    if (isMovie) {
-      const meta: ScrapedSeriesMeta = {
-        postId: "",
-        seasons: [1],
-        s1Episodes: [
-          {
-            title: "Full Movie",
-            season: "1",
-            image: poster || "",
-          },
-        ],
-        synopsis,
-        title,
-        poster,
-        backdrop: backdrop || poster,
-        isMovie: true,
-        genres,
+    const backendData = await fetchBackendData<{
+      success: boolean;
+      data?: {
+        postId?: string;
+        seasonsList?: number[];
+        s1Episodes?: EpisodeItem[];
+        overview?: string;
+        title?: string;
+        poster?: string;
+        backdrop?: string;
+        type?: string;
+        genres?: string[];
       };
-      seriesScrapeCache.set(cleanId, { data: meta, timestamp: Date.now() });
-      return meta;
-    }
+    }>(`/api/info?id=${encodeURIComponent(cleanId)}`);
 
-    // Parse all season buttons:
-    const btnRegex = /<a[^>]*class=["'][^"']*season-btn[^"']*["'][^>]*>/gi;
-    let btnTag: RegExpExecArray | null;
-    const seasons: number[] = [];
-    let postId = "";
-
-    while ((btnTag = btnRegex.exec(html)) !== null) {
-      const tag = btnTag[0];
-      const sMatch = tag.match(/data-season=["'](\d+)["']/);
-      const pMatch = tag.match(/data-post=["'](\d+)["']/);
-      if (sMatch) {
-        const sNum = parseInt(sMatch[1], 10);
-        if (pMatch && !postId) postId = pMatch[1];
-        if (!seasons.includes(sNum)) seasons.push(sNum);
-      }
+    if (backendData?.success && backendData.data) {
+      const d = backendData.data;
+      return {
+        postId: d.postId || "",
+        seasons: Array.isArray(d.seasonsList) && d.seasonsList.length > 0 ? d.seasonsList : [1],
+        s1Episodes: Array.isArray(d.s1Episodes) ? d.s1Episodes : [],
+        synopsis: d.overview,
+        title: d.title,
+        poster: d.poster,
+        backdrop: d.backdrop,
+        isMovie: d.type === "Movie",
+        genres: d.genres,
+      };
     }
-    if (!postId) {
-      const postMatch =
-        html.match(/id=['"]post-(\d+)['"]/i) ||
-        html.match(/data-post=['"](\d+)['"]/i) ||
-        html.match(/wp-post-(\d+)/i) ||
-        html.match(/name=['"]post['"]\s+value=['"](\d+)['"]/i);
-      if (postMatch) postId = postMatch[1];
-    }
-    seasons.sort((a, b) => a - b);
-
-    const s1Episodes = parseEpisodesFromHtml(html);
-    if (seasons.length === 0 && s1Episodes.length > 0) {
-      seasons.push(1);
-    } else if (seasons.length === 0) {
-      seasons.push(1);
-    }
-
-    const meta: ScrapedSeriesMeta = {
-      postId,
-      seasons,
-      s1Episodes,
-      synopsis,
-      title,
-      poster,
-      backdrop: backdrop || poster,
-      isMovie: false,
-      genres,
-    };
-    seriesScrapeCache.set(cleanId, { data: meta, timestamp: Date.now() });
-    return meta;
-  } catch (err) {
-    rethrowNextControlFlow(err);
-    console.error(`[Scraper] Error scraping series data for ${cleanId}:`, err);
-    return null;
+  } catch {
+    // Backend unavailable or failed
   }
+  return null;
 }
 
 async function scrapeDirectSeasonEpisodesUncached(slug: string, season: number): Promise<EpisodeItem[]> {
@@ -3375,6 +2991,28 @@ export async function getEpisodes(
   if (!animeId) return null;
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   const seasonNum = typeof season === "string" ? parseInt(season, 10) || 1 : season;
+
+  // 0. Query Express backend authoritative /api/episodes
+  try {
+    const backendData = await fetchBackendData<{
+      success: boolean;
+      data?: {
+        totalSeasons?: string;
+        seasons?: Array<{ season: string; text?: string }>;
+        episodes?: EpisodeItem[];
+      };
+    }>(`/api/episodes?id=${encodeURIComponent(cleanId)}&season=${seasonNum}`);
+    if (backendData?.success && backendData.data?.episodes && backendData.data.episodes.length > 0) {
+      return {
+        success: true,
+        results: {
+          totalSeasons: backendData.data.totalSeasons || "1",
+          seasons: (backendData.data.seasons || [{ season: String(seasonNum), text: "Season " + seasonNum }]).map((s) => ({ season: String(s.season), text: s.text || ("Season " + s.season) })),
+          episodes: backendData.data.episodes,
+        },
+      };
+    }
+  } catch {}
 
   // 1. Try remote API first if configured and responsive
   try {

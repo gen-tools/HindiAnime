@@ -19,6 +19,7 @@ export function EpisodeNavigation({
     <div className="flex items-center gap-3">
       <Link
         href={prevId ? `/watch/${animeSlug}/${prevId}` : "#"}
+        prefetch={false}
         className={cn(baseStyles, !prevId && disabledStyles)}
         aria-disabled={!prevId}
       >
@@ -27,6 +28,7 @@ export function EpisodeNavigation({
       </Link>
       <Link
         href={nextId ? `/watch/${animeSlug}/${nextId}` : "#"}
+        prefetch={false}
         className={cn(baseStyles, !nextId && disabledStyles)}
         aria-disabled={!nextId}
       >

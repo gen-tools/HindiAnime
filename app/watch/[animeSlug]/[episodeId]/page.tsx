@@ -37,16 +37,7 @@ import {
   parseLanguages,
 } from "@/lib/api/client";
 
-export const revalidate = 21600;
-export const dynamicParams = true;
-
-export function generateStaticParams() {
-  return mockAnimeList
-    .filter((item) => !item.isMock && item.type !== "Movie")
-    .sort((a, b) => (a.popularityRank ?? Number.MAX_SAFE_INTEGER) - (b.popularityRank ?? Number.MAX_SAFE_INTEGER))
-    .slice(0, 5)
-    .map((item) => ({ animeSlug: item.slug, episodeId: "ep-1-1" }));
-}
+export const dynamic = "force-dynamic";
 import type { Anime } from "@/types/anime";
 import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";

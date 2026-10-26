@@ -18,6 +18,11 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
   );
 
   useEffect(() => {
+    // If SSR snapshot already loaded populated hero and episodes, do not flash or overwrite
+    if (initialData.heroItems?.length > 0 && initialData.latestEpisodes?.length > 0) {
+      return;
+    }
+
     let active = true;
     fetch("/api/homepage")
       .then(async (response) => {
@@ -25,9 +30,6 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
         return response.json() as Promise<HomepageData>;
       })
       .then((freshData) => {
-        // A fallback hero/popular list is not proof that the live activity feed
-        // loaded. Require real trending or fresh-drop rows before replacing the
-        // server-rendered snapshot, and preserve either section if it is absent.
         const hasFreshActivity = Boolean(
           freshData &&
           ((Array.isArray(freshData.trendingItems) && freshData.trendingItems.length > 0) ||
@@ -36,9 +38,14 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
         if (active && hasFreshActivity) {
           setData((current) => ({
             ...freshData,
-            heroItems: freshData.heroItems.length > 0 ? freshData.heroItems : current.heroItems,
-            trendingItems: freshData.trendingItems.length > 0 ? freshData.trendingItems : current.trendingItems,
-            latestEpisodes: freshData.latestEpisodes.length > 0 ? freshData.latestEpisodes : current.latestEpisodes,
+            heroItems: (freshData.heroItems?.length > 0 ? freshData.heroItems : current.heroItems).map((item, idx) => ({
+              ...item,
+              synopsis: item.synopsis && item.synopsis !== "No synopsis available."
+                ? item.synopsis
+                : current.heroItems?.[idx]?.synopsis || item.synopsis || `Stream ${item.title} in Hindi Dub and original Japanese audio in full HD.`,
+            })),
+            trendingItems: freshData.trendingItems?.length > 0 ? freshData.trendingItems : current.trendingItems,
+            latestEpisodes: freshData.latestEpisodes?.length > 0 ? freshData.latestEpisodes : current.latestEpisodes,
           }));
         }
       })

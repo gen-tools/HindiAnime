@@ -121,7 +121,7 @@ export function AnimeRow({
           >
             {items.map((item, i) => (
               <AnimeCard
-                key={item.id}
+                key={`${item.id}-${i}`}
                 item={item}
                 rank={ranked ? i + 1 : undefined}
                 className="w-[150px] shrink-0 sm:w-[168px] md:w-[180px]"

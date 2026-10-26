@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import { openEpisodeChangeDirectLink } from "@/components/ads/EpisodeChangeDirectLink";
 import type { SeasonItem } from "@/types/api";
@@ -10,16 +10,18 @@ export function SeasonSelector({
   currentSeason = "1",
   onSeasonChange,
   watchAnimeSlug,
+  queryParams,
 }: {
   seasons: number | SeasonItem[];
   currentSeason?: string | number;
   onSeasonChange?: (season: string) => void;
   /** Route directly to the first episode of the chosen watch-page season. */
   watchAnimeSlug?: string;
+  /** Existing query parameters supplied by the server page for SSR-safe links. */
+  queryParams?: Record<string, string | undefined>;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   const seasonList: Array<{ value: string; label: string }> = Array.isArray(seasons)
     ? seasons.map((s) => ({ value: s.season, label: s.text || `Season ${s.season}` }))
@@ -36,7 +38,10 @@ export function SeasonSelector({
       openEpisodeChangeDirectLink();
       router.push(`/watch/${watchAnimeSlug}/ep-${selected}-1`);
     } else {
-      const nextParams = new URLSearchParams(searchParams ? searchParams.toString() : "");
+      const nextParams = new URLSearchParams();
+      for (const [key, value] of Object.entries(queryParams || {})) {
+        if (value !== undefined) nextParams.set(key, value);
+      }
       nextParams.set("season", selected);
       router.push(`${pathname}?${nextParams.toString()}`);
     }

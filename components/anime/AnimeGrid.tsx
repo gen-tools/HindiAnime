@@ -7,7 +7,7 @@ export function AnimeGrid({ items }: { items: Anime[] }) {
     <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
       {items.map((item, index) => (
         <AnimeCard
-          key={item.id}
+          key={`${item.id}-${index}`}
           item={item}
           className="w-full"
           imageLoading={index < 2 ? "eager" : "lazy"}
