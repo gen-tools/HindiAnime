@@ -469,30 +469,13 @@
           target: targetHostPath,
         }));
 
-        // The router entrypoint remains uncached. Only this exact GET is delegated
-        // to the separately cache-enabled homepage entrypoint (Wrangler config).
-        if (request.method === "GET" && targetUrl === ANIMESALT_HOMEPAGE_URL) {
-          try {
-            const homepageHandler =
-              (ctx && ctx.exports && ctx.exports.AnimeSaltHomepageCache) ||
-              (env && env.AnimeSaltHomepageCache) ||
-              new AnimeSaltHomepageCache(ctx, env);
-            return await homepageHandler.fetch(request);
-          } catch (err) {
-            console.warn("[general-proxy]", JSON.stringify({
-              event: "homepage-cache-entrypoint-error",
-              target: targetHostPath,
-              errorName: err instanceof Error ? err.name : "UnknownError",
-            }));
-            return homepageUnavailableResponse(request);
-          }
-        }
-
         const isAnimeSaltTarget = parsedTarget.hostname === "animesalt.cx";
         const targetCooldownKey = isAnimeSaltTarget ? `animesalt-target-cooldown:v1:${targetUrl}` : null;
         const homepageKv = env?.[HOMEPAGE_KV_BINDING];
 
-        if (isAnimeSaltTarget && homepageKv && targetCooldownKey) {
+        // Homepage reads bypass KV cooldown state so exhausted KV quotas or an
+        // old cooldown entry cannot prevent the live AnimeSalt homepage fetch.
+        if (isAnimeSaltTarget && targetUrl !== ANIMESALT_HOMEPAGE_URL && homepageKv && targetCooldownKey) {
           try {
             const rawCooldown = await homepageKv.get(targetCooldownKey);
             if (rawCooldown) {
