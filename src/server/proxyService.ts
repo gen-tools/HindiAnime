@@ -1462,7 +1462,10 @@ export async function fetchAnimaHdStream(slugOrId: string, season: string, ep: s
 
   // Search or fetch anime post
   let animeData = await fetchAnimaHdEpisodes(baseSlug);
-  if (animeData.episodes.length === 0) {
+  let resolvedAnimaHdSlug = baseSlug;
+  const hasExactEpisode = (data: Awaited<ReturnType<typeof fetchAnimaHdEpisodes>>) =>
+    data.episodes.some((episode) => episode.seasonNum === sNum && episode.epNum === epNum);
+  if (!hasExactEpisode(animeData)) {
     const searchResults = await searchAnimaHd(baseSlug.replace(/-/g, ' '));
     const ignoredTitleWords = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'as']);
     const targetWords = baseSlug.split('-').filter((word) => word.length > 2 && !ignoredTitleWords.has(word));
@@ -1482,7 +1485,9 @@ export async function fetchAnimaHdStream(slugOrId: string, season: string, ep: s
     // clearly matches the requested anime instead of borrowing another show’s
     // Google Drive episode IDs.
     if (bestMatch && bestMatch.score >= 0.6) {
-      animeData = await fetchAnimaHdEpisodes(bestMatch.candidate.url || bestMatch.candidate.slug);
+      resolvedAnimaHdSlug = bestMatch.candidate.slug;
+      const candidateData = await fetchAnimaHdEpisodes(bestMatch.candidate.url || bestMatch.candidate.slug);
+      if (hasExactEpisode(candidateData)) animeData = candidateData;
     }
   }
 
@@ -1519,6 +1524,7 @@ export async function fetchAnimaHdStream(slugOrId: string, season: string, ep: s
       fileSize: matched.size,
       duration: matched.duration,
       source: 'AnimaHD',
+      providerSlug: resolvedAnimaHdSlug,
     },
     {
       server: 'AnimaHD Stream URL (Direct File)',
@@ -1535,6 +1541,7 @@ export async function fetchAnimaHdStream(slugOrId: string, season: string, ep: s
       fileSize: matched.size,
       duration: matched.duration,
       source: 'AnimaHD',
+      providerSlug: resolvedAnimaHdSlug,
     },
   ];
 
@@ -1616,18 +1623,20 @@ export interface PlayZenStreamResult {
 export async function fetchPlayZenStream(
   slugOrId: string,
   season: string | number = '1',
-  ep: string | number = '1'
+  ep: string | number = '1',
+  slugAliases: string[] = []
 ): Promise<PlayZenStreamResult[]> {
   const extracted = extractAnimeSlug(String(slugOrId));
   const slug = extracted.slug;
   const sNum = String(season || extracted.season || '1');
   const epNum = String(ep || extracted.episode || '1');
 
-  const cacheKey = `playzen:stream:${slug}:s${sNum}:e${epNum}`;
+  const aliases = [...new Set(slugAliases.map((value) => slugify(value)).filter((value) => value && value !== slug))];
+  const cacheKey = `playzen:stream:${slug}:s${sNum}:e${epNum}:a${aliases.sort().join(',')}`;
   const cached = cache.get<PlayZenStreamResult[]>(cacheKey);
   if (cached) return cached.data;
 
-  const candidateSlugs = [slug];
+  const candidateSlugs = [slug, ...aliases];
   if (slug.includes('-kimetsu-no-yaiba')) {
     candidateSlugs.push(slug.replace(/-kimetsu-no-yaiba.*/, ''));
   }
@@ -1862,6 +1871,118 @@ export interface AnimeSaltHomepageData {
   updatedAt: string;
 }
 
+interface AnimeSaltCanonicalItem {
+  slug: string;
+  title: string;
+  type: 'series' | 'movie';
+}
+
+const ANIMESALT_CANONICAL_INDEX_KEY = 'animesalt:canonical_index';
+const ANIMESALT_CANONICAL_TTL_MS = 6 * 60 * 60 * 1000;
+const TITLE_STOP_WORDS = new Set(['a', 'an', 'and', 'as', 'of', 'the', 'to', 'with', 'no']);
+
+function titleTokens(value: string): string[] {
+  return slugify(value)
+    .split('-')
+    .filter((token) => token.length > 1 && !TITLE_STOP_WORDS.has(token));
+}
+
+function animeSaltTitleScore(requested: string, candidate: AnimeSaltCanonicalItem): number {
+  const requestedTokens = new Set(titleTokens(requested));
+  const candidateTokens = new Set([...titleTokens(candidate.slug), ...titleTokens(candidate.title)]);
+  if (requestedTokens.size < 3 || candidateTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of requestedTokens) if (candidateTokens.has(token)) shared++;
+  return (2 * shared) / (requestedTokens.size + candidateTokens.size);
+}
+
+function rememberAnimeSaltItems(items: Array<{
+  slug?: string;
+  anime_id?: string;
+  title?: string;
+  type?: string;
+}>): AnimeSaltCanonicalItem[] {
+  const indexed = cache.get<Record<string, AnimeSaltCanonicalItem>>(ANIMESALT_CANONICAL_INDEX_KEY)?.data || {};
+  const added: AnimeSaltCanonicalItem[] = [];
+  for (const item of items) {
+    const slug = slugify(item.slug || item.anime_id || '');
+    if (!slug) continue;
+    const record: AnimeSaltCanonicalItem = {
+      slug,
+      title: (item.title || slug.replace(/-/g, ' ')).trim(),
+      type: item.type === 'movie' || item.type === 'Movie' ? 'movie' : 'series',
+    };
+    indexed[slug] = record;
+    added.push(record);
+  }
+  if (added.length > 0) cache.set(ANIMESALT_CANONICAL_INDEX_KEY, indexed, ANIMESALT_CANONICAL_TTL_MS);
+  return added;
+}
+
+/**
+ * Resolves stale/provider-specific slugs to AnimeSalt's series or movie slug.
+ * Search candidates are accepted only when the title token overlap is strong;
+ * otherwise the input is kept intact instead of selecting an unrelated anime.
+ */
+export async function resolveAnimeSaltCanonicalSlug(rawSlug: string): Promise<string> {
+  const requested = slugify(extractAnimeSlug(rawSlug).slug || rawSlug);
+  if (!requested) return '';
+
+  const aliasKey = `animesalt:canonical_alias:${requested}`;
+  const aliasCache = cache.get<{ slug: string; matched: boolean }>(aliasKey);
+  if (aliasCache) return aliasCache.data.matched ? aliasCache.data.slug : requested;
+
+  const index = cache.get<Record<string, AnimeSaltCanonicalItem>>(ANIMESALT_CANONICAL_INDEX_KEY)?.data || {};
+  const exact = index[requested];
+  if (exact) {
+    cache.set(aliasKey, { slug: exact.slug, matched: true }, ANIMESALT_CANONICAL_TTL_MS);
+    return exact.slug;
+  }
+
+  const indexedMatches = Object.values(index)
+    .map((item) => ({ item, score: animeSaltTitleScore(requested, item) }))
+    .sort((a, b) => b.score - a.score || a.item.slug.length - b.item.slug.length);
+  if (indexedMatches[0]?.score >= 0.78 &&
+      (!indexedMatches[1] || indexedMatches[0].score - indexedMatches[1].score >= 0.04)) {
+    const canonical = indexedMatches[0].item.slug;
+    cache.set(aliasKey, { slug: canonical, matched: true }, ANIMESALT_CANONICAL_TTL_MS);
+    return canonical;
+  }
+
+  const tokens = titleTokens(requested);
+  const searchLengths = [...new Set([
+    tokens.length,
+    tokens.length - 1,
+    tokens.length - 2,
+    tokens.length - 3,
+  ])].filter((length) => length >= 3);
+  let candidates = [...Object.values(index)];
+
+  for (const length of searchLengths) {
+    const query = tokens.slice(0, length).join(' ');
+    if (!query) continue;
+    try {
+      const search = await fetchStructuredSearch(query, 1);
+      const found = rememberAnimeSaltItems(search.results.results);
+      candidates = [...candidates, ...found];
+      const ranked = candidates
+        .map((item) => ({ item, score: animeSaltTitleScore(requested, item) }))
+        .sort((a, b) => b.score - a.score || a.item.slug.length - b.item.slug.length);
+      const best = ranked[0];
+      if (best && best.score >= 0.78 &&
+          (!ranked[1] || best.score - ranked[1].score >= 0.04)) {
+        cache.set(aliasKey, { slug: best.item.slug, matched: true }, ANIMESALT_CANONICAL_TTL_MS);
+        return best.item.slug;
+      }
+    } catch {
+      // A failed AnimeSalt search is not permission to substitute other data.
+    }
+  }
+
+  cache.set(aliasKey, { slug: requested, matched: false }, 2 * 60 * 1000);
+  return requested;
+}
+
 /**
  * Fetches and parses the live AnimeSalt homepage into structured sections:
  * spotlight, trending series, trending movies, fresh drops, on-air, and new arrivals.
@@ -2056,281 +2177,42 @@ export async function fetchAnimeSaltHomepageData(): Promise<AnimeSaltHomepageDat
       updatedAt: new Date().toISOString(),
     };
 
+    rememberAnimeSaltItems([
+      ...spotlight,
+      ...trendingSeries,
+      ...trendingMovies,
+      ...freshDrops,
+      ...onAirSeries,
+      ...newArrivals,
+      ...latestMovies,
+    ]);
     cache.set(cacheKey, data, 10 * 60 * 1000);
     return data;
   } catch (err) {
-    console.warn('[fetchAnimeSaltHomepageData-warn] Live fetch failed, using fallback data:', err instanceof Error ? err.message : String(err));
+    console.warn('[fetchAnimeSaltHomepageData-warn] AnimeSalt homepage unavailable:', err instanceof Error ? err.message : String(err));
     return await getFallbackAnimeSaltHomepageData();
   }
 }
 
 async function getFallbackAnimeSaltHomepageData(): Promise<AnimeSaltHomepageData> {
-  const cacheKey = 'animesalt:dynamic_fallback_home';
-  const cached = cache.get<AnimeSaltHomepageData>(cacheKey);
-  if (cached) return cached.data;
+  const stale = cache.get<AnimeSaltHomepageData>(`animesalt:parsed_homepage_data`, true, HOMEPAGE_MAX_STALE_MS);
+  if (stale) return stale.data;
 
-  let liveTrending: AnimeCardItem[] = [];
-  let liveFreshDrops: AnimeCardItem[] = [];
-
-  try {
-    const [aniRes, ahRes] = await Promise.allSettled([
-      // 1. Live Trending Anime from AniList GraphQL
-      fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          query: `query {
-            trending: Page(page: 1, perPage: 15) {
-              media(sort: TRENDING_DESC, type: ANIME, isAdult: false) {
-                id
-                title { english romaji }
-                coverImage { extraLarge large }
-                bannerImage
-                averageScore
-                seasonYear
-                episodes
-                genres
-                format
-              }
-            }
-          }`,
-        }),
-      }).then((r) => r.json()),
-
-      // 2. Live Latest Hindi Dub Drops from AnimaHD
-      fetch('https://animahd.com/wp-json/wp/v2/posts?per_page=16&_embed', {
-        headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' },
-      }).then((r) => r.json()),
-    ]);
-
-    if (aniRes.status === 'fulfilled' && aniRes.value?.data?.trending?.media) {
-      liveTrending = aniRes.value.data.trending.media.map((m: any, idx: number) => {
-        const rawTitle = m.title.english || m.title.romaji || 'Anime';
-        const cardSlug = slugify(rawTitle);
-        const img = m.coverImage?.extraLarge || m.coverImage?.large || '';
-        const isMovie = m.format === 'MOVIE';
-        return {
-          rank: idx + 1,
-          title: rawTitle,
-          slug: cardSlug,
-          url: `https://animesalt.cx/${isMovie ? 'movies' : 'series'}/${cardSlug}/`,
-          image: img,
-          type: isMovie ? 'movie' : 'series',
-          languages: ['Hindi', 'Japanese', 'English'],
-          isDubbed: true,
-          score: m.averageScore ? (m.averageScore / 10).toFixed(1) : '8.6',
-          episodes: m.episodes ? String(m.episodes) : isMovie ? '1' : '12',
-          season: 1,
-          episodeNumber: 1,
-        } as AnimeCardItem;
-      });
-    }
-
-    if (ahRes.status === 'fulfilled' && Array.isArray(ahRes.value)) {
-      liveFreshDrops = ahRes.value.map((p: any, idx: number) => {
-        let thumb = p._mal_cached_thumb || '';
-        if (!thumb && p._embedded && p._embedded['wp:featuredmedia']?.[0]) {
-          const media = p._embedded['wp:featuredmedia'][0];
-          thumb = media.media_details?.sizes?.medium?.source_url || media.source_url || '';
-        }
-        const rawTitle = (p.title?.rendered || '').replace(/&#8211;/g, '-').replace(/&#8217;/g, "'").trim();
-        const cleanTitle = rawTitle.replace(/\s*\[.*?\]/g, '').replace(/\s*S\d+(-S\d+)?/gi, '').trim() || p.slug;
-        const sMatch = rawTitle.match(/S(\d+)/i);
-        const epMatch = rawTitle.match(/EP?(\d+)/i);
-        const seasonNum = sMatch ? parseInt(sMatch[1], 10) : 1;
-        const epNum = epMatch ? parseInt(epMatch[1], 10) : idx + 1;
-        const isMovie = (p.slug || '').includes('movie') || rawTitle.toLowerCase().includes('movie');
-
-        return {
-          title: cleanTitle,
-          slug: p.slug,
-          url: `https://animahd.com/${p.slug}/`,
-          image: thumb,
-          type: isMovie ? 'movie' : 'series',
-          languages: ['Hindi', 'Multi Audio'],
-          isDubbed: true,
-          score: p._mal_cached_score && p._mal_cached_score !== 'N/A' ? p._mal_cached_score : '8.4',
-          episodes: p.season || '12',
-          season: seasonNum,
-          episodeNumber: epNum,
-        } as AnimeCardItem;
-      });
-    }
-  } catch (err) {
-    console.warn('[dynamic-fallback-error]', err);
-  }
-
-  const fallbackSeries: AnimeCardItem[] = [
-    {
-      title: 'Solo Leveling',
-      slug: 'solo-leveling',
-      url: 'https://animesalt.cx/series/solo-leveling/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx151807-m1rgHGkqqFsO.png',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '8.8',
-      episodes: '12',
-      season: 1,
-      episodeNumber: 12,
-    },
-    {
-      title: 'Jujutsu Kaisen',
-      slug: 'jujutsu-kaisen',
-      url: 'https://animesalt.cx/series/jujutsu-kaisen/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx113415-bbBWj4pEFseh.jpg',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English', 'Tamil'],
-      isDubbed: true,
-      score: '8.7',
-      episodes: '24',
-      season: 2,
-      episodeNumber: 23,
-    },
-    {
-      title: 'Demon Slayer: Kimetsu no Yaiba',
-      slug: 'demon-slayer-kimetsu-no-yaiba',
-      url: 'https://animesalt.cx/series/demon-slayer-kimetsu-no-yaiba/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101922-PEn1CTDYBlWX.png',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English', 'Telugu'],
-      isDubbed: true,
-      score: '8.9',
-      episodes: '26',
-      season: 4,
-      episodeNumber: 8,
-    },
-    {
-      title: 'Attack on Titan',
-      slug: 'attack-on-titan',
-      url: 'https://animesalt.cx/series/attack-on-titan/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498-73IhOXpJZiMF.jpg',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '9.0',
-      episodes: '25',
-      season: 4,
-      episodeNumber: 28,
-    },
-    {
-      title: 'Chainsaw Man',
-      slug: 'chainsaw-man',
-      url: 'https://animesalt.cx/series/chainsaw-man/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx127230-FloCoGoLobMs.jpg',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '8.5',
-      episodes: '12',
-      season: 1,
-      episodeNumber: 12,
-    },
-    {
-      title: 'Bleach: Thousand-Year Blood War',
-      slug: 'bleach-thousand-year-blood-war',
-      url: 'https://animesalt.cx/series/bleach-thousand-year-blood-war/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx114446-QdJ1c6q3E3Uo.jpg',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '8.9',
-      episodes: '13',
-      season: 3,
-      episodeNumber: 9,
-    },
-    {
-      title: 'Naruto Shippuden',
-      slug: 'naruto-shippuden',
-      url: 'https://animesalt.cx/series/naruto-shippuden/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx1735-k6i5crIdCEEr.jpg',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '8.6',
-      episodes: '500',
-      season: 1,
-      episodeNumber: 500,
-    },
-    {
-      title: 'One Piece',
-      slug: 'one-piece',
-      url: 'https://animesalt.cx/series/one-piece/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21-YCDoj1EkAxFn.jpg',
-      type: 'series',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '8.8',
-      episodes: '1100',
-      season: 1,
-      episodeNumber: 1120,
-    },
-  ];
-
-  const fallbackMovies: AnimeCardItem[] = [
-    {
-      title: 'Suzume',
-      slug: 'suzume',
-      url: 'https://animesalt.cx/movies/suzume/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx142470-iG4Guhf3m9u0.jpg',
-      type: 'movie',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '8.4',
-    },
-    {
-      title: 'Jujutsu Kaisen 0',
-      slug: 'jujutsu-kaisen-0',
-      url: 'https://animesalt.cx/movies/jujutsu-kaisen-0/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx131573-0wXqC6w2lD5t.jpg',
-      type: 'movie',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '8.5',
-    },
-    {
-      title: 'Your Name',
-      slug: 'your-name',
-      url: 'https://animesalt.cx/movies/your-name/',
-      image: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21519-XIr3Pecrw1Fl.png',
-      type: 'movie',
-      languages: ['Hindi', 'Japanese', 'English'],
-      isDubbed: true,
-      score: '9.0',
-    },
-  ];
-
-  const finalTrending = liveTrending.length > 0 ? liveTrending : fallbackSeries;
-  const finalDrops = liveFreshDrops.length > 0 ? liveFreshDrops : fallbackSeries.map((s, idx) => ({ ...s, episodeNumber: idx + 1 }));
-
-  const resultPayload: AnimeSaltHomepageData = {
-    success: true,
-    spotlight: finalTrending.slice(0, 6),
-    trendingSeries: finalTrending.filter((a) => a.type !== 'movie'),
-    trendingMovies: finalTrending.filter((a) => a.type === 'movie').length > 0
-      ? finalTrending.filter((a) => a.type === 'movie')
-      : fallbackMovies,
-    freshDrops: finalDrops,
-    onAirSeries: finalTrending.filter((a) => a.type !== 'movie'),
-    newArrivals: finalDrops.slice(0, 8),
-    latestMovies: fallbackMovies,
-    categories: [
-      { name: 'Action', slug: 'action' },
-      { name: 'Adventure', slug: 'adventure' },
-      { name: 'Fantasy', slug: 'fantasy' },
-      { name: 'Supernatural', slug: 'supernatural' },
-    ],
+  // Never fabricate homepage rows from another catalog. Empty sections make
+  // upstream failure explicit and prevent links to titles AnimeSalt does not host.
+  return {
+    success: false,
+    spotlight: [],
+    trendingSeries: [],
+    trendingMovies: [],
+    freshDrops: [],
+    onAirSeries: [],
+    newArrivals: [],
+    latestMovies: [],
+    categories: [],
     updatedAt: new Date().toISOString(),
   };
-
-  cache.set(cacheKey, resultPayload, 10 * 60 * 1000);
-  return resultPayload;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ── Frontend-Compatible Metadata Scrapers & Unified Endpoints ────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-
 export interface CatalogItem {
   title: string;
   anime_id: string;
@@ -2429,6 +2311,7 @@ export async function fetchStructuredCatalog(
       },
     };
 
+    rememberAnimeSaltItems(items);
     cache.set(cacheKey, payload, 15 * 60 * 1000);
     return payload;
   } catch (err) {
@@ -2524,6 +2407,7 @@ export async function fetchStructuredSearch(
       },
     };
 
+    rememberAnimeSaltItems(items);
     cache.set(cacheKey, payload, 10 * 60 * 1000);
     return payload;
   } catch (err) {
@@ -2616,7 +2500,7 @@ export interface AnimeDetailData {
  * Fetches complete anime metadata by canonical slug from AnimeSalt + AniList enrichment.
  */
 export async function fetchAnimeDetail(rawSlug: string): Promise<AnimeDetailData | null> {
-  const cleanSlug = slugify(rawSlug);
+  const cleanSlug = await resolveAnimeSaltCanonicalSlug(rawSlug);
   if (!cleanSlug) return null;
 
   const cacheKey = `anime:detail:${cleanSlug}`;
@@ -2652,37 +2536,19 @@ export async function fetchAnimeDetail(rawSlug: string): Promise<AnimeDetailData
       }
     }
 
-    // Fallback: search AnimeSalt if direct slug did not match exact page
-    if (!html) {
-      const sKw = cleanSlug.replace(/-/g, ' ').trim();
-      const sRes = await fetch(`https://animesalt.cx/?s=${encodeURIComponent(sKw)}`, {
-        headers: { 'User-Agent': BROWSER_UA },
-      }).catch(() => null);
-
-      if (sRes && sRes.ok) {
-        const sHtml = await sRes.text();
-        const linkMatch = sHtml.match(
-          new RegExp(`href=["'](https:\\/\\/animesalt\\.cx\\/(?:series|movies)\\/${cleanSlug}\\/?)["']`, 'i')
-        );
-        if (linkMatch && linkMatch[1]) {
-          const detailRes = await fetch(linkMatch[1], { headers: { 'User-Agent': BROWSER_UA } }).catch(() => null);
-          if (detailRes && detailRes.ok) {
-            html = await detailRes.text();
-            isMovie = linkMatch[1].includes('/movies/');
-          }
-        }
-      }
-    }
   } catch (err) {
     console.warn(`[fetchAnimeDetail-scrape-warn] ${cleanSlug}:`, err);
   }
+
+  // Do not let AniList manufacture a title absent from AnimeSalt.
+  if (!html) return null;
 
   // Also query AniList concurrently for rich overview, tags, rating, and alternate titles
   const aniData = await fetchAniListMetadata(cleanSlug);
 
   // Parse AnimeSalt HTML if available
   let title = aniData?.title?.english || aniData?.title?.romaji || '';
-  let overview = aniData?.description?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || '';
+  let overview = '';
   let poster = aniData?.coverImage?.extraLarge || aniData?.coverImage?.large || '';
   let backdrop = aniData?.bannerImage || poster || '';
   let genres: string[] = aniData?.genres || [];
@@ -2862,15 +2728,18 @@ export async function fetchAnimeEpisodes(
   rawSlug: string,
   season: number = 1
 ): Promise<EpisodesResponseData> {
-  const cleanSlug = slugify(rawSlug);
+  const cleanSlug = await resolveAnimeSaltCanonicalSlug(rawSlug);
   const seasonNum = Number.isSafeInteger(season) && season > 0 ? season : 1;
 
-  const cacheKey = `anime:episodes:${cleanSlug}:s${seasonNum}`;
+  const detail = await fetchAnimeDetail(cleanSlug);
+  const canonicalSlug = detail?.anime_id || cleanSlug;
+
+  const cacheKey = `anime:episodes:${canonicalSlug}:s${seasonNum}`;
   const cached = cache.get<EpisodesResponseData>(cacheKey);
   if (cached) return cached.data;
 
-  const detail = await fetchAnimeDetail(cleanSlug);
-  const animeTitle = detail?.title || cleanSlug.replace(/-/g, ' ');
+  const resolvedSlug = canonicalSlug;
+  const animeTitle = detail?.title || resolvedSlug.replace(/-/g, ' ');
   const animePoster = detail?.poster || '';
   const seasonsList = detail?.seasonsList && detail.seasonsList.length > 0 ? detail.seasonsList : [1];
 
@@ -2910,24 +2779,11 @@ export async function fetchAnimeEpisodes(
     }
   }
 
-  // If no episodes were found (e.g. movie, or single episode title, or unindexed season), generate fallback
-  if (rawEpisodes.length === 0) {
-    const totalCount = parseInt(detail?.episodes || '12', 10) || 12;
-    for (let i = 1; i <= Math.min(totalCount, 26); i++) {
-      rawEpisodes.push({
-        title: `Episode ${i}`,
-        season: String(seasonNum),
-        episode: String(i),
-        image: animePoster,
-      });
-    }
-  }
-
   const episodes: EpisodeItemResult[] = rawEpisodes.map((item, idx) => {
     const epNumber = parseInt(item.episode || String(idx + 1), 10) || idx + 1;
     return {
       id: `ep-${seasonNum}-${epNumber}`,
-      animeSlug: cleanSlug,
+      animeSlug: resolvedSlug,
       animeTitle,
       animePoster,
       season: seasonNum,
@@ -2969,7 +2825,7 @@ export async function fetchFullUnifiedHomepage(): Promise<any> {
       id: card.slug,
       slug: card.slug,
       title: card.title,
-      synopsis: 'Stream ' + card.title + ' in Hindi Dub and original Japanese audio in full HD.',
+      synopsis: '',
       poster: card.image,
       backdrop: card.image,
       rating: parseFloat(card.score || '8.5') || 8.5,

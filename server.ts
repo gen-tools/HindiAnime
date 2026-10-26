@@ -57,6 +57,7 @@ import {
   fetchStructuredSearch,
   fetchAnimeDetail,
   fetchAnimeEpisodes,
+  resolveAnimeSaltCanonicalSlug,
   fetchNormalizedPlaybackSources,
 } from './src/server/proxyService.ts';
 
@@ -354,7 +355,7 @@ export async function createApp() {
     const season = (req.query.season as string) || (req.body?.season as string) || extracted.season || '1';
     const ep = (req.query.ep as string) || (req.query.episode as string) || (req.body?.ep as string) || extracted.episode || '1';
     const sourceFilter = (((req.query.source || req.body?.source) as string) || 'all').toLowerCase();
-    const cleanId = extracted.slug;
+    const cleanId = await resolveAnimeSaltCanonicalSlug(extracted.slug);
 
     if (!/^\d{1,4}$/.test(season) || !/^\d{1,5}$/.test(ep)) {
       return res.status(400).json({ success: false, message: 'Invalid season or ep parameter' });
@@ -393,7 +394,16 @@ export async function createApp() {
           : Promise.resolve([]),
       ]);
 
-      const playZenItems = Array.isArray(rawPlayZen) ? rawPlayZen : ((rawPlayZen as any)?.results || []);
+      let playZenItems = Array.isArray(rawPlayZen) ? rawPlayZen : ((rawPlayZen as any)?.results || []);
+      if (shouldFetchPlayZen && playZenItems.length === 0 && animaHdItems.length > 0) {
+        const providerAliases = [...new Set(animaHdItems.map((item: any) => item.providerSlug).filter(Boolean))];
+        if (providerAliases.length > 0) {
+          playZenItems = await fetchPlayZenStream(cleanId, season, ep, providerAliases).catch((err) => {
+            console.warn(`[stream-source-alias-error] PlayZen ${cleanId} S${season}E${ep}:`, err);
+            return [];
+          });
+        }
+      }
 
       if (
         (!animeSaltItems || animeSaltItems.length === 0) &&
@@ -610,16 +620,14 @@ export async function createApp() {
       }
 
       // ── Clean Multi-Source Priority Assembly ──────────────────────────────────
-      const wantsHls = req.query.hls === 'true';
-
       // Slot 1: Server 1 — MyStream (may be discovered by either scraper).
+      const isMyStream = (s: any) =>
+        /my\s*stream|ravok/i.test(`${s.label || ''} ${s.server || ''} ${s.source || ''} ${s.embed || ''} ${s.url || ''}`);
       const saltMyStream = (animeSaltItems || []).find(
-        (s: any) => (s.embed || '').includes('ravok.buzz') && s.type === 'embed' && !usedUrls.has(s.embed || '')
-      ) || (animeSaltItems || []).find(
-        (s: any) => (s.embed || '').includes('ravok.buzz') && s.type === 'embed'
-      );
+        (s: any) => isMyStream(s) && s.type === 'embed' && !usedUrls.has(s.embed || '')
+      ) || (animeSaltItems || []).find((s: any) => isMyStream(s) && s.type === 'embed');
       const playZenMyStream = (playZenItems || []).find((s: any) =>
-        /my\s*stream|ravok/i.test(`${s.label || ''} ${s.server || ''} ${s.source || ''} ${s.embed || ''}`)
+        isMyStream(s)
       );
       if (saltMyStream) {
         addSalt(saltMyStream, `Server ${list.length + 1} · ⚡ MyStream (Ad-Free Player)`);
@@ -635,129 +643,11 @@ export async function createApp() {
       }
 
       // Slot 3: Server 3 — PlayZen Direct Embed / Stream
-      const pzDirect = playZenItems.find((s: any) => s.qualities && s.qualities.length > 0 && !usedUrls.has(s.embed || s.url || '')) ||
-                       playZenItems.find((s: any) => !usedUrls.has(s.embed || s.url || ''));
+      const pzDirect = playZenItems.find((s: any) => s.qualities && s.qualities.length > 0 && !usedUrls.has(s.embed || '') && !usedUrls.has(s.url || '')) ||
+                       playZenItems.find((s: any) => !usedUrls.has(s.embed || '') && !usedUrls.has(s.url || ''));
       if (pzDirect) {
         const qStr = pzDirect.qualities?.map((q: any) => q.quality).join(' / ') || '720p HD / 480p SD';
         addPlayZen(pzDirect, `Server ${list.length + 1} · ⚡ PlayZen Direct Stream (${qStr})`);
-      }
-
-      // (Optional) HLS Proxy Slot only if explicitly requested via ?hls=true
-      if (wantsHls) {
-        const saltHls = (animeSaltItems || []).find((s: any) => s.type === 'hls' && s.directHlsUrl);
-        if (saltHls) {
-          const streamUrl = saltHls.directHlsUrl;
-          const referer = saltHls.referer || 'https://ravok.buzz/';
-          const origin = saltHls.origin || 'https://ravok.buzz';
-          const p = new URLSearchParams({ url: streamUrl, referer, origin });
-          if (PROXY_SECRET) {
-            const exp = Math.floor(Date.now() / 1000) + 86400;
-            p.set('exp', String(exp));
-            p.set('sig', generateHlsToken(streamUrl, referer, origin, exp, PROXY_SECRET));
-          }
-          const hlsProxyUrl = `${requestOrigin}/hls-proxy?${p.toString()}`;
-          list.push({
-            server: `Server ${list.length + 1}`,
-            label: `Server ${list.length + 1} · 🇮🇳 Hindi Dub HLS ⚡ (Multi-Audio) [Proxy]`,
-            embed: saltHls.embed || streamUrl,
-            url: hlsProxyUrl,
-            hlsProxyUrl,
-            directHlsUrl: streamUrl,
-            type: 'hls',
-            audioLanguage: 'hi',
-            languageLabel: '🇮🇳 Hindi Dub (Multi-Audio)',
-            adFree: true,
-            headers: { Referer: referer, Origin: origin },
-            source: 'HindiAnime-HLS',
-          });
-          usedUrls.add(streamUrl);
-        }
-      }
-
-      // Slot 4: Server 4 — Abyss Multi-Audio (combining all regional dubs into one server)
-      const abyssItems = (animeSaltItems || []).filter(
-        (s: any) => (s.embed || '').includes('abyssplayer.com') || (s.label || '').toLowerCase().includes('abyss')
-      );
-      if (abyssItems.length > 0) {
-        const langOrder = ['hi', 'ta', 'te', 'en', 'ja'];
-        const sortedAbyss = [...abyssItems].sort((a: any, b: any) => {
-          const aLang = (a.audioLanguage || 'hi').toLowerCase();
-          const bLang = (b.audioLanguage || 'hi').toLowerCase();
-          const aIdx = langOrder.indexOf(aLang);
-          const bIdx = langOrder.indexOf(bLang);
-          return (aIdx === -1 ? 99 : aIdx) - (bIdx === -1 ? 99 : bIdx);
-        });
-
-        const languageSources = sortedAbyss.map((s: any) => {
-          const code = (s.audioLanguage || 'hi').toLowerCase();
-          let label = 'Audio';
-          if (code === 'hi') label = 'Hindi';
-          else if (code === 'ta') label = 'Tamil';
-          else if (code === 'te') label = 'Telugu';
-          else if (code === 'en') label = 'English';
-          else if (code === 'ja') label = 'Japanese';
-          else if (s.languageLabel) label = s.languageLabel;
-
-          return {
-            code,
-            label,
-            embed: s.embed || s.url || '',
-          };
-        });
-
-        const primaryAbyss = sortedAbyss[0];
-        list.push({
-          ...primaryAbyss,
-          server: `Server ${list.length + 1}`,
-          label: `Server ${list.length + 1} · Abyss Multi-Audio`,
-          languageSources,
-          type: 'embed',
-          audioLanguage: primaryAbyss.audioLanguage || 'hi',
-        });
-
-        // Mark all abyss embeds as used so they are not duplicated
-        for (const ab of sortedAbyss) {
-          if (ab.embed) usedUrls.add(ab.embed);
-          if (ab.url) usedUrls.add(ab.url);
-        }
-      }
-
-      // Slot 5+: PlayZen Multi-Quality Direct Stream (720p HD / 480p SD)
-      const pzMulti = playZenItems.find((s: any) => s.qualities && s.qualities.length > 0 && !usedUrls.has(s.embed || s.url || '')) ||
-                      playZenItems.find((s: any) => !usedUrls.has(s.embed || s.url || ''));
-      if (pzMulti) {
-        const qStr = pzMulti.qualities?.map((q: any) => q.quality).join(' / ') || '720p HD / 480p SD';
-        addPlayZen(pzMulti, `Server ${list.length + 1} · PlayZen · ⚡ Multi-Quality Direct Stream (${qStr})`);
-      }
-
-      // Slot 6+: PlayZen Secondary Official Edge Player (if not already added)
-      const pzEmbed = playZenItems.find((s: any) => !usedUrls.has(s.embed || '') && (s.embed || '').includes('archive.animeinfinity.me'));
-      if (pzEmbed) {
-        addPlayZen(pzEmbed, `Server ${list.length + 1} · PlayZen · 🚀 Official Edge Player`);
-      }
-
-      // Fill remaining slots up to 9 with remaining PlayZen direct streams
-      if (list.length < 9 && playZenItems && playZenItems.length > 0) {
-        for (const s of playZenItems) {
-          if (list.length >= 9) break;
-          addPlayZen(s);
-        }
-      }
-
-      // Fill remaining slots with remaining AnimaHD streams
-      if (list.length < 9 && animaHdItems && animaHdItems.length > 0) {
-        for (const s of animaHdItems) {
-          if (list.length >= 9) break;
-          addAnimaHd(s);
-        }
-      }
-
-      // Fill remaining slots with remaining AnimeSalt streams
-      if (list.length < 9 && animeSaltItems && animeSaltItems.length > 0) {
-        for (const s of animeSaltItems) {
-          if (list.length >= 9) break;
-          addSalt(s);
-        }
       }
 
       // Renumber sequentially Server 1..N
