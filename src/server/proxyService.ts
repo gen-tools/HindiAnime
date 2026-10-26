@@ -504,7 +504,6 @@ export function validateProxySecret(req: Request, required = false): { error: st
   const supplied =
     (req.headers[PROXY_SECRET_HEADER] as string | undefined) ||
     (req.headers['x-proxy-secret'] as string | undefined) ||
-    (req.headers.authorization ? req.headers.authorization.replace(/^Bearer\s+/i, '') : undefined) ||
     (req.query.secret as string | undefined) ||
     (req.query.key as string | undefined);
 
@@ -967,6 +966,9 @@ export async function fetchAnimeSaltStream(id: string, season: string, ep: strin
     }
   }
 
+  // Negative cache prevents repeated batches of upstream requests for episodes
+  // that the source does not carry. Keep it short so newly added streams appear.
+  cache.set(cacheKey, [], 2 * 60 * 1000);
   return [];
 }
 
@@ -1462,21 +1464,42 @@ export async function fetchAnimaHdStream(slugOrId: string, season: string, ep: s
   let animeData = await fetchAnimaHdEpisodes(baseSlug);
   if (animeData.episodes.length === 0) {
     const searchResults = await searchAnimaHd(baseSlug.replace(/-/g, ' '));
-    if (searchResults.length > 0) {
-      animeData = await fetchAnimaHdEpisodes(searchResults[0].slug);
+    const ignoredTitleWords = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'as']);
+    const targetWords = baseSlug.split('-').filter((word) => word.length > 2 && !ignoredTitleWords.has(word));
+    const titleScore = (candidate: AnimaHdSearchResult) => {
+      const candidateWords = new Set(
+        `${candidate.slug} ${slugify(candidate.title)}`
+          .split(/[^a-z0-9]+/)
+          .filter(Boolean)
+      );
+      const commonWords = targetWords.filter((word) => candidateWords.has(word)).length;
+      return targetWords.length > 0 ? commonWords / targetWords.length : 0;
+    };
+    const bestMatch = searchResults
+      .map((candidate) => ({ candidate, score: titleScore(candidate) }))
+      .sort((a, b) => b.score - a.score)[0];
+    // Search APIs return loosely related titles too. Only use a result that
+    // clearly matches the requested anime instead of borrowing another show’s
+    // Google Drive episode IDs.
+    if (bestMatch && bestMatch.score >= 0.6) {
+      animeData = await fetchAnimaHdEpisodes(bestMatch.candidate.url || bestMatch.candidate.slug);
     }
   }
 
-  if (animeData.episodes.length === 0) return [];
+  if (animeData.episodes.length === 0) {
+    cache.set(cacheKey, [], 2 * 60 * 1000);
+    return [];
+  }
 
-  // Match episode
-  const matched =
-    animeData.episodes.find((e) => e.seasonNum === sNum && e.epNum === epNum) ||
-    animeData.episodes.find((e) => e.epNum === epNum) ||
-    animeData.episodes[epNum - 1] ||
-    animeData.episodes[0];
+  // Never substitute a different season/episode: that can expose another
+  // episode's video under the requested URL. AnimaHD records exact season and
+  // episode coordinates, so only an exact match is safe to return.
+  const matched = animeData.episodes.find((e) => e.seasonNum === sNum && e.epNum === epNum);
 
-  if (!matched || !matched.fileId) return [];
+  if (!matched || !matched.fileId) {
+    cache.set(cacheKey, [], 2 * 60 * 1000);
+    return [];
+  }
 
   const previewEmbed = `https://drive.google.com/file/d/${matched.fileId}/preview`;
   const streamUrl = `/gdrive-stream?id=${encodeURIComponent(matched.fileId)}`;
@@ -1645,6 +1668,7 @@ export async function fetchPlayZenStream(
   }
 
   if (!episodeHtml) {
+    cache.set(cacheKey, [], 2 * 60 * 1000);
     return [];
   }
 
@@ -1802,6 +1826,8 @@ export async function fetchPlayZenStream(
 
   if (results.length > 0) {
     cache.set(cacheKey, results, 15 * 60 * 1000);
+  } else {
+    cache.set(cacheKey, [], 2 * 60 * 1000);
   }
 
   return results;

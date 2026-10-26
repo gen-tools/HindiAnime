@@ -9,7 +9,6 @@ import cors from 'cors';
 import {
   BROWSER_UA,
   TOKO_API_URL,
-  PROXY_SECRET_HEADER,
   PROXY_SECRET,
   REQUIRE_STREAM_SECRET,
   ANIMESALT_HOMEPAGE_URL,
@@ -107,40 +106,39 @@ function isRefererAllowed(referer: string | undefined): boolean {
   }
 }
 
-// ── Security guard: permits requests ONLY from approved Frontend (Origin/Referer) or with AUTH_TOKEN ──
-function requireAuthOrFrontendOrigin(req: Request, res: Response, next: NextFunction) {
-  // 1. Health check is always public
+// Data and scraper routes are server-to-server and require a bearer token.
+// Origin/Referer are browser metadata, not credentials, and can be forged.
+function requireAuthToken(req: Request, res: Response, next: NextFunction) {
   if (req.path === '/health' || req.path === '/api/health') return next();
-
-  // 2. Check Bearer token (server-to-server SSR calls from Vercel frontend)
+  if (!AUTH_TOKEN) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ success: false, message: 'Backend authentication is not configured' });
+    }
+    return next();
+  }
   const authHeader = req.headers.authorization || '';
   const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (AUTH_TOKEN && provided === AUTH_TOKEN) {
+  if (provided === AUTH_TOKEN) return next();
+  return res.status(401).json({ success: false, message: 'Unauthorized: a valid backend bearer token is required' });
+}
+
+// Browser media requests are separately restricted to approved frontend
+// origins/referers. Data endpoints never use this origin-based allowance.
+function requireAuthOrFrontendOrigin(req: Request, res: Response, next: NextFunction) {
+  if (!AUTH_TOKEN) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ success: false, message: 'Backend authentication is not configured' });
+    }
     return next();
   }
-
-  // 3. Check browser Origin header (fetch/XHR from frontend player)
+  const authHeader = req.headers.authorization || '';
+  const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (provided === AUTH_TOKEN) return next();
   const origin = req.headers.origin as string | undefined;
-  if (origin && isOriginAllowed(origin)) {
-    return next();
-  }
-
-  // 4. Check browser Referer header (media player segment requests, embeds)
+  if (origin && isOriginAllowed(origin)) return next();
   const referer = req.headers.referer as string | undefined;
-  if (referer && isRefererAllowed(referer)) {
-    return next();
-  }
-
-  // 5. If AUTH_TOKEN is configured and request has neither valid token nor allowed origin/referer
-  if (AUTH_TOKEN) {
-    return res.status(401).json({
-      success: false,
-      message: 'Unauthorized: Access restricted to authorized frontend and clients only',
-    });
-  }
-
-  // 6. In development mode (no AUTH_TOKEN set), allow local/test requests
-  next();
+  if (referer && isRefererAllowed(referer)) return next();
+  return res.status(401).json({ success: false, message: 'Unauthorized media request' });
 }
 
 // Main Express app setup
@@ -197,14 +195,16 @@ export async function createApp() {
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-  // ── Auth token guard: applied to all /api/* routes except /api/health ────────
-  app.use('/api', requireAuthOrFrontendOrigin);
-  // Also guard the legacy non-prefixed routes that are equivalent to protected /api endpoints
-  app.use(['/stream', '/catalog', '/animesalt-catalog', '/hls-proxy', '/proxy',
+  // ── Auth token guard: all API data routes require the server-side token ─────
+  app.use('/api', requireAuthToken);
+  // Data/scraper aliases also require the token, including /proxy used by the
+  // frontend server to retrieve AnimeSalt pages through this one backend.
+  app.use(['/stream', '/catalog', '/animesalt-catalog', '/proxy', '/animesalt',
            '/animesalt-stream', '/playzen-stream', '/animahd-stream',
-           '/animahd-search', '/animahd-episodes', '/gdrive-stream'],
-    requireAuthOrFrontendOrigin
-  );
+           '/animahd-search', '/animahd-episodes'], requireAuthToken);
+  // Player media requests are handled separately because browsers cannot keep
+  // the backend bearer token secret. HLS URLs also support signed parameters.
+  app.use(['/hls-proxy', '/gdrive-stream'], requireAuthOrFrontendOrigin);
 
   // ── Route: /api/health & /health (Public for UptimeRobot monitoring) ─────────
   app.get(['/api/health', '/health'], (req, res) => {
@@ -247,9 +247,9 @@ export async function createApp() {
   app.get(['/api/home', '/api/homepage', '/home'], async (req, res) => {
     try {
       const data = await fetchFullUnifiedHomepage();
-      // Vary: Authorization enables Cloudflare free-tier cache sharding per auth token
-      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
-      res.setHeader('Vary', 'Authorization');
+      // Backend data is authenticated; never let a shared edge cache replay it
+      // to a request that did not pass this route's token guard.
+      res.setHeader('Cache-Control', 'private, no-store');
       return res.json(data);
     } catch (err: any) {
       console.error('[homepage-route-error]', err);
@@ -267,8 +267,7 @@ export async function createApp() {
 
     try {
       const results = await fetchStructuredSearch(q, page);
-      res.setHeader('Cache-Control', 'public, max-age=300');
-      res.setHeader('Vary', 'Authorization');
+      res.setHeader('Cache-Control', 'private, no-store');
       return res.json(results);
     } catch (err: any) {
       console.error('[search-route-error]', err);
@@ -291,8 +290,7 @@ export async function createApp() {
       if (!data) {
         return res.status(404).json({ success: false, message: 'Anime details not found' });
       }
-      res.setHeader('Cache-Control', 'public, max-age=1800, s-maxage=3600');
-      res.setHeader('Vary', 'Authorization');
+      res.setHeader('Cache-Control', 'private, no-store');
       return res.json({ success: true, data });
     } catch (err: any) {
       console.error('[anime-detail-route-error]', err);
@@ -313,8 +311,7 @@ export async function createApp() {
 
     try {
       const results = await fetchAnimeEpisodes(rawId, season);
-      res.setHeader('Cache-Control', 'public, max-age=1800, s-maxage=3600');
-      res.setHeader('Vary', 'Authorization');
+      res.setHeader('Cache-Control', 'private, no-store');
       return res.json(results);
     } catch (err: any) {
       console.error('[anime-episodes-route-error]', err);
@@ -327,11 +324,8 @@ export async function createApp() {
 
   // ── Route: /stream, /api/stream & /api/stream-proxy (Resolve streaming sources) ────────────────
   app.all(['/stream', '/api/stream', '/api/stream-proxy'], async (req, res) => {
-    const authFailure = validateProxySecret(req, REQUIRE_STREAM_SECRET);
-    if (authFailure) {
-      return res.status(authFailure.status).json({ success: false, message: authFailure.error });
-    }
-
+    // requireAuthToken protects this route; the global API bearer token is the
+    // stream credential too, so do not require a second unrelated secret.
     const rawId = (req.query.id as string) || (req.body?.id as string);
     if (!rawId || typeof rawId !== 'string') {
       return res.status(400).json({ success: false, message: 'Missing or invalid id parameter' });
@@ -379,9 +373,24 @@ export async function createApp() {
       const shouldFetchPlayZen = sourceFilter === 'all' || sourceFilter === 'playzen';
 
       const [animeSaltItems, animaHdItems, rawPlayZen] = await Promise.all([
-        shouldFetchSalt ? fetchAnimeSaltStream(cleanId, season, ep) : Promise.resolve([]),
-        shouldFetchAnimaHd ? fetchAnimaHdStream(cleanId, season, ep) : Promise.resolve([]),
-        shouldFetchPlayZen ? fetchPlayZenStream(cleanId, season, ep) : Promise.resolve([]),
+        shouldFetchSalt
+          ? fetchAnimeSaltStream(cleanId, season, ep).catch((err) => {
+              console.warn(`[stream-source-error] AnimeSalt ${cleanId} S${season}E${ep}:`, err);
+              return [];
+            })
+          : Promise.resolve([]),
+        shouldFetchAnimaHd
+          ? fetchAnimaHdStream(cleanId, season, ep).catch((err) => {
+              console.warn(`[stream-source-error] AnimaHD ${cleanId} S${season}E${ep}:`, err);
+              return [];
+            })
+          : Promise.resolve([]),
+        shouldFetchPlayZen
+          ? fetchPlayZenStream(cleanId, season, ep).catch((err) => {
+              console.warn(`[stream-source-error] PlayZen ${cleanId} S${season}E${ep}:`, err);
+              return [];
+            })
+          : Promise.resolve([]),
       ]);
 
       const playZenItems = Array.isArray(rawPlayZen) ? rawPlayZen : ((rawPlayZen as any)?.results || []);
@@ -603,16 +612,19 @@ export async function createApp() {
       // ── Clean Multi-Source Priority Assembly ──────────────────────────────────
       const wantsHls = req.query.hls === 'true';
 
-      // Slot 1: Server 1 — AnimeSalt MyStream (Ad-Free Direct Embed)
-      const myStream = (animeSaltItems || []).find(
+      // Slot 1: Server 1 — MyStream (may be discovered by either scraper).
+      const saltMyStream = (animeSaltItems || []).find(
         (s: any) => (s.embed || '').includes('ravok.buzz') && s.type === 'embed' && !usedUrls.has(s.embed || '')
       ) || (animeSaltItems || []).find(
         (s: any) => (s.embed || '').includes('ravok.buzz') && s.type === 'embed'
-      ) || (animeSaltItems || []).find(
-        (s: any) => s.embed && !usedUrls.has(s.embed)
       );
-      if (myStream) {
-        addSalt(myStream, `Server ${list.length + 1} · ⚡ AnimeSalt MyStream (Ad-Free Player)`);
+      const playZenMyStream = (playZenItems || []).find((s: any) =>
+        /my\s*stream|ravok/i.test(`${s.label || ''} ${s.server || ''} ${s.source || ''} ${s.embed || ''}`)
+      );
+      if (saltMyStream) {
+        addSalt(saltMyStream, `Server ${list.length + 1} · ⚡ MyStream (Ad-Free Player)`);
+      } else if (playZenMyStream) {
+        addPlayZen(playZenMyStream, `Server ${list.length + 1} · ⚡ MyStream (Ad-Free Player)`);
       }
 
       // Slot 2: Server 2 — Google Drive 1080p Cloud Stream (AnimaHD)
