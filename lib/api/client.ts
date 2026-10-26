@@ -26,12 +26,6 @@ import { matchesCountry } from "@/lib/mock/countries";
 import { shareInFlightRequest } from "@/lib/api/in-flight";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "https://anime-api-gilt-beta.vercel.app";
-
-const CATALOG_CACHE_SECONDS = 300;
-const SEARCH_CACHE_SECONDS = 60;
-
 function normalizeApiSearchQuery(query: string): string {
   return query.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -74,102 +68,17 @@ async function cacheValidatedScraperResult<T>(
 }
 
 type CachedCatalogFetch = (kind: "series" | "movies", page: number) => Promise<AnimeCatalogResponse>;
-type CachedSearchFetch = (query: string, page: number) => Promise<AnimeSearchResponse>;
-let cachedCatalogApiFetch: CachedCatalogFetch | undefined;
-let cachedAnimeSearchFetch: CachedSearchFetch | undefined;
-const animeSearchResultCache = new Map<
-  string,
-  { expiresAt: number; data: AnimeSearchResponse }
->();
-const animeSearchInFlight = new Map<string, Promise<AnimeSearchResponse | null>>();
-
-function getCachedAnimeSearchFetch(): CachedSearchFetch {
-  if (!cachedAnimeSearchFetch) {
-    // Cache the validated, parsed search result. Failed and empty responses throw
-    // before Next.js stores an entry; normalized query + page form the key.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
-    cachedAnimeSearchFetch = unstable_cache(
-      async (query: string, page: number) => {
-        const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(query)}&page=${page}`;
-        const response = await fetch(url, { cache: "no-store" });
-        if (!response.ok) throw new Error(`Search API returned ${response.status}`);
-
-        const data = (await response.json()) as AnimeSearchResponse;
-        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
-          throw new Error("Search API returned no entries");
-        }
-        return data;
-      },
-      ["validated-anime-search-v2"],
-      { revalidate: SEARCH_CACHE_SECONDS }
-    ) as CachedSearchFetch;
-  }
-  return cachedAnimeSearchFetch;
-}
 
 function getCachedCatalogApiFetch(): CachedCatalogFetch {
-  if (!cachedCatalogApiFetch) {
-    // The persistent cache surrounds validation, so failed and empty payloads
-    // throw before Next.js stores a cache entry. Arguments key by kind + page.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { unstable_cache } = require("next/cache") as typeof import("next/cache");
-    cachedCatalogApiFetch = unstable_cache(
-      async (kind: "series" | "movies", page: number) => {
-        const response = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
-          cache: "no-store",
-        });
-        if (!response.ok) throw new Error(`Catalog API returned ${response.status}`);
-        const data = (await response.json()) as AnimeCatalogResponse;
-        if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
-          throw new Error("Catalog API returned no entries");
-        }
-        return data;
-      },
-      ["validated-anime-catalog-v1"],
-      { revalidate: CATALOG_CACHE_SECONDS }
-    ) as CachedCatalogFetch;
-  }
-  return cachedCatalogApiFetch;
-}
-
-async function fetchCachedAnimeSearch(
-  query: string,
-  page: number
-): Promise<AnimeSearchResponse | null> {
-  // Keep a bounded process cache and share concurrent misses; Next's persistent
-  // cache below stores only validated, nonempty API results.
-  const key = `${query}\u0000${page}`;
-  const cached = animeSearchResultCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.data;
-  if (cached) animeSearchResultCache.delete(key);
-
-  const pending = animeSearchInFlight.get(key);
-  if (pending) return pending;
-
-  const request = (async () => {
-    try {
-      const data = await getCachedAnimeSearchFetch()(query, page);
-
-      if (animeSearchResultCache.size >= 200) {
-        const oldestKey = animeSearchResultCache.keys().next().value;
-        if (oldestKey) animeSearchResultCache.delete(oldestKey);
-      }
-      animeSearchResultCache.set(key, {
-        data,
-        expiresAt: Date.now() + SEARCH_CACHE_SECONDS * 1000,
-      });
-      return data;
-    } catch (error) {
-      rethrowNextControlFlow(error);
-      return null;
-    } finally {
-      animeSearchInFlight.delete(key);
+  return async (kind, page) => {
+    const data = await fetchBackendData<AnimeCatalogResponse>(
+      `/api/catalog?kind=${kind}&page=${page}`
+    );
+    if (!Array.isArray(data?.results?.results) || data.results.results.length === 0) {
+      throw new Error("Authenticated catalog returned no entries");
     }
-  })();
-
-  animeSearchInFlight.set(key, request);
-  return request;
+    return data;
+  };
 }
 
 const KNOWN_LANGUAGES: Record<string, LanguageCode> = {
@@ -430,7 +339,7 @@ export function resolveMovieInfoData(
   payload: MovieInfoResponse | null
 ): MovieInfoData | null {
   if (!payload) return null;
-  return parsePossiblyJson<MovieInfoData>(payload.results ?? null);
+  return parsePossiblyJson<MovieInfoData>(payload.data ?? payload.results ?? null);
 }
 
 /**
@@ -873,66 +782,13 @@ export function parseAnimeSaltArticles(
  * Each page returns 12 items. Series has ~38 pages (2,543 total), movies ~23 pages (2,531 total).
  */
 async function scrapeAnimeSaltCatalogUncached(
-  kind: "series" | "movies",
-  page = 1
+  _kind: "series" | "movies",
+  _page = 1
 ): Promise<CatalogPageResult | null> {
-  const cacheKey = `${kind}:${page}`;
-  const cached = catalogPageCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.data;
-  }
-
-  try {
-    const url =
-      page <= 1
-        ? `https://animesalt.cx/${kind}/`
-        : `https://animesalt.cx/${kind}/page/${page}/`;
-
-    let html: string | null = null;
-    let pagination: { totalPages?: number; pageSize?: number } | undefined;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6000);
-      try {
-        const response = await fetch(buildServerWorkerCatalogUrl(kind, page), {
-          headers: getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS),
-          signal: controller.signal,
-          cache: "no-store",
-        });
-        const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-        if (response.ok && /(?:text\/html|application\/(?:rss\+xml|xml)|text\/xml)/.test(contentType)) {
-          const candidate = await response.text();
-          if (!is404Html(candidate) && (/<rss\b/i.test(candidate) || /<article\b/i.test(candidate))) {
-            html = candidate;
-          }
-          if (html) {
-            const totalPagesHeader = Number(response.headers.get("x-catalog-total-pages"));
-            const pageSizeHeader = Number(response.headers.get("x-catalog-page-size"));
-            pagination = {
-              totalPages: Number.isSafeInteger(totalPagesHeader) && totalPagesHeader > 0 ? totalPagesHeader : undefined,
-              pageSize: Number.isSafeInteger(pageSizeHeader) && pageSizeHeader > 0 ? pageSizeHeader : undefined,
-            };
-          }
-        }
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch {
-      // Preserve the existing general-proxy/direct fallback if the restricted route is unavailable.
-    }
-
-    if (!html) html = await fetchHtmlWithWorkerFallback(url);
-    if (!html) return null;
-    const result = parseAnimeSaltArticles(html, page, pagination);
-    if (result) {
-      catalogPageCache.set(cacheKey, { data: result, timestamp: Date.now() });
-    }
-    return result;
-  } catch (err) {
-    rethrowNextControlFlow(err);
-    console.error(`[Scraper] Error scraping ${kind} catalog page ${page}:`, err);
-    return null;
-  }
+  // Catalog data comes only from the authenticated api.hindi-anime.com route.
+  // This legacy scraper is deliberately inert so an auth failure cannot fall
+  // through to a second data source.
+  return null;
 }
 
 export function scrapeAnimeSaltCatalog(
@@ -1560,84 +1416,23 @@ export async function getCatalog(
   page = 1,
   options: { allowHomepageFallback?: boolean; signal?: AbortSignal } = {}
 ): Promise<AnimeCatalogResponse | null> {
-  // 1. Try upstream JSON API first
   try {
-    const data = typeof window === "undefined" && !options.signal
+    const data = typeof window === "undefined"
       ? await getCachedCatalogApiFetch()(kind, page)
       : await (async () => {
-          const res = await fetch(`${API_BASE_URL}/api/${kind}?page=${page}`, {
+          const response = await fetch(`/api/catalog?kind=${kind}&page=${page}`, {
             cache: "no-store",
             signal: options.signal,
           });
-          if (!res.ok) return null;
-          const responseData = (await res.json()) as AnimeCatalogResponse;
-          return Array.isArray(responseData?.results?.results) && responseData.results.results.length > 0
-            ? responseData
-            : null;
+          if (!response.ok) return null;
+          return (await response.json()) as AnimeCatalogResponse;
         })();
-    if (data) return data;
+    if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
   } catch (err) {
-    console.error(`getCatalog ${kind} API error:`, err);
+    rethrowNextControlFlow(err);
+    console.error(`getCatalog ${kind} authenticated backend error:`, err);
   }
-
-  // Use the authenticated Worker-backed scraper on the server when the API
-  // has no entries. Keep this scoped to the requested page so pagination does
-  // not trigger a full-catalog scan.
-  if (typeof window === "undefined" && !options.signal?.aborted) {
-    const scraped = await scrapeAnimeSaltCatalog(kind, page);
-    if (scraped?.results.length) {
-      return {
-        success: true,
-        results: {
-          currentPage: scraped.currentPage,
-          totalPages: scraped.totalPages,
-          results: scraped.results,
-        },
-      };
-    }
-  }
-
-  // Last resort: the catalog API's own homepage feed (page 1 only, limited set).
-  if (page === 1 && options.allowHomepageFallback !== false) {
-    try {
-      const feed = await getHomepageFeed();
-      const sections = feed?.data?.results;
-      if (sections) {
-        const rawItems =
-          kind === "series"
-            ? [...sections.mostWatched_Series, ...sections.on_air_series]
-            : [...sections.mostWatched_Films, ...sections.latest_animeMovies];
-
-        const seen = new Set<string>();
-        const results: AnimeSearchResult[] = [];
-        for (const item of rawItems) {
-          const slug = cleanAnimeSlug(item.anime_id);
-          if (slug && !seen.has(slug)) {
-            seen.add(slug);
-            results.push({
-              title: item.title,
-              anime_id: item.anime_id,
-              poster: item.poster,
-            });
-          }
-        }
-
-        if (results.length > 0) {
-          return {
-            success: true,
-            results: {
-              currentPage: 1,
-              totalPages: 1,
-              results,
-            },
-          };
-        }
-      }
-    } catch (fallbackErr) {
-      console.error(`getCatalog ${kind} homepage fallback error:`, fallbackErr);
-    }
-  }
-
+  void options.allowHomepageFallback;
   return null;
 }
 
@@ -1790,33 +1585,13 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
 
 export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/newadded`, {
-      next: { revalidate: 60 },
-    });
-    if (res.ok) {
-      const data = (await res.json()) as LatestEpisodesResponse;
-      if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
-        return data;
-      }
-    }
-  } catch (err) {
-    console.error("getLatestEpisodes API error:", err);
-  }
-
-  // Fallback to the catalog API's homepage endpoint when /api/newadded is unavailable.
-  try {
     const feed = await getHomepageFeed();
     const drops = feed?.data?.results?.fresh_drops;
-    if (drops && Array.isArray(drops) && drops.length > 0) {
-      return {
-        success: true,
-        results: drops,
-      };
-    }
+    if (drops && Array.isArray(drops) && drops.length > 0) return { success: true, results: drops };
   } catch (err) {
-    console.error("getLatestEpisodes fallback error:", err);
+    rethrowNextControlFlow(err);
+    console.error("getLatestEpisodes authenticated backend error:", err);
   }
-
   return null;
 }
 
@@ -2113,10 +1888,7 @@ export function scrapeDirectHomepageFeed(diagnostics = false): Promise<HomepageA
 }
 
 export function getHomepageFeed(diagnostics = false): Promise<HomepageApiResponse | null> {
-  // Reuse a verified feed before repeating the API → AnimeSalt fallback chain.
-  if (homepageFeedCache && Date.now() - homepageFeedCache.timestamp < CACHE_TTL_MS) {
-    return Promise.resolve(homepageFeedCache.data);
-  }
+  if (typeof window !== "undefined") return Promise.resolve(null);
   if (homepageFeedInFlight) return homepageFeedInFlight;
 
   const request = getHomepageFeedUnshared(diagnostics);
@@ -2130,96 +1902,41 @@ export function getHomepageFeed(diagnostics = false): Promise<HomepageApiRespons
 
 async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApiResponse | null> {
   if (typeof window !== "undefined") {
-    // In-browser: return cached feed or null rather than attempting direct CORS fetch to external API
     return homepageFeedCache?.data ?? null;
   }
 
-  const apiStartedAt = Date.now();
+  const startedAt = Date.now();
   try {
-    const res = await fetch(`${API_BASE_URL}/api`, {
-      next: { revalidate: 60 },
-    });
-    const contentType = res.headers.get("content-type");
-    const cacheStatus = res.headers.get("x-vercel-cache") ?? res.headers.get("cf-cache-status");
-    const responseBytesPromise = diagnostics
-      ? res.clone().arrayBuffer().then((body) => body.byteLength).catch(() => null)
-      : null;
-    const responseBytes = async () => responseBytesPromise ? await responseBytesPromise : null;
-    if (res.ok) {
-      let data: HomepageApiResponse | null;
-      try {
-        data = await res.json() as HomepageApiResponse;
-      } catch (error) {
-        rethrowNextControlFlow(error);
-        logHomepageSsr(diagnostics, {
-          source: "catalog-api-homepage",
-          attempt: "fetch-and-parse",
-          outcome: "invalid-response",
-          status: res.status,
-          contentType,
-          cacheStatus,
-          responseBytes: await responseBytes(),
-          elapsedMs: Date.now() - apiStartedAt,
-          errorCategory: "invalid-json",
-        });
-        data = null;
-      }
-      if (data && hasHomepageItems(data)) {
-        if (data.data.success !== false) {
-          homepageFeedCache = { data, timestamp: Date.now() };
-          logHomepageSsr(diagnostics, {
-            source: "catalog-api-homepage",
-            attempt: "fetch-and-parse",
-            outcome: "success",
-            status: res.status,
-            contentType,
-            cacheStatus,
-            responseBytes: await responseBytes(),
-            elapsedMs: Date.now() - apiStartedAt,
-            sectionCounts: getHomepageSectionCounts(data),
-          });
-          return data;
-        }
-      }
+    const data = await fetchBackendData<HomepageApiResponse>("/api/homepage");
+    if (data && hasHomepageItems(data) && data.data?.success !== false) {
+      homepageFeedCache = { data, timestamp: Date.now() };
+      logHomepageSsr(diagnostics, {
+        source: "api.hindi-anime.com",
+        attempt: "authenticated-homepage",
+        outcome: "success",
+        elapsedMs: Date.now() - startedAt,
+        sectionCounts: getHomepageSectionCounts(data),
+      });
+      return data;
     }
+    logHomepageSsr(diagnostics, {
+      source: "api.hindi-anime.com",
+      attempt: "authenticated-homepage",
+      outcome: "unavailable",
+      elapsedMs: Date.now() - startedAt,
+      errorCategory: "unauthorized-or-empty",
+    });
   } catch (err) {
     rethrowNextControlFlow(err);
     const error = err instanceof Error ? err : new Error(String(err));
     logHomepageSsr(diagnostics, {
-      source: "catalog-api-homepage",
-      attempt: "fetch",
+      source: "api.hindi-anime.com",
+      attempt: "authenticated-homepage",
       outcome: "error",
-      elapsedMs: Date.now() - apiStartedAt,
+      elapsedMs: Date.now() - startedAt,
       errorCategory: error.name === "AbortError" || error.name === "TimeoutError" ? "timeout" : "request-error",
     });
   }
-
-  // Fallback 1: Direct scrape from AnimeSalt via Cloudflare Worker proxy
-  const scrapedFeed = await scrapeDirectHomepageFeed(diagnostics);
-  if (hasHomepageItems(scrapedFeed)) {
-    homepageFeedCache = { data: scrapedFeed!, timestamp: Date.now() };
-    return scrapedFeed;
-  }
-
-  // Fallback 2: Cached in-memory feed if available
-  const cachedFeed = homepageFeedCache?.data;
-  if (hasHomepageItems(cachedFeed)) {
-    logHomepageSsr(diagnostics, {
-      source: "homepage-memory-cache",
-      attempt: "stale-fallback",
-      outcome: "hit",
-      sectionCounts: getHomepageSectionCounts(cachedFeed),
-    });
-    return cachedFeed ?? null;
-  }
-
-  logHomepageSsr(diagnostics, {
-    source: "homepage-feed",
-    attempt: "fallback-chain",
-    outcome: "empty",
-    errorCategory: "no-valid-feed",
-    sectionCounts: { freshDrops: 0, latestAnimeMovies: 0, mostWatchedFilms: 0, mostWatchedSeries: 0, onAirSeries: 0 },
-  });
   return null;
 }
 
@@ -2321,41 +2038,25 @@ export async function searchAnime(
   const cleanKeyword = normalizeApiSearchQuery(keyword || "");
   if (!cleanKeyword) return null;
 
-  // 1. Try upstream API
-  if (typeof window === "undefined") {
-    const data = await fetchCachedAnimeSearch(cleanKeyword, page);
-    if (data) return data;
-  } else {
-    const url = `${API_BASE_URL}/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`;
-    try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (res.ok) {
-        const data: AnimeSearchResponse = await res.json();
-        if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
-      }
-    } catch (error) {
-      rethrowNextControlFlow(error);
-      // Fall through to AnimeSalt when the configured API is unavailable.
-    }
-  }
-
-  // Callers can disable scraping when they need an API-only lookup.
-  if (options.allowScraperFallback === false) return null;
-
-  // 2. Search one AnimeSalt results page; do not scan the full catalog.
   try {
-    const scraped = await scrapeAnimeSaltSearch(cleanKeyword, page);
-    if (scraped && scraped.results.length > 0) {
-      return {
-        success: true,
-        results: scraped,
-      };
-    }
+    const response = typeof window === "undefined"
+      ? await fetchBackendData<AnimeSearchResponse>(
+          `/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`
+        )
+      : await (async () => {
+          const result = await fetch(
+            `/api/search?s=${encodeURIComponent(cleanKeyword)}&page=${page}`,
+            { cache: "no-store" }
+          );
+          return result.ok ? await result.json() as AnimeSearchResponse : null;
+        })();
+    const data = response;
+    if (Array.isArray(data?.results?.results) && data.results.results.length > 0) return data;
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("searchAnime scraper fallback error:", err);
+    console.error("searchAnime backend request failed:", err);
   }
-
+  void options;
   return null;
 }
 
@@ -2497,64 +2198,13 @@ export async function getAnimeInfo(
 ): Promise<AnimeInfoResponse | null> {
   if (!animeId) return null;
   const cleanId = cleanAnimeSlug(animeId) || animeId;
-
-  // 1. Fetch rich metadata via AniList
   try {
-    const aniMeta = await fetchAniListMeta(cleanId);
-    if (aniMeta && aniMeta.overview && aniMeta.poster) {
-      return { success: true, data: aniMeta };
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-  }
-
-  // 2. Fetch from legacy API if available
-  try {
-    const url = `${API_BASE_URL}/api/info?id=${encodeURIComponent(cleanId)}`;
-    const res = await fetch(url, {
-      next: { revalidate: 300 },
-    });
-    if (res.ok) {
-      const data: AnimeInfoResponse = await res.json();
-      const resolved = resolveAnimeInfoData(data);
-      if (resolved && (!resolved.title || !resolved.overview)) {
-        const mock = getAnimeBySlug(cleanId);
-        if (mock) {
-          resolved.title = resolved.title || mock.title;
-          resolved.overview = resolved.overview || mock.synopsis;
-          resolved.poster = isUsableImageUrl(resolved.poster) ? resolved.poster : mock.poster;
-          resolved.genres = resolved.genres?.length ? resolved.genres : mock.genres;
-        }
-        return { success: true, data: resolved };
-      }
-      return data;
-    }
+    if (typeof window !== "undefined") return null;
+    return await fetchBackendData<AnimeInfoResponse>(`/api/info?id=${encodeURIComponent(cleanId)}`);
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("getAnimeInfo API error:", err);
+    console.error("getAnimeInfo authenticated backend request failed:", err);
   }
-
-  // 3. Fallback to local mock database
-  const mock = getAnimeBySlug(cleanId);
-  if (mock) {
-    return {
-      success: true,
-      data: {
-        title: mock.title,
-        anime_id: cleanId,
-        poster: mock.poster,
-        backdrop: mock.backdrop,
-        overview: mock.synopsis,
-        genres: mock.genres,
-        year: String(mock.year),
-        rating: String(mock.rating),
-        seasons: String(mock.seasons),
-        episodes: String(mock.episodeCount),
-        language: mock.languages.join(", "),
-      },
-    };
-  }
-
   return null;
 }
 
@@ -2563,41 +2213,12 @@ export async function getMovieInfo(
 ): Promise<MovieInfoResponse | null> {
   if (!movieId) return null;
   const cleanId = cleanAnimeSlug(movieId) || movieId;
-
-  // 1. Fetch rich metadata via AniList
   try {
-    const aniMeta = await fetchAniListMeta(cleanId);
-    if (aniMeta && aniMeta.overview) {
-      return {
-        success: true,
-        results: {
-          title: aniMeta.title,
-          anime_id: cleanId,
-          format: aniMeta.format,
-          poster: aniMeta.poster,
-          backdrop: aniMeta.backdrop,
-          overview: aniMeta.overview,
-          genres: aniMeta.genres,
-          year: aniMeta.year,
-          rating: aniMeta.rating,
-          languages: ["hindi", "english", "japanese"],
-        },
-      };
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-  }
-
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/movie?id=${encodeURIComponent(cleanId)}`, {
-      next: { revalidate: 300 },
-    });
-    if (res.ok) {
-      return (await res.json()) as MovieInfoResponse;
-    }
+    if (typeof window !== "undefined") return null;
+    return await fetchBackendData<MovieInfoResponse>(`/api/movie?id=${encodeURIComponent(cleanId)}`);
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("getMovieInfo API error:", err);
+    console.error("getMovieInfo authenticated backend request failed:", err);
   }
   return null;
 }
@@ -2662,9 +2283,6 @@ export interface ScrapedSeriesMeta {
   isMovie?: boolean;
   genres?: string[];
 }
-
-const seriesScrapeCache = new Map<string, { data: ScrapedSeriesMeta; timestamp: number }>();
-const seriesScrapeInFlight = new Map<string, Promise<ScrapedSeriesMeta | null>>();
 
 function parseEpisodesFromHtml(html: string): EpisodeItem[] {
   const episodes: EpisodeItem[] = [];
@@ -2847,49 +2465,25 @@ async function fetchHtmlWithWorkerFallback(
 export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta | null> {
   const cleanId = cleanAnimeSlug(slug) || slug;
   if (!cleanId) return Promise.resolve(null);
-
-  const cached = seriesScrapeCache.get(cleanId);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return Promise.resolve(cached.data);
-  }
-
-  const pending = seriesScrapeInFlight.get(cleanId);
-  if (pending) return pending;
-
-  // Jujutsu Kaisen's movie URL redirects to Jujutsu Kaisen 0, while the
-  // series has the same base slug. Refresh only this ambiguous cached result
-  // so an older movie classification cannot keep winning for six hours.
-  const cacheVersion = cleanId === "jujutsu-kaisen" ? "series-first-v2" : "v1";
-  const request = cacheValidatedScraperResult(
-    ["series-detail", cleanId, cacheVersion],
-    300,
-    () => scrapeDirectSeriesDataUnshared(cleanId),
-    (result): result is ScrapedSeriesMeta => Boolean(
-      result &&
-      (result.title || result.poster || result.synopsis || result.seasons.length > 0 || result.s1Episodes.length > 0)
-    )
-  );
-  seriesScrapeInFlight.set(cleanId, request);
-  const cleanup = () => {
-    if (seriesScrapeInFlight.get(cleanId) === request) {
-      seriesScrapeInFlight.delete(cleanId);
-    }
-  };
-  void request.then(cleanup, cleanup);
-  return request;
+  return scrapeDirectSeriesDataUnshared(cleanId);
 }
 
 async function fetchBackendData<T>(path: string): Promise<T | null> {
   if (typeof window !== "undefined") return null;
-  const baseUrl = (process.env.KOYEB_BACKEND_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "").trim().replace(/\/+$/, "");
-  if (!baseUrl) return null;
+  if (!path.startsWith("/api/")) return null;
   const token = (process.env.KOYEB_AUTH_TOKEN || process.env.AUTH_TOKEN || "").trim();
+  if (!token) {
+    console.error("[api-client] KOYEB_AUTH_TOKEN is missing; refusing unauthenticated backend request.");
+    return null;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`${baseUrl}${path}`, {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    };
+    const res = await fetch(`https://api.hindi-anime.com${path}`, {
       headers,
       signal: controller.signal,
       cache: "no-store",
@@ -2992,112 +2586,29 @@ export async function getEpisodes(
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   const seasonNum = typeof season === "string" ? parseInt(season, 10) || 1 : season;
 
-  // 0. Query Express backend authoritative /api/episodes
   try {
     const backendData = await fetchBackendData<{
       success: boolean;
-      data?: {
-        totalSeasons?: string;
-        seasons?: Array<{ season: string; text?: string }>;
-        episodes?: EpisodeItem[];
-      };
+      data?: { totalSeasons?: string; seasons?: Array<{ season: string; text?: string }>; episodes?: EpisodeItem[] };
+      results?: { totalSeasons?: string; seasons?: Array<{ season: string; text?: string }>; episodes?: EpisodeItem[] };
     }>(`/api/episodes?id=${encodeURIComponent(cleanId)}&season=${seasonNum}`);
-    if (backendData?.success && backendData.data?.episodes && backendData.data.episodes.length > 0) {
+    const backendResults = backendData?.results ?? backendData?.data;
+    const episodes = backendResults?.episodes;
+    if (backendData?.success && backendResults && Array.isArray(episodes) && episodes.length > 0) {
+      const seasons = Array.isArray(backendResults.seasons) ? backendResults.seasons : [];
       return {
         success: true,
         results: {
-          totalSeasons: backendData.data.totalSeasons || "1",
-          seasons: (backendData.data.seasons || [{ season: String(seasonNum), text: "Season " + seasonNum }]).map((s) => ({ season: String(s.season), text: s.text || ("Season " + s.season) })),
-          episodes: backendData.data.episodes,
-        },
-      };
-    }
-  } catch {}
-
-  // 1. Try remote API first if configured and responsive
-  try {
-    const url = `${API_BASE_URL}/api/episode?id=${encodeURIComponent(cleanId)}&season=${seasonNum}`;
-    const res = await fetch(url, {
-      next: { revalidate: 60 },
-    });
-    if (res.ok) {
-      const data: EpisodeResponse = await res.json();
-      if (data?.results?.episodes && data.results.episodes.length > 0) {
-        // If seasons array is missing or incomplete, ensure all available seasons are populated
-        if (!data.results.seasons || data.results.seasons.length <= 1) {
-          const allSeasons = await getAvailableSeasons(cleanId);
-          if (allSeasons.length > 1) {
-            data.results.totalSeasons = String(allSeasons.length);
-            data.results.seasons = allSeasons.map((s) => ({
-              season: String(s),
-              text: `Season ${s}`,
-            }));
-          }
-        }
-        return data;
-      }
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // remote API failed, fall back to direct upstream scraper
-  }
-
-  // 2. Direct upstream scraper (resilient, complete, zero truncation)
-  try {
-    const meta = await scrapeDirectSeriesData(cleanId);
-    const episodes = await scrapeDirectSeasonEpisodes(cleanId, seasonNum);
-    const allSeasons = meta?.seasons && meta.seasons.length > 0 ? meta.seasons : await getAvailableSeasons(cleanId);
-    const seasonsList = allSeasons.length > 0 ? allSeasons : [seasonNum];
-
-    if (episodes && episodes.length > 0) {
-      return {
-        success: true,
-        results: {
-          totalSeasons: String(seasonsList.length || 1),
-          seasons: seasonsList.map((s) => ({
-            season: String(s),
-            text: `Season ${s}`,
-          })),
-          episodes,
-        },
-      };
-    }
-  } catch (err) {
-    rethrowNextControlFlow(err);
-    console.error(`[getEpisodes] Error fetching episodes for ${cleanId} s${seasonNum}:`, err);
-  }
-
-  // 3. Fallback: synthesize all episodes from metadata (AniList / mock) so all episodes exist and are playable
-  try {
-    const aniMeta = await fetchAniListMeta(cleanId);
-    const mock = getAnimeBySlug(cleanId);
-    const allSeasons = await getAvailableSeasons(cleanId);
-    const seasonsList = allSeasons.length > 0 ? allSeasons : [seasonNum];
-    const totalEp = parseInt(aniMeta?.episodes || "", 10) || mock?.episodeCount || 12;
-    if (totalEp > 0) {
-      const episodes: EpisodeItem[] = Array.from({ length: totalEp }, (_, i) => ({
-        title: `Episode ${i + 1}`,
-        season: String(seasonNum),
-        episode: String(i + 1),
-        image: aniMeta?.poster || mock?.poster || "",
-      }));
-      return {
-        success: true,
-        results: {
-          totalSeasons: String(seasonsList.length),
-          seasons: seasonsList.map((s) => ({
-            season: String(s),
-            text: `Season ${s}`,
-          })),
+          totalSeasons: backendResults.totalSeasons || String(seasons.length || 1),
+          seasons: seasons.map((s) => ({ season: String(s.season), text: s.text || `Season ${s.season}` })),
           episodes,
         },
       };
     }
   } catch (error) {
     rethrowNextControlFlow(error);
-    // fallback error
+    console.error(`[getEpisodes] Authenticated backend request failed for ${cleanId} s${seasonNum}:`, error);
   }
-
   return null;
 }
 
@@ -3111,54 +2622,18 @@ export async function getAvailableSeasons(
   if (!animeId) return [];
   const cleanId = cleanAnimeSlug(animeId) || animeId;
 
-  // 1. Direct discovery: pulls all season buttons in a single request
-  const meta = await scrapeDirectSeriesData(cleanId);
-  if (meta && meta.seasons && meta.seasons.length > 0) {
-    return meta.seasons;
-  }
-
-  // 2. Query remote API
   try {
-    const res = await fetch(`${API_BASE_URL}/api/episode?id=${encodeURIComponent(cleanId)}&season=1`, {
-      next: { revalidate: 60 },
-    });
-    if (res.ok) {
-      const data: EpisodeResponse = await res.json();
-      if (Array.isArray(data?.results?.seasons) && data.results.seasons.length > 0) {
-        const sNums = data.results.seasons
-          .map((s) => parseInt(s.season, 10))
-          .filter((n) => !isNaN(n) && n > 0);
-        if (sNums.length > 0) return [...new Set(sNums)].sort((a, b) => a - b);
-      }
-      const total = parseInt(data?.results?.totalSeasons, 10);
-      if (!isNaN(total) && total > 0) {
-        return Array.from({ length: total }, (_, i) => i + 1);
-      }
-    }
+    const data = await fetchBackendData<EpisodeResponse>(`/api/episodes?id=${encodeURIComponent(cleanId)}&season=1`);
+    const seasons = data?.results?.seasons
+      ?.map((item) => Number.parseInt(item.season, 10))
+      .filter((number) => Number.isInteger(number) && number > 0) ?? [];
+    if (seasons.length) return [...new Set(seasons)].sort((a, b) => a - b);
+    const total = Number.parseInt(data?.results?.totalSeasons ?? "", 10);
+    if (Number.isInteger(total) && total > 0) return Array.from({ length: total }, (_, index) => index + 1);
   } catch (error) {
     rethrowNextControlFlow(error);
-    // ignore
   }
-
-  // 3. Fallback: check curated mock metadata
-  const mock = getAnimeBySlug(cleanId);
-  if (mock?.seasons && mock.seasons > 1) {
-    return Array.from({ length: mock.seasons }, (_, i) => i + 1);
-  }
-
-  // 4. Fallback: check AniList computed seasons
-  try {
-    const ani = await fetchAniListMeta(cleanId);
-    const aniSeasons = parseInt(ani?.seasons || "1", 10);
-    if (aniSeasons > 1) {
-      return Array.from({ length: aniSeasons }, (_, i) => i + 1);
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // ignore
-  }
-
-  return [1];
+  return [];
 }
 
 /**
@@ -3285,14 +2760,15 @@ export async function getEpisodeStreams(
   const cleanId = cleanAnimeSlug(animeId) || animeId;
   if (!cleanId) return null;
   try {
-    const url = `${API_BASE_URL}/api/stream?id=${encodeURIComponent(cleanId)}&season=${season}&ep=${episode}`;
-    const res = await fetch(url, {
-      // Do NOT cache stream responses — they are ephemeral
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const data: StreamResponse = await res.json();
-    return data;
+    const path = `/api/stream?id=${encodeURIComponent(cleanId)}&season=${season}&ep=${episode}&source=all`;
+    if (typeof window === "undefined") {
+      return await fetchBackendData<StreamResponse>(path);
+    }
+    const response = await fetch(
+      `/api/stream-proxy?id=${encodeURIComponent(cleanId)}&season=${season}&ep=${episode}`,
+      { cache: "no-store" }
+    );
+    return response.ok ? (await response.json()) as StreamResponse : null;
   } catch (err) {
     console.error("getEpisodeStreams API error:", err);
     return null;
@@ -3310,33 +2786,14 @@ export interface HomepageData {
 }
 
 export function getFallbackHomepageData(): HomepageData {
-  const rankedAnime = [...anime].sort(
-    (a, b) => (a.trendingRank ?? 99) - (b.trendingRank ?? 99)
-  ).filter((item) => !item.isMock);
-
-  // These sections claim to reflect current upstream activity. Never fill them
-  // with curated rankings or synthetic episodes when AnimeSalt is unavailable.
-  const heroItems = rankedAnime.slice(0, 6);
-  const trendingItems: Anime[] = [];
-  const popularItems = rankedAnime
-    .filter((a) => a.type === "TV")
-    .sort((a, b) => (a.popularityRank ?? 99) - (b.popularityRank ?? 99));
-  const movieItems = rankedAnime.filter((a) => a.type === "Movie");
-  const seriesItems = rankedAnime.filter((a) => a.type === "TV");
-  const upcomingItems = rankedAnime.filter(
-    (a) => a.status === "Upcoming" || a.status === "Ongoing"
-  );
-
-  const latestEpisodes: Episode[] = [];
-
   return {
-    heroItems,
-    latestEpisodes,
-    trendingItems,
-    popularItems,
-    movieItems,
-    seriesItems,
-    upcomingItems,
+    heroItems: [],
+    latestEpisodes: [],
+    trendingItems: [],
+    popularItems: [],
+    movieItems: [],
+    seriesItems: [],
+    upcomingItems: [],
   };
 }
 
@@ -3433,7 +2890,7 @@ export async function getHomepageData(options: { diagnostics?: boolean } = {}): 
       errorCategory: `mapping-failure-${error.name}`,
       sectionCounts: getHomepageSectionCounts(feed),
     });
-    throw err;
+    return getFallbackHomepageData();
   }
 
   const result = {

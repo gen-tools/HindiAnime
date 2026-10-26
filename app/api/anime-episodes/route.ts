@@ -27,15 +27,15 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid anime or season" },
-      { status: 400, headers: { "Cache-Control": "no-store" } }
+      { status: 400, headers: { "Cache-Control": "private, no-store" } }
     );
   }
 
   const record = getAnimeBySlug(slug);
   if (record?.isMock) {
     return NextResponse.json(
-      { episodes: [] },
-      { headers: { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" } }
+      { error: "Episodes unavailable" },
+      { status: 502, headers: { "Cache-Control": "private, no-store" } }
     );
   }
 
@@ -53,19 +53,19 @@ export async function GET(request: NextRequest) {
     if (!Array.isArray(rawEpisodes) || rawEpisodes.length === 0) {
       return NextResponse.json(
         { error: "Episodes unavailable" },
-        { status: 502, headers: { "Cache-Control": "no-store" } }
+        { status: 502, headers: { "Cache-Control": "private, no-store" } }
       );
     }
 
     return NextResponse.json(
       { episodes: rawEpisodes },
-      { headers: { "Cache-Control": "public, s-maxage=21600, stale-while-revalidate=86400" } }
+      { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (err) {
     console.error("[api/anime-episodes] Koyeb fetch failed:", err instanceof Error ? err.message : err);
     return NextResponse.json(
       { error: "Episodes unavailable" },
-      { status: 502, headers: { "Cache-Control": "no-store" } }
+      { status: 502, headers: { "Cache-Control": "private, no-store" } }
     );
   }
 }

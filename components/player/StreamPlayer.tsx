@@ -145,23 +145,42 @@ function abortPlaybackRequest(controller: AbortController | null, message: strin
   controller.abort(new DOMException(message, "AbortError"));
 }
 
-function parseStreamResponse(text: string): { results?: StreamItem[] } | null {
+function parseStreamResponse(text: string): { results?: StreamItem[]; byLanguage?: Record<string, { sources?: StreamItem[] }> } | null {
   try {
-    const parsed = JSON.parse(text) as { results?: StreamItem[] };
-    if (Array.isArray(parsed.results)) return parsed;
+    const parsed = JSON.parse(text) as { results?: StreamItem[]; byLanguage?: Record<string, { sources?: StreamItem[] }> };
+    if (Array.isArray(parsed.results)) return withLanguageSources(parsed);
   } catch {
     // The POST stream can contain multiple newline-delimited snapshots.
   }
-  let latest: { results?: StreamItem[] } | null = null;
+  let latest: { results?: StreamItem[]; byLanguage?: Record<string, { sources?: StreamItem[] }> } | null = null;
   for (const line of text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
     try {
-      const parsed = JSON.parse(line) as { results?: StreamItem[] };
-      if (Array.isArray(parsed.results)) latest = parsed;
+      const parsed = JSON.parse(line) as { results?: StreamItem[]; byLanguage?: Record<string, { sources?: StreamItem[] }> };
+      if (Array.isArray(parsed.results)) latest = withLanguageSources(parsed);
     } catch {
       // Ignore incomplete or non-JSON stream lines.
     }
   }
   return latest;
+}
+
+function withLanguageSources(
+  response: { results?: StreamItem[]; byLanguage?: Record<string, { sources?: StreamItem[] }> }
+): { results?: StreamItem[]; byLanguage?: Record<string, { sources?: StreamItem[] }> } {
+  const combined = [
+    ...(response.results ?? []),
+    ...Object.values(response.byLanguage ?? {}).flatMap((entry) => entry.sources ?? []),
+  ];
+  const seen = new Set<string>();
+  return {
+    ...response,
+    results: combined.filter((item) => {
+      const key = item.url || item.embed || `${item.server}:${item.label}`;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
+  };
 }
 
 
@@ -411,41 +430,13 @@ export function StreamPlayer({
       return true;
     };
 
-    const streamQs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}&source=all`;
-
     try {
-      // ── Primary: call the Express backend directly from the browser.
-      // This bypasses Vercel API routes completely, saving Vercel CPU quota.
-      let data: { results?: StreamItem[] } | null = null;
-
-      const backendBase = (process.env.NEXT_PUBLIC_BACKEND_URL || "").trim().replace(/\/+$/, "");
-
-      if (backendBase) {
-        try {
-          const res = await fetch(`${backendBase}/api/stream${streamQs}`, {
-            signal: controller.signal,
-            headers: {
-              Accept: "application/json",
-              ...(process.env.NEXT_PUBLIC_AUTH_TOKEN ? { Authorization: `Bearer ${process.env.NEXT_PUBLIC_AUTH_TOKEN}` } : {}),
-            },
-          });
-          if (res.ok) data = parseStreamResponse(await res.text());
-        } catch (error) {
-          if (isAbortError(error) || controller.signal.aborted) return;
-        }
-      }
-
-      // ── Fallback: Vercel edge route (only when backend is unreachable).
+      // Keep the backend credential server-side; the Vercel route calls only
+      // api.hindi-anime.com and refuses requests without KOYEB_AUTH_TOKEN.
       if (!isCurrentRequest()) return;
-      if (!data || !Array.isArray(data.results) || data.results.length === 0) {
-        try {
-          const fallbackQs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
-          const res = await fetch(`/api/stream-proxy${fallbackQs}`, { signal: controller.signal });
-          if (res.ok) data = parseStreamResponse(await res.text());
-        } catch (error) {
-          if (isAbortError(error) || controller.signal.aborted) return;
-        }
-      }
+      const fallbackQs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}`;
+      const response = await fetch(`/api/stream-proxy${fallbackQs}`, { signal: controller.signal });
+      const data = response.ok ? parseStreamResponse(await response.text()) : null;
       if (!isCurrentRequest()) return;
       const parsed = parseServers(data?.results ?? []);
       if (parsed.length === 0) {

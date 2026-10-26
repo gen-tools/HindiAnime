@@ -132,6 +132,8 @@ export interface MovieInfoData {
 export interface MovieInfoResponse {
   success: boolean;
   message?: string;
+  /** api.hindi-anime.com returns movie metadata in data. */
+  data?: MovieInfoData | string | null;
   /** Redis may return this as a JSON string instead of an object. */
   results?: MovieInfoData | string | null;
 }

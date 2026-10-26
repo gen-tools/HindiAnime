@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { cache } from "react";
 import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { PosterArt } from "@/components/anime/PosterArt";
@@ -32,10 +33,11 @@ import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
-import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
-// Dynamic anime slugs are rendered once on demand, then served from the ISR cache.
-export const revalidate = 21600;
+// Anime detail is backend-authorized per request. Do not serve a cached page
+// after the backend credential has been removed or rejected.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 export const dynamicParams = true;
 export function generateStaticParams() {
   return [];
@@ -79,18 +81,6 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const cleanSlug = cleanAnimeSlug(slug) || slug;
-  const mockRecord = getAnimeBySlug(cleanSlug);
-  if (mockRecord?.isMock) {
-    const mockTitle = `${mockRecord.title} Hindi Dubbed | Hindi Anime`;
-    const mockArtwork = new URL(MOCK_ARTWORK_URL, CANONICAL_SITE_ORIGIN).toString();
-    return createCanonicalMetadata(`/anime/${cleanSlug}`, {
-      title: { absolute: mockTitle },
-      description: mockRecord.synopsis,
-      robots: { index: false, follow: true },
-      openGraph: { title: mockTitle, description: mockRecord.synopsis, images: [{ url: mockArtwork, alt: mockRecord.title }] },
-      twitter: { card: "summary_large_image", title: mockTitle, description: mockRecord.synopsis, images: [mockArtwork] },
-    });
-  }
   const [[apiInfo, movieInfo, searchRes, directData], epApiRes] = await Promise.all([
     getAnimePageBaseData(cleanSlug),
     getAnimePageEpisodes(cleanSlug, 1),
@@ -387,19 +377,6 @@ export default async function AnimeDetailPage({
   const currentSeason = "1";
   const sParams: Record<string, string | undefined> = {};
   const seasonNum = parseInt(currentSeason, 10) || 1;
-  const mockRecord = getAnimeBySlug(cleanSlug);
-  if (mockRecord?.isMock) {
-    return (
-      <div className="pb-14">
-        <div className="relative h-64 overflow-hidden border-b border-border-line sm:h-80 md:h-96">
-          <PosterArt seed={mockRecord.backdrop} title={mockRecord.title} orientation="landscape" className="h-full" />
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-background/10" />
-        </div>
-        <AnimeInfo item={mockRecord} />
-      </div>
-    );
-  }
-
   // 1. Fetch info, movieInfo, search, direct scraper, seasons, and episodes in parallel
   const [[apiInfo, movieInfo, searchRes, directData], availableSeasons, epApiRes] =
     await Promise.all([
@@ -412,6 +389,15 @@ export default async function AnimeDetailPage({
   const searchMatch = searchRes?.results?.results?.find(
     (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
   );
+
+  const hasAuthorizedAnimeData = Boolean(
+    resolveAnimeInfoData(apiInfo)?.title ||
+    resolveMovieInfoData(movieInfo)?.title ||
+    directData?.title ||
+    searchMatch ||
+    epApiRes?.results?.episodes?.length
+  );
+  if (!hasAuthorizedAnimeData) notFound();
 
   const rawEpisodes = epApiRes?.results?.episodes || [];
   const s1Fallback =

@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   const kindParam = request.nextUrl.searchParams.get("kind");
   if (kindParam !== "series" && kindParam !== "movies") {
     return NextResponse.json({ error: "Invalid catalog kind" }, {
-      status: 400, headers: { "Cache-Control": "no-store" },
+      status: 400, headers: { "Cache-Control": "private, no-store" },
     });
   }
 
@@ -25,17 +25,17 @@ export async function GET(request: NextRequest) {
     const results = (c?.results as Record<string, unknown>)?.results;
     if (!Array.isArray(results) || results.length === 0) {
       return NextResponse.json({ error: "Catalog is temporarily unavailable" }, {
-        status: 502, headers: { "Cache-Control": "no-store" },
+        status: 502, headers: { "Cache-Control": "private, no-store" },
       });
     }
 
     return NextResponse.json(catalog, {
-      headers: { "Cache-Control": "public, max-age=0, s-maxage=300, stale-while-revalidate=600" },
+      headers: { "Cache-Control": "private, no-store" },
     });
   } catch (err) {
     console.error("[api/catalog] Koyeb fetch failed:", err instanceof Error ? err.message : err);
     return NextResponse.json({ error: "Catalog is temporarily unavailable" }, {
-      status: 502, headers: { "Cache-Control": "no-store" },
+      status: 502, headers: { "Cache-Control": "private, no-store" },
     });
   }
 }

@@ -2,14 +2,12 @@ import { NextResponse } from "next/server";
 import { koyebFetch } from "@/lib/api/koyeb-client";
 
 export const runtime = "nodejs";
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET() {
   try {
-    const data = await koyebFetch("/api/homepage", {
-      next: { revalidate: 300 },
-      timeoutSeconds: 25,
-    });
+    const data = await koyebFetch("/api/homepage", { timeoutSeconds: 25 });
 
     const d = data as Record<string, unknown>;
     const sections = (d?.data as Record<string, unknown>)?.results as Record<string, unknown> | undefined;
@@ -21,20 +19,20 @@ export async function GET() {
     if (!hasData) {
       return NextResponse.json(
         { error: "Homepage activity feed is temporarily unavailable" },
-        { status: 503, headers: { "Cache-Control": "no-store" } }
+        { status: 503, headers: { "Cache-Control": "private, no-store" } }
       );
     }
 
     return NextResponse.json(data, {
       headers: {
-        "Cache-Control": "public, max-age=0, s-maxage=300, stale-while-revalidate=600",
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (err) {
     console.error("[api/homepage] Koyeb fetch failed:", err instanceof Error ? err.message : err);
     return NextResponse.json(
       { error: "Homepage activity feed is temporarily unavailable" },
-      { status: 503, headers: { "Cache-Control": "no-store" } }
+      { status: 503, headers: { "Cache-Control": "private, no-store" } }
     );
   }
 }

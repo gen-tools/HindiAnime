@@ -10,29 +10,35 @@ import {
 
 import { createCanonicalMetadata } from "@/lib/seo";
 
-// Refresh the homepage snapshot every five minutes; visitors are served cache hits.
-export const revalidate = 3600;
+// Always re-check the server credential before rendering API-backed homepage data.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = createCanonicalMetadata("/");
 
 export default async function HomePage() {
   const homepageData = await getHomepageData();
+  const hasAuthorizedHomeData = Boolean(
+    homepageData.heroItems.length ||
+    homepageData.latestEpisodes.length ||
+    homepageData.trendingItems.length ||
+    homepageData.popularItems.length ||
+    homepageData.movieItems.length ||
+    homepageData.seriesItems.length
+  );
 
   return (
     <>
       <h1 className="sr-only">Hindi Anime – Watch Hindi Dubbed Anime Online</h1>
       <BrowserHomepageSections initialData={homepageData} />
 
-      {/* 8. Other existing sections */}
-      <FadeIn>
-        <LanguageSection />
-      </FadeIn>
-      <FadeIn>
-        <GenreSection />
-      </FadeIn>
-      <FadeIn>
-        <DiscoverySection />
-      </FadeIn>
+      {hasAuthorizedHomeData && (
+        <>
+          <FadeIn><LanguageSection /></FadeIn>
+          <FadeIn><GenreSection /></FadeIn>
+          <FadeIn><DiscoverySection /></FadeIn>
+        </>
+      )}
     </>
   );
 }

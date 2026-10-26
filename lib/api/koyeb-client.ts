@@ -1,17 +1,15 @@
 import "server-only";
 
-function getKoyebBaseUrl(): string {
-  const url = (process.env.KOYEB_BACKEND_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "").trim().replace(/\/+$/, "");
-  if (!url) {
-    throw new Error(
-      "[koyeb-client] KOYEB_BACKEND_URL is not set. Add it to Vercel environment variables."
-    );
-  }
-  return url;
-}
+const BACKEND_BASE_URL = "https://api.hindi-anime.com";
 
 function getKoyebAuthToken(): string {
-  return (process.env.KOYEB_AUTH_TOKEN || process.env.AUTH_TOKEN || "").trim();
+  const token = (process.env.KOYEB_AUTH_TOKEN || process.env.AUTH_TOKEN || "").trim();
+  if (!token) {
+    throw new Error(
+      "[koyeb-client] KOYEB_AUTH_TOKEN is required. Set it as a server-only Vercel environment variable."
+    );
+  }
+  return token;
 }
 
 function buildHeaders(extra?: Record<string, string>): Headers {
@@ -24,7 +22,6 @@ function buildHeaders(extra?: Record<string, string>): Headers {
 
 interface KoyebFetchOptions {
   timeoutSeconds?: number;
-  next?: { revalidate?: number; tags?: string[] };
   headers?: Record<string, string>;
 }
 
@@ -32,23 +29,21 @@ export async function koyebFetch<T = unknown>(
   path: string,
   opts: KoyebFetchOptions = {}
 ): Promise<T> {
-  const baseUrl = getKoyebBaseUrl();
-  const url = `${baseUrl}${path}`;
-  const { timeoutSeconds = 20, next, headers: extraHeaders } = opts;
+  if (!path.startsWith("/api/")) {
+    throw new Error("[koyeb-client] Only /api/* backend paths are allowed.");
+  }
+  const url = `${BACKEND_BASE_URL}${path}`;
+  const { timeoutSeconds = 20, headers: extraHeaders } = opts;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
 
   try {
-    const fetchOpts: RequestInit & { next?: { revalidate?: number; tags?: string[] } } = {
+    const fetchOpts: RequestInit = {
       headers: buildHeaders(extraHeaders),
       signal: controller.signal,
+      cache: "no-store",
     };
-    if (next) {
-      fetchOpts.next = next;
-    } else {
-      fetchOpts.cache = "no-store";
-    }
 
     const res = await fetch(url, fetchOpts);
     if (!res.ok) throw new Error(`Koyeb backend returned HTTP ${res.status} for ${path}`);
