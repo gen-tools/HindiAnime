@@ -1,13 +1,9 @@
 /**
  * GET /api/stream-proxy?id=<slug>&season=<n>&ep=<n>
  *
- * Proxies streams directly from the backend server resolver.
- * Server priority order is managed by the backend:
- *   Server 1 -> HLS multi-language stream (HindiAnime Player)
- *   Server 2 -> MyStream (AnimeSalt embed)
- *   Server 3 -> Google Drive 1080p HD (AnimaHD)
- *   Server 4 -> Abyss Multi-Audio (combined languages)
- *   Server 5+ -> PlayZen and remaining sources
+ * Proxies the authenticated stream list from api.hindi-anime.com. The player
+ * applies its preferred order (MyStream, Google Drive, then PlayZen) while
+ * preserving any other valid sources after those.
  */
 import { NextResponse } from "next/server";
 import { koyebFetch } from "@/lib/api/koyeb-client";

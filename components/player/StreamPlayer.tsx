@@ -46,9 +46,19 @@ interface ValidServer {
 function parseServers(results: StreamItem[]): ValidServer[] {
   const servers: ValidServer[] = [];
   const seen = new Set<string>();
+  const priority = (item: StreamItem) => {
+    const provider = `${item.label || ""} ${item.source || ""} ${item.sourceProvider || ""} ${item.server || ""}`;
+    if (/my\s*stream|ravok/i.test(provider)) return 0;
+    if (/google\s*drive|animahd/i.test(provider)) return 1;
+    if (/play\s*zen/i.test(provider)) return 2;
+    return 3;
+  };
+  const orderedResults = results
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => priority(a.item) - priority(b.item) || a.index - b.index);
 
-  for (let i = 0; i < results.length && servers.length < 7; i++) {
-    const item = results[i];
+  for (let i = 0; i < orderedResults.length && servers.length < 7; i++) {
+    const { item } = orderedResults[i];
     const isDirect = (item.type === "hls" || item.type === "mp4") && Boolean(item.url || item.embed);
     // For direct streams: prefer item.url (the proxy URL), else fall back to item.embed (raw HLS/MP4)
     // For embeds: use item.embed directly
@@ -93,9 +103,12 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
     const serverNum = servers.length + 1;
     // Use the backend's language label if available, e.g. "🇮🇳 Hindi Dub · HLS"
-    const label = item.label || (item.languageLabel
-      ? `Server ${serverNum} — ${item.languageLabel}`
-      : `Server ${serverNum}`);
+    const providerLabel = item.label?.replace(/^Server\s+\d+\s*[·—:-]\s*/i, "").trim();
+    const label = providerLabel
+      ? `Server ${serverNum} · ${providerLabel}`
+      : item.languageLabel
+        ? `Server ${serverNum} — ${item.languageLabel}`
+        : `Server ${serverNum}`;
     servers.push({
       id: `${finalType}-${i}-${dedupeKey}`,
       label,
@@ -124,7 +137,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     });
   }
 
-    return servers.map((server, index) => ({
+  return servers.map((server, index) => ({
     ...server,
     server: `Server ${index + 1}`,
     label: server.label || `Server ${index + 1}`,

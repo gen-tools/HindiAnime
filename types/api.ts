@@ -178,6 +178,8 @@ export interface StreamItem {
   server: string;
   /** Provider that supplied this stream, when known. */
   sourceProvider?: string;
+  /** Backend's source key or provider name. */
+  source?: string;
   /** Optional display label e.g. "Server 1 · 🇮🇳 Hindi Dub · HLS" */
   label?: string;
   /**
