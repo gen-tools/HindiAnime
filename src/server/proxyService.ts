@@ -2034,11 +2034,106 @@ export async function fetchAnimeSaltHomepageData(): Promise<AnimeSaltHomepageDat
     return data;
   } catch (err) {
     console.warn('[fetchAnimeSaltHomepageData-warn] Live fetch failed, using fallback data:', err instanceof Error ? err.message : String(err));
-    return getFallbackAnimeSaltHomepageData();
+    return await getFallbackAnimeSaltHomepageData();
   }
 }
 
-function getFallbackAnimeSaltHomepageData(): AnimeSaltHomepageData {
+async function getFallbackAnimeSaltHomepageData(): Promise<AnimeSaltHomepageData> {
+  const cacheKey = 'animesalt:dynamic_fallback_home';
+  const cached = cache.get<AnimeSaltHomepageData>(cacheKey);
+  if (cached) return cached.data;
+
+  let liveTrending: AnimeCardItem[] = [];
+  let liveFreshDrops: AnimeCardItem[] = [];
+
+  try {
+    const [aniRes, ahRes] = await Promise.allSettled([
+      // 1. Live Trending Anime from AniList GraphQL
+      fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          query: `query {
+            trending: Page(page: 1, perPage: 15) {
+              media(sort: TRENDING_DESC, type: ANIME, isAdult: false) {
+                id
+                title { english romaji }
+                coverImage { extraLarge large }
+                bannerImage
+                averageScore
+                seasonYear
+                episodes
+                genres
+                format
+              }
+            }
+          }`,
+        }),
+      }).then((r) => r.json()),
+
+      // 2. Live Latest Hindi Dub Drops from AnimaHD
+      fetch('https://animahd.com/wp-json/wp/v2/posts?per_page=16&_embed', {
+        headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' },
+      }).then((r) => r.json()),
+    ]);
+
+    if (aniRes.status === 'fulfilled' && aniRes.value?.data?.trending?.media) {
+      liveTrending = aniRes.value.data.trending.media.map((m: any, idx: number) => {
+        const rawTitle = m.title.english || m.title.romaji || 'Anime';
+        const cardSlug = slugify(rawTitle);
+        const img = m.coverImage?.extraLarge || m.coverImage?.large || '';
+        const isMovie = m.format === 'MOVIE';
+        return {
+          rank: idx + 1,
+          title: rawTitle,
+          slug: cardSlug,
+          url: `https://animesalt.cx/${isMovie ? 'movies' : 'series'}/${cardSlug}/`,
+          image: img,
+          type: isMovie ? 'movie' : 'series',
+          languages: ['Hindi', 'Japanese', 'English'],
+          isDubbed: true,
+          score: m.averageScore ? (m.averageScore / 10).toFixed(1) : '8.6',
+          episodes: m.episodes ? String(m.episodes) : isMovie ? '1' : '12',
+          season: 1,
+          episodeNumber: 1,
+        } as AnimeCardItem;
+      });
+    }
+
+    if (ahRes.status === 'fulfilled' && Array.isArray(ahRes.value)) {
+      liveFreshDrops = ahRes.value.map((p: any, idx: number) => {
+        let thumb = p._mal_cached_thumb || '';
+        if (!thumb && p._embedded && p._embedded['wp:featuredmedia']?.[0]) {
+          const media = p._embedded['wp:featuredmedia'][0];
+          thumb = media.media_details?.sizes?.medium?.source_url || media.source_url || '';
+        }
+        const rawTitle = (p.title?.rendered || '').replace(/&#8211;/g, '-').replace(/&#8217;/g, "'").trim();
+        const cleanTitle = rawTitle.replace(/\s*\[.*?\]/g, '').replace(/\s*S\d+(-S\d+)?/gi, '').trim() || p.slug;
+        const sMatch = rawTitle.match(/S(\d+)/i);
+        const epMatch = rawTitle.match(/EP?(\d+)/i);
+        const seasonNum = sMatch ? parseInt(sMatch[1], 10) : 1;
+        const epNum = epMatch ? parseInt(epMatch[1], 10) : idx + 1;
+        const isMovie = (p.slug || '').includes('movie') || rawTitle.toLowerCase().includes('movie');
+
+        return {
+          title: cleanTitle,
+          slug: p.slug,
+          url: `https://animahd.com/${p.slug}/`,
+          image: thumb,
+          type: isMovie ? 'movie' : 'series',
+          languages: ['Hindi', 'Multi Audio'],
+          isDubbed: true,
+          score: p._mal_cached_score && p._mal_cached_score !== 'N/A' ? p._mal_cached_score : '8.4',
+          episodes: p.season || '12',
+          season: seasonNum,
+          episodeNumber: epNum,
+        } as AnimeCardItem;
+      });
+    }
+  } catch (err) {
+    console.warn('[dynamic-fallback-error]', err);
+  }
+
   const fallbackSeries: AnimeCardItem[] = [
     {
       title: 'Solo Leveling',
@@ -2179,14 +2274,19 @@ function getFallbackAnimeSaltHomepageData(): AnimeSaltHomepageData {
     },
   ];
 
-  return {
+  const finalTrending = liveTrending.length > 0 ? liveTrending : fallbackSeries;
+  const finalDrops = liveFreshDrops.length > 0 ? liveFreshDrops : fallbackSeries.map((s, idx) => ({ ...s, episodeNumber: idx + 1 }));
+
+  const resultPayload: AnimeSaltHomepageData = {
     success: true,
-    spotlight: fallbackSeries.slice(0, 5),
-    trendingSeries: fallbackSeries,
-    trendingMovies: fallbackMovies,
-    freshDrops: fallbackSeries.map((s, idx) => ({ ...s, episodeNumber: idx + 1 })),
-    onAirSeries: fallbackSeries,
-    newArrivals: fallbackSeries.slice(0, 6),
+    spotlight: finalTrending.slice(0, 6),
+    trendingSeries: finalTrending.filter((a) => a.type !== 'movie'),
+    trendingMovies: finalTrending.filter((a) => a.type === 'movie').length > 0
+      ? finalTrending.filter((a) => a.type === 'movie')
+      : fallbackMovies,
+    freshDrops: finalDrops,
+    onAirSeries: finalTrending.filter((a) => a.type !== 'movie'),
+    newArrivals: finalDrops.slice(0, 8),
     latestMovies: fallbackMovies,
     categories: [
       { name: 'Action', slug: 'action' },
@@ -2196,6 +2296,9 @@ function getFallbackAnimeSaltHomepageData(): AnimeSaltHomepageData {
     ],
     updatedAt: new Date().toISOString(),
   };
+
+  cache.set(cacheKey, resultPayload, 10 * 60 * 1000);
+  return resultPayload;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
