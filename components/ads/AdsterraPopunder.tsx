@@ -14,6 +14,7 @@ function isAdPage(pathname: string): boolean {
   );
 }
 
+
 export function AdsterraPopunder() {
   const pathname = usePathname();
 
