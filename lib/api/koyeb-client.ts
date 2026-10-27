@@ -1,6 +1,11 @@
 import "server-only";
 
-const BACKEND_BASE_URL = "https://api.hindi-anime.com";
+const BACKEND_BASE_URL = (
+  process.env.KOYEB_BACKEND_URL ||
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  "https://api.hindi-anime.com"
+).replace(/\/$/, "");
 
 function getKoyebAuthToken(): string {
   const token = (process.env.KOYEB_AUTH_TOKEN || process.env.AUTH_TOKEN || "").trim();

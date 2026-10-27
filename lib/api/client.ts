@@ -2351,7 +2351,13 @@ function parseEpisodesFromHtml(html: string): EpisodeItem[] {
 }
 
 function buildBackendProxyUrl(targetUrl: string): string {
-  const url = new URL("https://api.hindi-anime.com/proxy");
+  const backendBase = (
+    process.env.KOYEB_BACKEND_URL ||
+    process.env.BACKEND_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "https://api.hindi-anime.com"
+  ).replace(/\/$/, "");
+  const url = new URL(`${backendBase}/proxy`);
   url.searchParams.set("url", targetUrl);
   return url.toString();
 }
@@ -2588,11 +2594,17 @@ async function fetchBackendData<T>(path: string): Promise<T | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
+    const backendBase = (
+      process.env.KOYEB_BACKEND_URL ||
+      process.env.BACKEND_URL ||
+      process.env.NEXT_PUBLIC_BACKEND_URL ||
+      "https://api.hindi-anime.com"
+    ).replace(/\/$/, "");
     const headers: Record<string, string> = {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
     };
-    const res = await fetch(`https://api.hindi-anime.com${path}`, {
+    const res = await fetch(`${backendBase}${path}`, {
       headers,
       signal: controller.signal,
       cache: "no-store",
