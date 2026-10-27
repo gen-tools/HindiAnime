@@ -17,6 +17,60 @@ import {
 import type { HomepageApiResponse } from "@/types/api";
 import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 
+const HOMEPAGE_SNAPSHOT_KEY = "hindi-anime-homepage-v1";
+const HOMEPAGE_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
+
+function hasHomepageActivity(data: HomepageData): boolean {
+  return data.trendingItems.length > 0 || data.latestEpisodes.length > 0;
+}
+
+function readHomepageSnapshot(): HomepageData | null {
+  try {
+    const raw = localStorage.getItem(HOMEPAGE_SNAPSHOT_KEY);
+    if (!raw) return null;
+
+    const snapshot: unknown = JSON.parse(raw);
+    if (!snapshot || typeof snapshot !== "object") return null;
+    const savedAt = "savedAt" in snapshot ? snapshot.savedAt : undefined;
+    const data = "data" in snapshot ? snapshot.data : undefined;
+    const ageMs = typeof savedAt === "number" ? Date.now() - savedAt : Number.POSITIVE_INFINITY;
+    if (
+      typeof savedAt !== "number" ||
+      ageMs < 0 ||
+      ageMs > HOMEPAGE_SNAPSHOT_MAX_AGE_MS ||
+      !data ||
+      typeof data !== "object"
+    ) return null;
+
+    const candidate = data as Partial<HomepageData>;
+    if (
+      !Array.isArray(candidate.heroItems) ||
+      !Array.isArray(candidate.trendingItems) ||
+      !Array.isArray(candidate.popularItems) ||
+      !Array.isArray(candidate.latestEpisodes) ||
+      !Array.isArray(candidate.movieItems) ||
+      !Array.isArray(candidate.seriesItems) ||
+      !Array.isArray(candidate.upcomingItems)
+    ) return null;
+
+    return hasHomepageActivity(candidate as HomepageData) ? candidate as HomepageData : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveHomepageSnapshot(data: HomepageData): void {
+  if (!hasHomepageActivity(data)) return;
+  try {
+    localStorage.setItem(
+      HOMEPAGE_SNAPSHOT_KEY,
+      JSON.stringify({ savedAt: Date.now(), data })
+    );
+  } catch {
+    // Storage may be disabled or full; the network refresh still updates React state.
+  }
+}
+
 function getWorkerHomepageUrl(): string {
   let workerOrigin = DEFAULT_WORKER_BASE_URL;
   try {
@@ -56,6 +110,21 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    // The server-rendered page can be up to six hours old. Reuse only a
+    // recently validated activity feed, then refresh it from the Worker.
+    if (hasHomepageActivity(initialData)) {
+      saveHomepageSnapshot(initialData);
+    } else {
+      const cachedData = readHomepageSnapshot();
+      if (cachedData) {
+        void Promise.resolve().then(() => {
+          if (!active) return;
+          setData(cachedData);
+          setIsLoading(false);
+        });
+      }
+    }
+
     const refreshHomepage = async () => {
       try {
         return await fetchWorkerHomepage(controller.signal);
@@ -76,12 +145,9 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
         // A fallback hero/popular list is not proof that the live activity feed
         // loaded. Require real trending or fresh-drop rows before replacing the
         // server-rendered snapshot, and preserve either section if it is absent.
-        const hasFreshActivity = Boolean(
-          freshData &&
-          ((Array.isArray(freshData.trendingItems) && freshData.trendingItems.length > 0) ||
-            (Array.isArray(freshData.latestEpisodes) && freshData.latestEpisodes.length > 0))
-        );
+        const hasFreshActivity = Boolean(freshData && hasHomepageActivity(freshData));
         if (active && hasFreshActivity) {
+          saveHomepageSnapshot(freshData);
           setData((current) => ({
             ...freshData,
             // The server snapshot may contain fallback hero picks. Once the
@@ -105,7 +171,7 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
       active = false;
       controller.abort();
     };
-  }, []);
+  }, [initialData]);
 
   const displayHeroItems = data.heroItems.length > 0
     ? data.heroItems
