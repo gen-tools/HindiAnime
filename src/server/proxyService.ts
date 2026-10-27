@@ -186,7 +186,11 @@ export async function fetchAnimeSaltHtml(
 
   // 2. Resilient Cloudflare Worker proxy fallback
   try {
-    const proxiedUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}`;
+    let cfBase = CF_PROXY_URL;
+    if (!cfBase.includes('?url=')) {
+      cfBase = cfBase.replace(/\/+$/, '') + '/?url=';
+    }
+    const proxiedUrl = `${cfBase}${encodeURIComponent(targetUrl)}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(proxiedUrl, { headers: reqHeaders, signal: controller.signal });
@@ -199,6 +203,23 @@ export async function fetchAnimeSaltHtml(
     }
   } catch (err) {
     console.warn(`[fetchAnimeSaltHtml-error] ${targetUrl}:`, err instanceof Error ? err.message : String(err));
+  }
+
+  // 3. Guaranteed hardcoded Cloudflare Worker fallback
+  try {
+    const hardcodedUrl = `https://cloud.hindi-anime.com/?url=${encodeURIComponent(targetUrl)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(hardcodedUrl, { headers: reqHeaders, signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.length > 200 && !text.includes('Just a moment...') && !text.includes('Attention Required!')) {
+        return text;
+      }
+    }
+  } catch {
+    // ignore
   }
 
   return null;
