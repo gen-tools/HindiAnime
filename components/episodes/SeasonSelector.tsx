@@ -2,7 +2,6 @@
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Select } from "@/components/ui/Select";
-import { openEpisodeChangeDirectLink } from "@/components/ads/EpisodeChangeDirectLink";
 import type { SeasonItem } from "@/types/api";
 
 export function SeasonSelector({
@@ -33,7 +32,6 @@ export function SeasonSelector({
     if (onSeasonChange) {
       onSeasonChange(selected);
     } else if (watchAnimeSlug) {
-      openEpisodeChangeDirectLink();
       router.push(`/watch/${watchAnimeSlug}/ep-${selected}-1`);
     } else {
       const nextParams = new URLSearchParams(searchParams ? searchParams.toString() : "");

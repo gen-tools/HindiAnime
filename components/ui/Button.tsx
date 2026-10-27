@@ -51,18 +51,16 @@ export function Button({
 export function ButtonLink({
   href,
   prefetch,
-  dataDirectLinkAd,
   variant = "primary",
   size = "md",
   icon,
   className,
   children,
-}: BaseProps & { href: string; prefetch?: boolean; dataDirectLinkAd?: boolean }) {
+}: BaseProps & { href: string; prefetch?: boolean }) {
   return (
     <Link
       href={href}
       prefetch={prefetch}
-      data-direct-link-ad={dataDirectLinkAd ? "true" : undefined}
       className={cn(shared, variantStyles[variant], sizeStyles[size], className)}
     >
       {icon}

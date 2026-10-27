@@ -19,6 +19,7 @@ import { StreamItem } from "@/types/api";
 import { isValidEmbedUrl } from "@/lib/api/client";
 import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl } from "@/lib/animesalt-stream";
+import { openAdLink } from "@/components/ads/adLinks";
 
 const MAX_AUTOMATIC_STREAM_RETRIES = 2;
 const STREAM_RETRY_BASE_DELAY_MS = 1_000;
@@ -228,6 +229,7 @@ export function StreamPlayer({
   const [isPictureInPicture, setIsPictureInPicture] = useState(false);
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
+  const playAdOpenedRef = useRef(false);
   const [reloadKey, setReloadKey] = useState(0);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const embedPictureInPictureRef = useRef<Window | null>(null);
@@ -529,6 +531,18 @@ export function StreamPlayer({
     }
   }, [animeSlug, season, episode, playbackIdentity, isMovie]);
 
+  useEffect(() => {
+    playAdOpenedRef.current = false;
+  }, [playbackIdentity]);
+
+  const handlePlay = useCallback(() => {
+    if (!playAdOpenedRef.current) {
+      playAdOpenedRef.current = true;
+      openAdLink();
+    }
+    void fetchStreams(0);
+  }, [fetchStreams]);
+
 
   useEffect(() => {
     setState((current) => current === "loading" ? "idle" : current);
@@ -612,7 +626,7 @@ export function StreamPlayer({
             : "aspect-video max-h-[90vh] w-full rounded-xl border border-border-line shadow-2xl"
         )}
       >
-        {state === "idle" && <IdleState onPlay={() => void fetchStreams(0)} />}
+        {state === "idle" && <IdleState onPlay={handlePlay} />}
         {state === "loading" && <LoadingState episodeTitle={episodeTitle} />}
         {state === "error" && (
           <ErrorState

@@ -6,8 +6,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { NavigationFeedback } from "@/components/layout/NavigationFeedback";
-import { AdsterraPopunder } from "@/components/ads/AdsterraPopunder";
-import { EpisodeChangeDirectLink } from "@/components/ads/EpisodeChangeDirectLink";
+import { OnePerRouteAd } from "@/components/ads/OnePerRouteAd";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -119,21 +118,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <head>
         <link rel="preconnect" href="https://image.tmdb.org" crossOrigin="anonymous" />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){
-              var path = window.location.pathname.toLowerCase();
-              if (/^\\/(about|contact|dmca|privacy|terms)(\\/|$)/.test(path)) return;
-              if (document.querySelector("script[data-adsterra-popunder]")) return;
-              var script = document.createElement("script");
-              script.async = true;
-              script.crossOrigin = "anonymous";
-              script.dataset.adsterraPopunder = "true";
-              script.src = "https://pl31917244.profitableratecpmnetwork.com/89/e4/e8/89e4e830f97d279bf0b57a442e0062bf.js";
-              document.head.appendChild(script);
-            })();`,
-          }}
-        />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd).replace(/</g, "\\u003c") }} />
       </head>
       <body
@@ -148,8 +132,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <Header />
         <NavigationFeedback />
-        <AdsterraPopunder />
-        <EpisodeChangeDirectLink />
+        <OnePerRouteAd />
         <main id="main-content" className="flex-1 mobile-nav-clearance">
           {children}
         </main>
