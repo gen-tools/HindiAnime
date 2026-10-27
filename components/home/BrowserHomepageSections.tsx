@@ -84,10 +84,10 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
         if (active && hasFreshActivity) {
           setData((current) => ({
             ...freshData,
-            // Keep the above-the-fold hero stable after first paint. Replacing
-            // it during the client refresh can swap the large image and change
-            // title wrapping, contributing to mobile and desktop layout shift.
-            heroItems: current.heroItems.length > 0 ? current.heroItems : freshData.heroItems,
+            // The server snapshot may contain fallback hero picks. Once the
+            // live feed is validated, use its hero lineup just like the other
+            // refreshed homepage sections.
+            heroItems: freshData.heroItems.length > 0 ? freshData.heroItems : current.heroItems,
             trendingItems: freshData.trendingItems.length > 0 ? freshData.trendingItems : current.trendingItems,
             latestEpisodes: freshData.latestEpisodes.length > 0 ? freshData.latestEpisodes : current.latestEpisodes,
           }));
