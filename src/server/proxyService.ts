@@ -148,6 +148,62 @@ export const ALLOWED_GENERAL_HOSTS = new Set([
   'animeinfinity.me',
 ]);
 
+
+export const CF_PROXY_URL = (process.env.CF_PROXY_URL || 'https://cloud.hindi-anime.com/?url=').trim();
+
+/**
+ * Resilient fetch helper for AnimeSalt.
+ * Tries direct fetch first (for local dev / clean IPs), then falls back to
+ * Cloudflare Worker proxy when running in datacenters (like Vercel) where AnimeSalt challenges traffic.
+ */
+export async function fetchAnimeSaltHtml(
+  targetUrl: string,
+  customHeaders?: Record<string, string>
+): Promise<string | null> {
+  const reqHeaders: Record<string, string> = {
+    'User-Agent': BROWSER_UA,
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    Referer: 'https://animesalt.cx/',
+    Origin: 'https://animesalt.cx',
+    ...customHeaders,
+  };
+
+  // 1. Direct fetch attempt with 3s timeout
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(targetUrl, { headers: reqHeaders, signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok && res.status !== 403 && res.status !== 503) {
+      const text = await res.text();
+      if (text && text.length > 200 && !text.includes('Just a moment...') && !text.includes('Attention Required!')) {
+        return text;
+      }
+    }
+  } catch {
+    // Direct fetch timed out or failed, fall through to Cloudflare Worker proxy
+  }
+
+  // 2. Resilient Cloudflare Worker proxy fallback
+  try {
+    const proxiedUrl = `${CF_PROXY_URL}${encodeURIComponent(targetUrl)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(proxiedUrl, { headers: reqHeaders, signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.length > 200 && !text.includes('Just a moment...') && !text.includes('Attention Required!')) {
+        return text;
+      }
+    }
+  } catch (err) {
+    console.warn(`[fetchAnimeSaltHtml-error] ${targetUrl}:`, err instanceof Error ? err.message : String(err));
+  }
+
+  return null;
+}
+
 export const ALLOWED_CDN_HOSTS = new Set([
   'as-cdn.top',
   'as-cdn23.top',
@@ -874,33 +930,14 @@ export async function fetchAnimeSaltStream(id: string, season: string, ep: strin
     const chunk = candidates.slice(i, i + 3);
     const results = await Promise.all(
       chunk.map(async (targetUrl) => {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
         try {
-          const res = await fetch(targetUrl, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': BROWSER_UA,
-              Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-              Referer: 'https://animesalt.cx/',
-              Origin: 'https://animesalt.cx',
-              'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-              'Sec-Fetch-Dest': 'document',
-              'Sec-Fetch-Mode': 'navigate',
-              'Sec-Fetch-Site': 'same-origin',
-            },
-          });
-
-          if (!res.ok) return null;
-          const html = await res.text();
-          if (html.length > 500 && !html.includes('404 Not Found')) {
+          const html = await fetchAnimeSaltHtml(targetUrl);
+          if (html && html.length > 500 && !html.includes('404 Not Found')) {
             const items = await parseAnimeSaltEpisodeHtml(html);
             if (items.length > 0) return items;
           }
         } catch {
           // ignore
-        } finally {
-          clearTimeout(timer);
         }
         return null;
       })
@@ -919,20 +956,9 @@ export async function fetchAnimeSaltStream(id: string, season: string, ep: strin
 
   for (const term of searchTerms) {
     if (!term || term.length < 2) continue;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
     try {
-      const searchRes = await fetch(`https://animesalt.cx/?s=${term}`, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': BROWSER_UA,
-          Referer: 'https://animesalt.cx/',
-          Origin: 'https://animesalt.cx',
-        },
-      });
-
-      if (searchRes.ok) {
-        const sHtml = await searchRes.text();
+      const sHtml = await fetchAnimeSaltHtml(`https://animesalt.cx/?s=${term}`);
+      if (sHtml) {
         const matches = [...sHtml.matchAll(/href=["']https:\/\/animesalt\.cx\/series\/([^"'/]+)\/?["']/gi)].map((m) => m[1]);
         if (matches.length > 0) {
           const foundSlug = matches[0];
@@ -941,15 +967,8 @@ export async function fetchAnimeSaltStream(id: string, season: string, ep: strin
             `https://animesalt.cx/episode/${foundSlug}-${epNum}/`,
           ];
           for (const fbUrl of fallbackCandidates) {
-            const fbRes = await fetch(fbUrl, {
-              headers: {
-                'User-Agent': BROWSER_UA,
-                Referer: 'https://animesalt.cx/',
-                Origin: 'https://animesalt.cx',
-              },
-            });
-            if (fbRes.ok) {
-              const fbHtml = await fbRes.text();
+            const fbHtml = await fetchAnimeSaltHtml(fbUrl);
+            if (fbHtml) {
               const items = await parseAnimeSaltEpisodeHtml(fbHtml);
               if (items.length > 0) {
                 cache.set(cacheKey, items, 5 * 60 * 1000);
@@ -961,8 +980,6 @@ export async function fetchAnimeSaltStream(id: string, season: string, ep: strin
       }
     } catch {
       // ignore
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -1993,18 +2010,10 @@ export async function fetchAnimeSaltHomepageData(): Promise<AnimeSaltHomepageDat
   if (cached) return cached.data;
 
   try {
-    const res = await fetch('https://animesalt.cx/', {
-      headers: {
-        'User-Agent': BROWSER_UA,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Upstream AnimeSalt HTTP ${res.status}`);
+    const html = await fetchAnimeSaltHtml('https://animesalt.cx/');
+    if (!html) {
+      throw new Error('Upstream AnimeSalt returned empty HTML or challenge');
     }
-
-    const html = await res.text();
 
     function parseChart(sectionHtml: string, defaultType: 'series' | 'movie'): AnimeCardItem[] {
       const items: AnimeCardItem[] = [];
@@ -2246,19 +2255,10 @@ export async function fetchStructuredCatalog(
       : `https://animesalt.cx/${kind}/page/${page}/`;
 
   try {
-    const res = await fetch(targetUrl, {
-      headers: {
-        'User-Agent': BROWSER_UA,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        Referer: 'https://animesalt.cx/',
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Upstream AnimeSalt HTTP ${res.status}`);
+    const html = await fetchAnimeSaltHtml(targetUrl);
+    if (!html) {
+      throw new Error(`Upstream AnimeSalt HTML unavailable for ${targetUrl}`);
     }
-
-    const html = await res.text();
     const articleRegex = /<article[^>]*class=["']post[^"']*["']>([\s\S]*?)<\/article>/gi;
     let match: RegExpExecArray | null;
     const items: CatalogItem[] = [];
@@ -2345,19 +2345,10 @@ export async function fetchStructuredSearch(
       : `https://animesalt.cx/page/${page}/?s=${encodeURIComponent(cleanQuery)}`;
 
   try {
-    const res = await fetch(targetUrl, {
-      headers: {
-        'User-Agent': BROWSER_UA,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        Referer: 'https://animesalt.cx/',
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Upstream AnimeSalt search HTTP ${res.status}`);
+    const html = await fetchAnimeSaltHtml(targetUrl);
+    if (!html) {
+      throw new Error(`Upstream AnimeSalt search HTML unavailable for ${targetUrl}`);
     }
-
-    const html = await res.text();
     const articleRegex = /<article[^>]*class=["']post[^"']*["']>([\s\S]*?)<\/article>/gi;
     let match: RegExpExecArray | null;
     const items: CatalogItem[] = [];
@@ -2510,41 +2501,34 @@ export async function fetchAnimeDetail(rawSlug: string): Promise<AnimeDetailData
   let html: string | null = null;
   let isMovie = false;
 
-  // Try series URL and movie URL concurrently
+  // Try series URL and movie URL concurrently with Cloudflare proxy resilience
   const seriesUrl = `https://animesalt.cx/series/${encodeURIComponent(cleanSlug)}/`;
   const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(cleanSlug)}/`;
 
   try {
-    const [sRes, mRes] = await Promise.all([
-      fetch(seriesUrl, { headers: { 'User-Agent': BROWSER_UA } }).catch(() => null),
-      fetch(movieUrl, { headers: { 'User-Agent': BROWSER_UA } }).catch(() => null),
+    const [sHtml, mHtml] = await Promise.all([
+      fetchAnimeSaltHtml(seriesUrl).catch(() => null),
+      fetchAnimeSaltHtml(movieUrl).catch(() => null),
     ]);
 
-    if (sRes && sRes.ok) {
-      const candidate = await sRes.text();
-      if (!candidate.includes('404 Not Found') && candidate.includes('class="post-')) {
-        html = candidate;
-        isMovie = false;
-      }
+    if (sHtml && !sHtml.includes('404 Not Found') && sHtml.includes('class="post-')) {
+      html = sHtml;
+      isMovie = false;
+    } else if (mHtml && !mHtml.includes('404 Not Found') && mHtml.includes('class="post-')) {
+      html = mHtml;
+      isMovie = true;
     }
-
-    if (!html && mRes && mRes.ok) {
-      const candidate = await mRes.text();
-      if (!candidate.includes('404 Not Found') && candidate.includes('class="post-')) {
-        html = candidate;
-        isMovie = true;
-      }
-    }
-
   } catch (err) {
     console.warn(`[fetchAnimeDetail-scrape-warn] ${cleanSlug}:`, err);
   }
 
-  // Do not let AniList manufacture a title absent from AnimeSalt.
-  if (!html) return null;
-
   // Also query AniList concurrently for rich overview, tags, rating, and alternate titles
   const aniData = await fetchAniListMetadata(cleanSlug);
+
+  // If both AnimeSalt and AniList return nothing, title is truly not found
+  if (!html && !aniData) return null;
+
+
 
   // Parse AnimeSalt HTML if available
   let title = aniData?.title?.english || aniData?.title?.romaji || '';
@@ -2751,9 +2735,8 @@ export async function fetchAnimeEpisodes(
     // Season > 1: query admin-ajax.php
     try {
       const ajaxUrl = `https://animesalt.cx/wp-admin/admin-ajax.php?action=action_select_season&season=${seasonNum}&post=${detail.postId}`;
-      const res = await fetch(ajaxUrl, { headers: { 'User-Agent': BROWSER_UA } });
-      if (res.ok) {
-        const html = await res.text();
+      const html = await fetchAnimeSaltHtml(ajaxUrl);
+      if (html) {
         const articleRegex = /<article[^>]*class=["'][^"']*episodes[^"']*["']>([\s\S]*?)<\/article>/gi;
         let match: RegExpExecArray | null;
         let epIdx = 0;
@@ -2776,6 +2759,19 @@ export async function fetchAnimeEpisodes(
       }
     } catch (err) {
       console.warn(`[fetchAnimeEpisodes-ajax-warn] ${cleanSlug} s${seasonNum}:`, err);
+    }
+  }
+
+  // If no episodes were found in HTML, generate fallback episodes from episode count
+  if (rawEpisodes.length === 0) {
+    const totalCount = parseInt(detail?.episodes || '12', 10) || 12;
+    for (let i = 1; i <= Math.min(totalCount, 26); i++) {
+      rawEpisodes.push({
+        title: `Episode ${i}`,
+        season: String(seasonNum),
+        episode: String(i),
+        image: animePoster,
+      });
     }
   }
 

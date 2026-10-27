@@ -57,6 +57,7 @@ import {
   fetchStructuredSearch,
   fetchAnimeDetail,
   fetchAnimeEpisodes,
+  fetchAnimeSaltHtml,
   resolveAnimeSaltCanonicalSlug,
   fetchNormalizedPlaybackSources,
 } from './src/server/proxyService.ts';
@@ -1081,6 +1082,15 @@ export async function createApp() {
       });
       clearTimeout(timeout);
 
+      if (upstream.status === 403 || upstream.status === 503) {
+        const fallbackHtml = await fetchAnimeSaltHtml(parsedTarget.toString(), proxyHeaders);
+        if (fallbackHtml) {
+          res.setHeader('Content-Type', 'text/html; charset=UTF-8');
+          res.setHeader('Cache-Control', 'public, max-age=300');
+          return res.status(200).send(fallbackHtml);
+        }
+      }
+
       const ct = upstream.headers.get('content-type') || 'text/html; charset=UTF-8';
       res.setHeader('Content-Type', ct);
       res.setHeader('Cache-Control', 'public, max-age=300');
@@ -1094,6 +1104,14 @@ export async function createApp() {
       }
     } catch (err: any) {
       clearTimeout(timeout);
+      try {
+        const fallbackHtml = await fetchAnimeSaltHtml(parsedTarget.toString(), proxyHeaders);
+        if (fallbackHtml) {
+          res.setHeader('Content-Type', 'text/html; charset=UTF-8');
+          res.setHeader('Cache-Control', 'public, max-age=300');
+          return res.status(200).send(fallbackHtml);
+        }
+      } catch {}
       return res.status(502).json({ error: 'AnimeSalt fetch failed', detail: String(err) });
     }
   });
@@ -1390,6 +1408,7 @@ export async function createApp() {
     const timeout = setTimeout(() => controller.abort(), CATALOG_TIMEOUT_MS);
 
     try {
+      let html = '';
       const response = await fetch(targetUrl, {
         signal: controller.signal,
         headers: {
@@ -1406,16 +1425,20 @@ export async function createApp() {
 
       clearTimeout(timeout);
 
-      if (!response.ok) {
-        if (cached) {
+      if (!response.ok || response.status === 403) {
+        const fallbackHtml = await fetchAnimeSaltHtml(targetUrl);
+        if (fallbackHtml) {
+          html = fallbackHtml;
+        } else if (cached) {
           res.setHeader('Content-Type', cached.contentType || 'text/html; charset=UTF-8');
           res.setHeader('X-Catalog-Cache', 'stale');
           return res.send(cached.data);
+        } else {
+          return res.status(response.status).json({ success: false, message: `Upstream catalog error: ${response.status}` });
         }
-        return res.status(response.status).json({ success: false, message: `Upstream catalog error: ${response.status}` });
+      } else {
+        html = await response.text();
       }
-
-      const html = await response.text();
       const validItemCount = countValidCatalogHtmlItems(html, kind);
       const isValid = /<html\b/i.test(html) && validItemCount > 0;
 
@@ -1534,10 +1557,20 @@ export async function createApp() {
 
       clearTimeout(timeout);
 
-      if (!upstream) {
-        return res.status(blockedRedirect ? 403 : 502).json({
-          error: blockedRedirect ? 'Redirect target not allowed' : 'Proxy request failed',
-        });
+      if (!upstream || upstream.status === 403 || upstream.status === 503) {
+        if (isAnimeSaltHost) {
+          const saltHtml = await fetchAnimeSaltHtml(targetUrl, proxyHeaders);
+          if (saltHtml) {
+            res.setHeader('Content-Type', 'text/html; charset=UTF-8');
+            res.setHeader('Cache-Control', 'public, max-age=300');
+            return res.status(200).send(saltHtml);
+          }
+        }
+        if (!upstream) {
+          return res.status(blockedRedirect ? 403 : 502).json({
+            error: blockedRedirect ? 'Redirect target not allowed' : 'Proxy request failed',
+          });
+        }
       }
 
       const ct = upstream.headers.get('content-type');
@@ -1570,6 +1603,16 @@ export async function createApp() {
       }
     } catch (err: any) {
       clearTimeout(timeout);
+      if (isAnimeSaltHost) {
+        try {
+          const saltHtml = await fetchAnimeSaltHtml(targetUrl, proxyHeaders);
+          if (saltHtml) {
+            res.setHeader('Content-Type', 'text/html; charset=UTF-8');
+            res.setHeader('Cache-Control', 'public, max-age=300');
+            return res.status(200).send(saltHtml);
+          }
+        } catch {}
+      }
       console.error('[proxy-fetch-failed]', err);
       return res.status(502).json({ error: 'Proxy fetch failed', detail: String(err) });
     }
