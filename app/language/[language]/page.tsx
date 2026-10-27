@@ -143,6 +143,7 @@ export default async function LanguagePage({
             <Link
               key={l.code}
               href={`/language/${l.code}`}
+              prefetch={false}
               className={cn(
                 "rounded-full px-4 py-1.5 text-xs font-semibold whitespace-nowrap transition-all",
                 isActive
@@ -203,6 +204,7 @@ export default async function LanguagePage({
             <Link
               key={g.slug}
               href={`/genre/${g.slug}?language=${language}`}
+              prefetch={false}
               className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white"
             >
               {g.label} Anime

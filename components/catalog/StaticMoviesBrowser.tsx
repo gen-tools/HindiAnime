@@ -86,7 +86,7 @@ export function StaticMoviesBrowser() {
 
         {visible.length ? <>
           <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {visible.map((movie) => <Link key={movie.id} href={`/anime/${movie.slug}`} className="focus-ring group relative flex flex-col overflow-hidden rounded-xl border border-border-line bg-surface transition-all duration-200 hover:-translate-y-1 hover:border-green-primary/60 hover:shadow-[0_8px_24px_-4px_rgba(0,0,0,0.6)]">
+            {visible.map((movie) => <Link key={movie.id} href={`/anime/${movie.slug}`} prefetch={false} className="focus-ring group relative flex flex-col overflow-hidden rounded-xl border border-border-line bg-surface transition-all duration-200 hover:-translate-y-1 hover:border-green-primary/60 hover:shadow-[0_8px_24px_-4px_rgba(0,0,0,0.6)]">
               <div className="relative aspect-[16/10] w-full overflow-hidden bg-surface-dark">
                 <PosterArt seed={movie.backdrop || movie.poster} title={movie.title} orientation="landscape" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
                 <div className="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-transparent opacity-80" />

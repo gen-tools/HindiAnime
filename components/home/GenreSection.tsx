@@ -25,6 +25,7 @@ export function GenreSection() {
               <Link
                 key={genre.slug}
                 href={`/genre/${genre.slug}`}
+                prefetch={false}
                 className="focus-ring group relative overflow-hidden rounded-xl border border-border-line p-4 transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-green-primary/60 active:scale-[0.99]"
                 style={{
                   background: `linear-gradient(135deg, ${base} 0%, #0a100d 75%)`,

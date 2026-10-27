@@ -15,8 +15,9 @@ export async function GET(request: NextRequest) {
   if (record?.isMock) {
     return NextResponse.json({ episodes: [] }, {
       headers: {
-        "Cache-Control": "public, max-age=0, s-maxage=21600",
-        "Cloudflare-CDN-Cache-Control": "public, max-age=21600",
+        "Cache-Control": "public, max-age=0, s-maxage=86400, stale-while-revalidate=86400",
+        "Vercel-CDN-Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
+        "Cloudflare-CDN-Cache-Control": "public, max-age=86400, stale-while-revalidate=86400",
       },
     });
   }
@@ -28,8 +29,9 @@ export async function GET(request: NextRequest) {
   }
   return NextResponse.json({ episodes: rawEpisodes }, {
     headers: {
-      "Cache-Control": "public, max-age=0, s-maxage=21600",
-      "Cloudflare-CDN-Cache-Control": "public, max-age=21600",
+      "Cache-Control": "public, max-age=0, s-maxage=86400, stale-while-revalidate=86400",
+      "Vercel-CDN-Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
+      "Cloudflare-CDN-Cache-Control": "public, max-age=86400, stale-while-revalidate=86400",
     },
   });
 }

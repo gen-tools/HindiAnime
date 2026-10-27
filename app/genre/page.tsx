@@ -81,6 +81,7 @@ export default function GenresDirectoryPage() {
               <Link
                 key={g.slug}
                 href={`/genre/${g.slug}`}
+                prefetch={false}
                 className="group relative flex flex-col justify-between overflow-hidden rounded-xl border border-border-line p-5 transition-all duration-200 hover:-translate-y-1 hover:border-green-primary/60 hover:shadow-[0_8px_24px_-4px_rgba(0,0,0,0.6)]"
                 style={{
                   background: `linear-gradient(145deg, ${base}33 0%, #0c120e 100%)`,

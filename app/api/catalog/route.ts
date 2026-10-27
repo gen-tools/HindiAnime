@@ -29,8 +29,9 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json(catalog, {
     headers: {
-      "Cache-Control": "public, max-age=0, s-maxage=300",
-      "Cloudflare-CDN-Cache-Control": "public, max-age=300",
+      "Cache-Control": "public, max-age=0, s-maxage=86400, stale-while-revalidate=86400",
+      "Vercel-CDN-Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
+      "Cloudflare-CDN-Cache-Control": "public, max-age=86400, stale-while-revalidate=86400",
     },
   });
 }

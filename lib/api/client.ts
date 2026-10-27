@@ -46,8 +46,9 @@ function logDataSource(feature: string, source: string, outcome: "success" | "em
   }
 }
 
-const CATALOG_CACHE_SECONDS = 21600;
-const SEARCH_CACHE_SECONDS = 21600;
+const ANIME_DATA_CACHE_SECONDS = 86400;
+const CATALOG_CACHE_SECONDS = 86400;
+const SEARCH_CACHE_SECONDS = 86400;
 const SCRAPER_NEGATIVE_CACHE_MS = 3 * 60 * 1000;
 const scraperNegativeCache = new Map<string, number>();
 
@@ -113,13 +114,13 @@ async function fetchLegacyValidated<T>(
   cacheKey: string,
   path: string,
   isValid: (data: unknown) => data is T,
-  revalidateSeconds = 21600
+  revalidateSeconds = ANIME_DATA_CACHE_SECONDS
 ): Promise<T | null> {
   const baseUrl = getLegacyApiBaseUrl();
   if (!baseUrl) return null;
 
   // Cache only validated JSON. Throwing on HTTP errors, malformed JSON, and
-  // empty payloads prevents those responses from being retained for six hours.
+  // empty payloads prevents those responses from being retained for 24 hours.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { unstable_cache } = require("next/cache") as typeof import("next/cache");
   const load = unstable_cache(
@@ -998,7 +999,7 @@ export function scrapeAnimeSaltCatalog(
 ): Promise<CatalogPageResult | null> {
   return cacheValidatedScraperResult(
     ["catalog", kind, String(page)],
-    21600,
+    CATALOG_CACHE_SECONDS,
     () => scrapeAnimeSaltCatalogUncached(kind, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1047,7 +1048,7 @@ export function scrapeAnimeSaltSearch(
   if (!cleanKeyword) return Promise.resolve(null);
   return cacheValidatedScraperResult(
     ["search", cleanKeyword, String(page)],
-    21600,
+    SEARCH_CACHE_SECONDS,
     () => scrapeAnimeSaltSearchUncached(cleanKeyword, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1096,7 +1097,7 @@ export function scrapeAnimeSaltGenre(
   if (!cleanGenre) return Promise.resolve(null);
   return cacheValidatedScraperResult(
     ["genre", cleanGenre, String(page)],
-    21600,
+    CATALOG_CACHE_SECONDS,
     () => scrapeAnimeSaltGenreUncached(cleanGenre, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1145,7 +1146,7 @@ export function scrapeAnimeSaltLanguage(
   if (!cleanLang) return Promise.resolve(null);
   return cacheValidatedScraperResult(
     ["language", cleanLang, String(page)],
-    21600,
+    CATALOG_CACHE_SECONDS,
     () => scrapeAnimeSaltLanguageUncached(cleanLang, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -1191,7 +1192,7 @@ export function scrapeAnimeSaltCartoon(
 ): Promise<CatalogPageResult | null> {
   return cacheValidatedScraperResult(
     ["cartoon", kind, String(page)],
-    21600,
+    CATALOG_CACHE_SECONDS,
     () => scrapeAnimeSaltCartoonUncached(kind, page),
     (result): result is CatalogPageResult => Boolean(result?.results.length)
   );
@@ -2526,7 +2527,7 @@ export function fetchAniListMeta(slugOrTitle: string): Promise<AnimeInfoData | n
   if (!normalized) return Promise.resolve(null);
   return cacheValidatedScraperResult(
     ["anilist-metadata", normalized],
-    21600,
+    ANIME_DATA_CACHE_SECONDS,
     () => fetchAniListMetaUncached(slugOrTitle),
     (result): result is AnimeInfoData => Boolean(result?.title && result.poster && result.overview)
   );
@@ -3109,7 +3110,7 @@ export function scrapeDirectSeriesData(slug: string): Promise<ScrapedSeriesMeta 
   const cacheVersion = cleanId === "jujutsu-kaisen" ? "series-first-v2" : "v1";
   const request = cacheValidatedScraperResult(
     ["series-detail", cleanId, cacheVersion],
-    21600,
+    ANIME_DATA_CACHE_SECONDS,
     () => scrapeDirectSeriesDataUnshared(cleanId),
     (result): result is ScrapedSeriesMeta => Boolean(
       result &&
@@ -3468,7 +3469,7 @@ async function scrapeDirectSeasonEpisodes(slug: string, season: number): Promise
   const cleanId = cleanAnimeSlug(slug) || slug;
   const episodes = await cacheValidatedScraperResult(
     ["season-episodes", cleanId, String(season), cleanId === "jujutsu-kaisen" ? "series-episode-v2" : "v1"],
-    21600,
+    ANIME_DATA_CACHE_SECONDS,
     () => scrapeDirectSeasonEpisodesUncached(cleanId, season),
     (result): result is EpisodeItem[] => Boolean(result?.length)
   );

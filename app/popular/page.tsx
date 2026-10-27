@@ -32,6 +32,7 @@ export default async function PopularPage() {
             <Link
               key={item.id}
               href={`/anime/${item.slug}`}
+              prefetch={false}
               className="focus-ring group flex items-center gap-4 p-3 transition-colors hover:bg-white/[0.03] sm:p-4"
             >
               <span className="font-eyebrow w-10 shrink-0 text-center text-3xl text-green-bright sm:text-4xl">
@@ -60,7 +61,7 @@ export default async function PopularPage() {
         <h2 className="mb-5 font-display text-xl font-bold text-text-primary">Trending Now</h2>
         <div className="grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 md:grid-cols-5">
           {trending.map((item, i) => (
-            <Link key={item.id} href={`/anime/${item.slug}`} className="focus-ring group relative block">
+            <Link key={item.id} href={`/anime/${item.slug}`} prefetch={false} className="focus-ring group relative block">
               <div className="relative overflow-hidden rounded-xl border border-border-line group-hover:border-green-primary/70">
                 <PosterArt seed={item.poster} title={item.title} />
               </div>
@@ -79,7 +80,7 @@ export default async function PopularPage() {
         <h2 className="mb-5 font-display text-xl font-bold text-text-primary">Top Rated</h2>
         <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 md:grid-cols-5">
           {topRated.map((item) => (
-            <Link key={item.id} href={`/anime/${item.slug}`} className="focus-ring group block">
+            <Link key={item.id} href={`/anime/${item.slug}`} prefetch={false} className="focus-ring group block">
               <div className="relative overflow-hidden rounded-xl border border-border-line group-hover:border-green-primary/70">
                 <PosterArt seed={item.poster} title={item.title} />
                 <RatingBadge rating={item.rating} className="absolute right-2 top-2" />

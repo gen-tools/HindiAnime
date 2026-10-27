@@ -265,6 +265,7 @@ export default function SchedulePage() {
 
                     <Link
                       href={`/anime/${entry.animeSlug}`}
+                      prefetch={false}
                       className="relative h-16 w-12 shrink-0 overflow-hidden rounded-lg border border-border-line transition-transform group-hover:scale-105"
                     >
                       <PosterArt seed={entry.poster} title={entry.animeTitle} fillContainer showOverlay={false} showSprocket={false} />
@@ -273,6 +274,7 @@ export default function SchedulePage() {
                     <div className="min-w-0 flex-1">
                       <Link
                         href={`/anime/${entry.animeSlug}`}
+                        prefetch={false}
                         className="truncate font-display text-base font-bold text-text-primary group-hover:text-green-light block"
                       >
                         {entry.animeTitle}
@@ -329,6 +331,7 @@ export default function SchedulePage() {
                       ) : !getAnimeBySlug(entry.animeSlug)?.isMock ? (
                         <Link
                           href={`/anime/${entry.animeSlug}`}
+                          prefetch={false}
                           className="flex items-center gap-1.5 rounded-lg bg-green-primary px-3 py-1.5 text-xs font-bold text-black shadow-md transition-all hover:bg-green-bright active:scale-95"
                         >
                           <Play className="h-3.5 w-3.5 fill-black" />

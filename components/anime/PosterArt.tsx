@@ -55,16 +55,6 @@ export function PosterArt({
   );
 
   const isTmdbImage = imageSrc.includes("image.tmdb.org/t/p/");
-  const isAniListImage = /(^|\.)anilist\.co$/i.test(
-    (() => {
-      try {
-        return new URL(imageSrc).hostname;
-      } catch {
-        return "";
-      }
-    })()
-  );
-
   // Request TMDB's existing sized assets directly. Compact cards use w342,
   // full-size portrait art uses w500, and hero artwork uses w1280.
   if (isTmdbImage) {
@@ -92,14 +82,8 @@ export function PosterArt({
           : "(max-width: 640px) 45vw, (max-width: 768px) 30vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 180px"
       )}
       className={cn(fit === "contain" ? "object-contain" : "object-cover", imageClassName)}
-      // TMDB and AniList already provide appropriately sized assets. Load
-      // them directly to avoid consuming Vercel image transformations.
-      unoptimized={
-        isTmdbImage ||
-        isAniListImage ||
-        imageSrc.includes("animesalt.cx") ||
-        imageSrc.includes("multishows.top")
-      }
+      // Upstream CDNs already serve artwork; bypass Vercel image transforms.
+      unoptimized
       onError={() => setFailedImageSrc(imageSrc)}
     />
   );

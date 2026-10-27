@@ -100,7 +100,7 @@ export function GenreBrowseClient({ slug }: { slug: string }) {
         <h2 className="text-sm font-semibold text-text-primary">Watch Anime in Your Language</h2>
         <div className="mt-3 flex flex-wrap gap-2">
           {languages.map((language) => (
-            <Link key={language.code} href={buildLanguageHref(language.code)} className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white">
+            <Link key={language.code} href={buildLanguageHref(language.code)} prefetch={false} className="rounded-lg border border-border-line bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-green-primary/50 hover:text-white">
               {language.label} Dubbed
             </Link>
           ))}

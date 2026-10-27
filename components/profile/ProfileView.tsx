@@ -448,6 +448,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     <div className="mt-3 flex items-center justify-between gap-2">
                       <Link
                         href={buildStoredWatchHref(item)}
+                        prefetch={false}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-green-primary px-3 py-1.5 text-xs font-semibold text-white shadow-md transition-all hover:bg-green-bright hover:text-black active:scale-95"
                       >
                         <Play className="h-3.5 w-3.5 fill-current" />
@@ -497,7 +498,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                   key={item.animeSlug}
                   className="group relative flex flex-col overflow-hidden rounded-xl border border-border-line bg-surface transition-all hover:border-green-primary/40 hover:shadow-lg"
                 >
-                  <Link href={`/anime/${item.animeSlug}`} className="block relative aspect-[2/3] w-full overflow-hidden">
+                  <Link href={`/anime/${item.animeSlug}`} prefetch={false} className="block relative aspect-[2/3] w-full overflow-hidden">
                     <PosterArt
                       seed={item.poster}
                       title={item.title}
@@ -514,7 +515,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                   </Link>
 
                   <div className="p-3">
-                    <Link href={`/anime/${item.animeSlug}`}>
+                    <Link href={`/anime/${item.animeSlug}`} prefetch={false}>
                       <h4 className="font-display text-sm font-bold text-text-primary line-clamp-1 group-hover:text-green-light transition-colors">
                         {item.title}
                       </h4>
@@ -580,6 +581,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     <div className="min-w-0">
                       <Link
                         href={buildStoredWatchHref(item)}
+                        prefetch={false}
                         className="font-display font-semibold text-text-primary hover:text-green-light line-clamp-1 transition-colors"
                       >
                         {item.animeTitle}
@@ -598,6 +600,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     </span>
                     <Link
                       href={buildStoredWatchHref(item)}
+                      prefetch={false}
                       className="inline-flex items-center gap-1 rounded-lg border border-border-line bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary hover:border-green-primary/50 hover:text-white"
                     >
                       <Play className="h-3 w-3" />

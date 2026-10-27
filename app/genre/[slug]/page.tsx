@@ -53,6 +53,7 @@ export default async function GenrePage({
           <Link
             key={item.slug}
             href={`/genre/${item.slug}`}
+            prefetch={false}
             className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${item.slug === normalizedSlug ? "border border-green-bright bg-green-primary/20 text-green-light shadow-[0_0_12px_-2px_rgba(34,197,94,0.5)]" : "border border-border-line bg-surface text-text-secondary hover:border-green-primary/60 hover:text-white"}`}
           >
             {item.label}

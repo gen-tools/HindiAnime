@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
+    unoptimized: true,
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 604800,
     remotePatterns: [
@@ -44,23 +45,58 @@ const nextConfig: NextConfig = {
       key: "Cloudflare-CDN-Cache-Control",
       value: `public, max-age=${ttlSeconds}`,
     }];
+    const publicDynamicDocumentCacheHeaders = (ttlSeconds: number) => [
+      {
+        key: "Cache-Control",
+        value: `public, max-age=0, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds}`,
+      },
+      {
+        key: "Vercel-CDN-Cache-Control",
+        value: `public, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds}`,
+      },
+      ...publicHtmlCacheHeader(ttlSeconds),
+    ];
 
     return [
       // Cloudflare can cache public document responses separately from the
       // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
       // GETs with no query string; API and account routes are intentionally absent.
       { source: "/", headers: publicHtmlCacheHeader(300) },
-      { source: "/anime/:path*", headers: publicHtmlCacheHeader(1800) },
-      { source: "/watch/:path*", headers: publicHtmlCacheHeader(1800) },
-      { source: "/series", headers: publicHtmlCacheHeader(1800) },
-      { source: "/latest", headers: publicHtmlCacheHeader(1800) },
-      { source: "/movies", headers: publicHtmlCacheHeader(1800) },
-      { source: "/language", headers: publicHtmlCacheHeader(1800) },
-      { source: "/language/:path*", headers: publicHtmlCacheHeader(1800) },
-      { source: "/popular", headers: publicHtmlCacheHeader(1800) },
-      { source: "/browse", headers: publicHtmlCacheHeader(1800) },
-      { source: "/genre", headers: publicHtmlCacheHeader(1800) },
-      { source: "/genre/:path*", headers: publicHtmlCacheHeader(1800) },
+      // Anime and watch HTML is identical for all visitors. Cache it at Vercel
+      // and Cloudflare after dynamic rendering, instead of storing each slug or
+      // episode as a durable ISR entry.
+      {
+        source: "/anime/:path*",
+        has: [{ type: "header", key: "accept", value: ".*text/html.*" }],
+        headers: publicDynamicDocumentCacheHeaders(86400),
+      },
+      {
+        source: "/watch/:path*",
+        has: [{ type: "header", key: "accept", value: ".*text/html.*" }],
+        headers: publicDynamicDocumentCacheHeaders(86400),
+      },
+      { source: "/series", headers: publicHtmlCacheHeader(86400) },
+      {
+        source: "/latest",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=0, s-maxage=900, stale-while-revalidate=300",
+          },
+          {
+            key: "Vercel-CDN-Cache-Control",
+            value: "public, s-maxage=900, stale-while-revalidate=300",
+          },
+          ...publicHtmlCacheHeader(900),
+        ],
+      },
+      { source: "/movies", headers: publicHtmlCacheHeader(86400) },
+      { source: "/language", headers: publicHtmlCacheHeader(86400) },
+      { source: "/language/:path*", headers: publicHtmlCacheHeader(86400) },
+      { source: "/popular", headers: publicHtmlCacheHeader(86400) },
+      { source: "/browse", headers: publicHtmlCacheHeader(86400) },
+      { source: "/genre", headers: publicHtmlCacheHeader(86400) },
+      { source: "/genre/:path*", headers: publicHtmlCacheHeader(86400) },
       { source: "/schedule", headers: publicHtmlCacheHeader(1800) },
       { source: "/search", headers: publicHtmlCacheHeader(1800) },
       {
