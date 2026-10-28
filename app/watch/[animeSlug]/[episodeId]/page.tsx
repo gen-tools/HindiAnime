@@ -343,15 +343,19 @@ export default async function WatchPage({
   const rawEpisodesFromSource = epApiRes?.results?.episodes || [];
   const mockAnime = getAnimeBySlug(cleanSlug);
   const isSingleMovieEntry = Boolean(
-    mockAnime?.type === "TV" &&
     seasonNumber === 1 &&
     rawEpisodesFromSource.length === 1 &&
     /^full\s+movie$/i.test(rawEpisodesFromSource[0].title.trim())
   );
   const rawEpisodes = isSingleMovieEntry ? [] : rawEpisodesFromSource;
   // Do NOT count scraper's movie s1Episodes as series episodes
+  const isDirectSingleMovieEntry = Boolean(
+    seasonNumber === 1 &&
+    directData?.s1Episodes.length === 1 &&
+    /^full\s+movie$/i.test(directData.s1Episodes[0].title.trim())
+  );
   const s1Fallback = seasonNumber === 1 && directData?.s1Episodes && !directData.isMovie &&
-    !(mockAnime?.type === "TV" && directData.s1Episodes.length === 1 && /^full\s+movie$/i.test(directData.s1Episodes[0].title.trim()))
+    !isDirectSingleMovieEntry
     ? directData.s1Episodes
     : [];
   const effectiveRawEpisodes = rawEpisodes.length > 0 ? rawEpisodes : s1Fallback;
@@ -364,15 +368,35 @@ export default async function WatchPage({
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const isKnownTv = mockAnime?.type === "TV";
+  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
+  const metadataConfirmsMovie =
+    directData?.isMovie === true ||
+    isSingleMovieEntry ||
+    isDirectSingleMovieEntry ||
+    animeData?.format?.toUpperCase() === "MOVIE" ||
+    movieData?.format?.toUpperCase() === "MOVIE" ||
+    searchItemType === "Movie";
+
+  // Older movie links were emitted as /ep-1-1. When independent metadata
+  // confirms a movie and there is no series episode/season data, normalize
+  // that legacy URL to the movie route before constructing a fake episode.
+  if (
+    !isMovieRoute &&
+    metadataConfirmsMovie &&
+    !hasSeriesEpisodes &&
+    !hasMultipleSeasons &&
+    !isKnownTv
+  ) {
+    redirect(`/watch/${cleanSlug}/movie`);
+  }
+
   const wrongMovieDetail = Boolean(
     isKnownTv && !isMovieRoute &&
     (directData?.isMovie ||
       isKnownTvMovieTitleCollision(cleanSlug, directData?.title) ||
       isSingleMovieEntry ||
-      (seasonNumber === 1 && directData?.s1Episodes.length === 1 && /^full\s+movie$/i.test(directData.s1Episodes[0].title.trim())))
+      isDirectSingleMovieEntry)
   );
-  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
-
   // isMovieRoute (episodeId === 'movie') is the strongest signal — always a movie.
   // Only classify as movie if explicitly a movie route or confirmed movie type with no series episodes
   const isMovie =
@@ -655,7 +679,11 @@ export default async function WatchPage({
     }
   }
 
-  const youMightAlsoLike = youMightAlsoLikePool.slice(0, 18);
+  const recommendationSource =
+    isMovie && youMightAlsoLikePool.length === 0
+      ? staticCatalog.filter((item) => item.slug !== cleanSlug)
+      : youMightAlsoLikePool;
+  const youMightAlsoLike = recommendationSource.slice(0, 18);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 md:py-8 lg:max-w-6xl transition-all">
