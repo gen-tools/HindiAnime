@@ -637,10 +637,11 @@ async function fetchPlayZenSource(slug: string, season: string, ep: string): Pro
   const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
 
   for (const target of targets) {
-    // Try via Cloudflare Worker first (avoids Vercel IP blocks), then direct
+    // Try direct fetch first for animeflash.live (not CF-protected), then Worker as fallback.
+    // This ensures PlayZen tokens are found on Vercel where Worker may not proxy this host.
     const fetchCandidates: Array<{ url: string; throughWorker: boolean }> = [
-      { url: buildCfProxyUrl(target), throughWorker: true },
       { url: target, throughWorker: false },
+      { url: buildCfProxyUrl(target), throughWorker: true },
     ];
 
     for (const { url, throughWorker } of fetchCandidates) {
@@ -817,8 +818,10 @@ async function fetchAnimeSaltSources(
   // only for network/server failures; a 4xx on a candidate moves to the next candidate.
   for (const targetUrl of new Set(candidates)) {
     const proxyUrl = buildCfProxyUrl(targetUrl);
-    // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed
-    const fetchUrls: Array<string | null> = browserResult ? [null] : [proxyUrl];
+    // Try CF proxy first on production so Cloudflare IP protection on animesalt.cx is bypassed.
+    // Also include direct fetch as a fallback so MyStream iframes are found even if the Worker
+    // doesn't proxy animesalt.cx correctly on Vercel's egress IP range.
+    const fetchUrls: Array<string | null> = browserResult ? [null] : [proxyUrl, targetUrl];
 
     for (const urlToFetch of fetchUrls) {
       const attemptType = browserResult ? "Browser Worker" : "Worker";
