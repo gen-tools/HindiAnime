@@ -633,52 +633,73 @@ async function fetchPlayZenSource(slug: string, season: string, ep: string): Pro
     "https://animeflash.live/episode/" + cleanSlug + "-" + season + "x" + ep,
   ];
   if (season === "1" && ep === "1") targets.push("https://animeflash.live/movie/" + cleanSlug);
+
+  const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
+
   for (const target of targets) {
-    try {
-      const res = await fetch(target, {
-        headers: { ...DEFAULT_HEADERS, Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
-      });
-      if (!res.ok) continue;
-      const text = await res.text();
-      // Extract PlayZen token cleanly without chunk metadata
-      let playzenToken: string | null = null;
-      const rscMatch = text.match(/:T([0-9a-fA-F]+),https?:\/\/archive\.animeinfinity\.me\/player\/([^\r\n"']+)/);
-      if (rscMatch) {
-        const totalLen = parseInt(rscMatch[1], 16);
-        const prefixLen = "https://archive.animeinfinity.me/player/".length;
-        const tokenLen = totalLen - prefixLen;
-        if (tokenLen > 0 && rscMatch[2].length >= tokenLen) {
-          playzenToken = rscMatch[2].slice(0, tokenLen);
+    // Try via Cloudflare Worker first (avoids Vercel IP blocks), then direct
+    const fetchCandidates: Array<{ url: string; throughWorker: boolean }> = [
+      { url: buildCfProxyUrl(target), throughWorker: true },
+      { url: target, throughWorker: false },
+    ];
+
+    for (const { url, throughWorker } of fetchCandidates) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12_000);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            ...DEFAULT_HEADERS,
+            Accept: "text/html,application/xhtml+xml,*/*;q=0.8",
+            Referer: "https://animeflash.live/",
+            ...(throughWorker && workerSecret ? { "x-hindianime-proxy-secret": workerSecret } : {}),
+          },
+        });
+        if (!res.ok) continue;
+        const text = await res.text();
+
+        // Extract PlayZen token cleanly without RSC chunk metadata
+        let playzenToken: string | null = null;
+        const rscMatch = text.match(/:T([0-9a-fA-F]+),https?:\/\/archive\.animeinfinity\.me\/player\/([^\r\n"']+)/);
+        if (rscMatch) {
+          const totalLen = parseInt(rscMatch[1], 16);
+          const prefixLen = "https://archive.animeinfinity.me/player/".length;
+          const tokenLen = totalLen - prefixLen;
+          if (tokenLen > 0 && rscMatch[2].length >= tokenLen) {
+            playzenToken = rscMatch[2].slice(0, tokenLen);
+          }
         }
-      }
-      if (!playzenToken) {
-        const quotedMatch = text.match(/https?:\/\/archive\.animeinfinity\.me\/player\/([A-Za-z0-9+/_=%-]+?)["'\s\\]/);
-        if (quotedMatch) {
-          playzenToken = quotedMatch[1];
+        if (!playzenToken) {
+          const quotedMatch = text.match(/https?:\/\/archive\.animeinfinity\.me\/player\/([A-Za-z0-9+/_=%-]+?)["'\s\\]/);
+          if (quotedMatch) playzenToken = quotedMatch[1];
         }
-      }
-      if (!playzenToken) {
-        const chunkMatch = text.match(/https?:\/\/archive\.animeinfinity\.me\/player\/([A-Za-z0-9+/_=%-]+?)(?:[0-9a-f]{1,4}:[T\[]|["'\s\\]|$)/i);
-        if (chunkMatch) {
-          playzenToken = chunkMatch[1];
+        if (!playzenToken) {
+          const chunkMatch = text.match(/https?:\/\/archive\.animeinfinity\.me\/player\/([A-Za-z0-9+/_=%-]+?)(?:[0-9a-f]{1,4}:[T\[]|["'\s\\]|$)/i);
+          if (chunkMatch) playzenToken = chunkMatch[1];
         }
+        if (!playzenToken) continue;
+
+        const embed = "https://archive.animeinfinity.me/player/" + playzenToken.replace(/\\/g, "");
+        return {
+          server: "Server 3",
+          slot: "server-3",
+          source: "PlayZen",
+          sourceProvider: "PlayZen",
+          label: "Server 3 · PlayZen",
+          embed,
+          url: embed,
+          type: "embed",
+          audioLanguage: "hi",
+          languageLabel: "Hindi Dub",
+          adFree: true,
+        };
+      } catch {
+        // try next candidate
+      } finally {
+        clearTimeout(timer);
       }
-      if (!playzenToken) continue;
-      const embed = "https://archive.animeinfinity.me/player/" + playzenToken.replace(/\\/g, "");
-      return {
-        server: "Server 3",
-        slot: "server-3",
-        source: "PlayZen",
-        sourceProvider: "PlayZen",
-        label: "Server 3 · PlayZen",
-        embed,
-        url: embed,
-        type: "embed",
-        audioLanguage: "hi",
-        languageLabel: "Hindi Dub",
-        adFree: true,
-      };
-    } catch { /* next */ }
+    }
   }
   return null;
 }
