@@ -933,32 +933,14 @@ async function fetchAnimeSaltSources(
           }
         }
 
-        const ravokMatch = html.match(/https?:\/\/ravok\.buzz\/(?:video|embed|e)\/([a-zA-Z0-9]+)/i);
-        const ravokHash = ravokMatch?.[1];
-        if (ravokHash) {
-          const directHlsUrl = await resolveRavokHls(ravokHash);
-          if (directHlsUrl) {
-            const embed = `https://ravok.buzz/video/${ravokHash}`;
-            const hlsProxyUrl = buildSignedHlsUrl(directHlsUrl, embed, "https://ravok.buzz");
-            items.unshift({
-              server: "Server 1",
-              slot: "server-1",
-              source: "AnimeSalt",
-              sourceProvider: "AnimeSalt",
-              label: "Server 1 · Hindi Anime HLS",
-              embed,
-              url: hlsProxyUrl || directHlsUrl,
-              directHlsUrl,
-              hlsProxyUrl,
-              referer: embed,
-              origin: "https://ravok.buzz",
-              type: "hls",
-              audioLanguage: "hi",
-              languageLabel: "Hindi Dub (Multi-Audio)",
-              adFree: true,
-            });
-          }
-        }
+        // HLS (direct stream) is disabled until VPS hosting is available.
+        // MyStream embed is used as Server 1 instead.
+        // const ravokMatch = html.match(/https?:\/\/ravok\.buzz\/(?:video|embed|e)\/([a-zA-Z0-9]+)/i);
+        // const ravokHash = ravokMatch?.[1];
+        // if (ravokHash) {
+        //   const directHlsUrl = await resolveRavokHls(ravokHash);
+        //   if (directHlsUrl) { ... }
+        // }
 
         const myStream = items.find((item) => item.embed.includes("ravok.buzz"));
         const unavailableMyStream = myStream

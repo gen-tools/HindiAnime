@@ -37,6 +37,7 @@ type PlayerState = "idle" | "loading" | "ready" | "unavailable" | "error";
 
 interface ValidServer {
   id: string;
+  server?: string;
   label: string;
   embed: string;
   url?: string;
@@ -55,41 +56,11 @@ interface ValidServer {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseServers(results: StreamItem[]): ValidServer[] {
-  const searchable = (item: StreamItem) => [
-    item.sourceProvider,
-    item.source,
-    item.server,
-    item.label,
-    item.embed,
-    item.url,
-  ].filter(Boolean).join(" ").toLowerCase();
-  const candidates = [
-    {
-      item: results.find((item) => item.slot === "server-1" || (item.type === "hls" && Boolean(item.url || item.hlsProxyUrl || item.directHlsUrl))),
-      label: "Server 1 · Hindi Anime HLS",
-      displayLanguage: "Hindi Anime HLS",
-    },
-    {
-      item: results.find((item) => item.slot === "server-2" || (item.type === "embed" && /mystream|ravok\.buzz/i.test(searchable(item)))),
-      label: "Server 2 · MyStream Embed",
-      displayLanguage: "MyStream",
-    },
-    {
-      item: results.find((item) => item.slot === "server-3" || item.type === "mp4" || /google.?drive|animahd|gdrive-stream/i.test(searchable(item))),
-      label: "Server 3 · Google Drive",
-      displayLanguage: "Google Drive",
-    },
-    {
-      item: results.find((item) => item.slot === "server-4" || /playzen|animeinfinity/i.test(searchable(item))),
-      label: "Server 4 · PlayZen",
-      displayLanguage: "PlayZen",
-    },
-  ].filter((candidate): candidate is { item: StreamItem; label: string; displayLanguage: string } => Boolean(candidate.item));
   const servers: ValidServer[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < candidates.length; i++) {
-    const { item, label, displayLanguage } = candidates[i];
+  for (let i = 0; i < results.length; i++) {
+    const item = results[i];
     const isDirect = (item.type === "hls" || item.type === "mp4") && Boolean(item.url || item.embed);
     // For direct streams: prefer item.url (the proxy URL), else fall back to item.embed (raw HLS/MP4)
     // For embeds: use item.embed directly
@@ -127,11 +98,14 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     if (!isOwnProxy && !isBackendGoogleDriveStream && !isValidEmbedUrl(streamUrl)) continue;
 
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
-    const isMyStream = /mystream|ravok\.buzz/i.test(searchable(item)) && finalType !== "hls";
+    const label = item.label || item.server || `Server ${servers.length + 1}`;
+    const serverName = item.server || label.match(/^Server\s+(\d+)/)?.[0] || `Server ${servers.length + 1}`;
+    const displayLanguage = item.languageLabel || item.audioLanguage || "Hindi Dub";
 
     seen.add(dedupeKey);
     servers.push({
       id: `${finalType}-${i}-${dedupeKey}`,
+      server: serverName,
       label,
       // embed: always hold the raw source URL (used by EmbedFrame and HLS fallback)
       embed: rawEmbed || streamUrl,
@@ -142,18 +116,12 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       adFree: Boolean(item.adFree) || isDirect,
       languageSources: item.languageSources,
       displayLanguage,
-      restrictNavigation: isMyStream,
+      restrictNavigation: false,
       allowSandboxedForms: false,
     });
   }
 
-  return servers.map((server, index) => ({
-    ...server,
-    // Keep the assigned source slot stable when an earlier provider is absent.
-    // For example, MyStream remains Server 2 if the HLS resolver has no result.
-    server: server.label.match(/^Server\s+(\d+)/)?.[0] ?? `Server ${index + 1}`,
-    label: server.label,
-  }));
+  return servers;
 }
 
 function isAbortError(error: unknown): boolean {
