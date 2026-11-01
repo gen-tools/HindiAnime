@@ -764,14 +764,10 @@ function assembleServers(
     add(playzenSource, "Server 3 · PlayZen", "server-3");
   }
 
-  // ── Remaining Fallback Mirrors (Abyss, Toko, etc.) ───────────────────────
-  const abyssMultiLanguage = animeSaltItems.find((item) => (item.languageSources?.length || 0) > 0);
-  if (abyssMultiLanguage) {
-    add(abyssMultiLanguage, `Server ${list.length + 1} · 🌐 Abyss Multi-Audio`);
-  }
-
+  // ── Remaining Fallback Mirrors (Toko, etc.) ─────────────────────────────
   for (const s of animeSaltItems) {
     if (list.length >= 7) break;
+    if (s.embed.includes("abyssplayer.com") || (s.label || "").toLowerCase().includes("abyss") || (s.languageSources?.length || 0) > 0) continue;
     if (!s.languageSources?.length && !usedUrls.has(s.embed)) {
       add(s, `Server ${list.length + 1} · ${s.languageLabel || s.label || "Alternative"}`);
     }
