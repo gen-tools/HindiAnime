@@ -702,6 +702,52 @@ async function fetchPlayZenSource(slug: string, season: string, ep: string): Pro
       }
     }
   }
+
+  // Fallback: Query the Worker's native /sources endpoint which resolves PlayZen inside Cloudflare's network
+  try {
+    const workerSourcesUrl = new URL("/sources", CF_WORKER_BASE);
+    workerSourcesUrl.searchParams.set("id", cleanSlug);
+    workerSourcesUrl.searchParams.set("season", season);
+    workerSourcesUrl.searchParams.set("ep", ep);
+    workerSourcesUrl.searchParams.set("movie", (season === "1" && ep === "1") ? "1" : "0");
+    const workerController = new AbortController();
+    const workerTimer = setTimeout(() => workerController.abort(), 8_000);
+    try {
+      const wRes = await fetch(workerSourcesUrl.toString(), {
+        signal: workerController.signal,
+        headers: {
+          ...DEFAULT_HEADERS,
+          ...(workerSecret ? { "x-hindianime-proxy-secret": workerSecret } : {}),
+        },
+      });
+      if (wRes.ok) {
+        const wData = (await wRes.json()) as { results?: StreamItem[]; serverSlots?: Record<string, StreamItem> };
+        const playzen = wData.results?.find((s) => (s.sourceProvider || s.source) === "PlayZen" || (s.embed || "").includes("animeinfinity.me"))
+          || wData.serverSlots?.server4
+          || wData.serverSlots?.server3;
+        if (playzen?.embed) {
+          return {
+            server: "Server 3",
+            slot: "server-3",
+            source: "PlayZen",
+            sourceProvider: "PlayZen",
+            label: "Server 3 · PlayZen",
+            embed: playzen.embed,
+            url: playzen.embed,
+            type: "embed",
+            audioLanguage: "hi",
+            languageLabel: "Hindi Dub",
+            adFree: true,
+          };
+        }
+      }
+    } finally {
+      clearTimeout(workerTimer);
+    }
+  } catch {
+    // ignore
+  }
+
   return null;
 }
 
@@ -860,8 +906,8 @@ async function fetchAnimeSaltSources(
           contentType = res.headers.get("content-type");
           html = await res.text();
           responseBodyLength = html.length;
-          if (res.status >= 400 && res.status < 500) break;
-          if (isCloudflareChallenge(html)) break;
+          if (res.status >= 400 && res.status < 500) continue;
+          if (isCloudflareChallenge(html)) continue;
           passedResponseChecks = res.ok && html.length >= 1000 && !html.includes("404 Not Found") && !isCloudflareChallenge(html);
           if (!passedResponseChecks) continue;
         }
@@ -971,6 +1017,54 @@ async function fetchAnimeSaltSources(
       }
     }
   }
+
+  // Fallback: If scraping AnimeSalt was blocked on this host (e.g. Vercel),
+  // get MyStream directly from the Worker's /sources endpoint
+  if (!browserResult) {
+    try {
+      const workerSourcesUrl = new URL("/sources", CF_WORKER_BASE);
+      workerSourcesUrl.searchParams.set("id", baseSlug || slug);
+      workerSourcesUrl.searchParams.set("season", season);
+      workerSourcesUrl.searchParams.set("ep", episode);
+      workerSourcesUrl.searchParams.set("movie", isMovieRequest ? "1" : "0");
+      const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
+      const workerController = new AbortController();
+      const workerTimer = setTimeout(() => workerController.abort(), 8_000);
+      try {
+        const wRes = await fetch(workerSourcesUrl.toString(), {
+          signal: workerController.signal,
+          headers: {
+            ...DEFAULT_HEADERS,
+            ...(workerSecret ? { "x-hindianime-proxy-secret": workerSecret } : {}),
+          },
+        });
+        if (wRes.ok) {
+          const wData = (await wRes.json()) as { results?: StreamItem[]; serverSlots?: Record<string, StreamItem> };
+          const mystream = wData.results?.find(
+            (s) => (s.embed || "").includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream")
+          ) || wData.serverSlots?.server2;
+          if (mystream && mystream.embed) {
+            return [{
+              server: "AnimeSalt MyStream",
+              sourceProvider: "AnimeSalt",
+              label: "AnimeSalt · 🇮🇳 MyStream",
+              embed: mystream.embed,
+              type: "embed",
+              audioLanguage: "hi",
+              languageLabel: "🇮🇳 Hindi",
+              adFree: true,
+              restrictNavigation: true,
+            }];
+          }
+        }
+      } finally {
+        clearTimeout(workerTimer);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   return [];
 }
 

@@ -504,10 +504,18 @@ export function StreamPlayer({
           ? [buildAnimeSaltMovieUrl(animeSlug)]
           : buildAnimeSaltEpisodeCandidates(animeSlug, season, episode);
 
-        if (workerOrigin) {
+        let targetOrigin = workerOrigin;
+        if (!targetOrigin) {
+          try {
+            const parsed = new URL(configuredWorkerUrl.split("?")[0].replace(/\/+$/, ""));
+            if (parsed.protocol === "https:" && ALLOWED_WORKER_HOSTS.has(parsed.hostname)) targetOrigin = parsed.origin;
+          } catch {}
+        }
+
+        if (targetOrigin) {
           for (const targetUrl of animeSaltTargets) {
             try {
-              const workerUrl = new URL("/", workerOrigin);
+              const workerUrl = new URL("/", targetOrigin);
               workerUrl.searchParams.set("url", targetUrl);
               const htmlResponse = await fetch(workerUrl, {
                 signal: controller.signal,

@@ -77,6 +77,9 @@
       "as-cdn26.top",
       "anime-api2-3rkec57qu-sheztechy.vercel.app",
       "ravok.buzz",
+      "animeflash.live",
+      "www.animeflash.live",
+      "archive.animeinfinity.me",
     ]);
 
     const ALLOWED_CDN_HOSTS = new Set([
@@ -96,9 +99,19 @@
         url.hash ||
         url.search !== ""
       ) return false;
-      // Strict MyStream embed pattern: mandatory /embed/<id> or /e/<id> with alphanumeric/dash token (3 to 80 chars)
-      // No single-segment paths, no query strings, no ports, and no credentials allowed.
-      return /^\/(?:embed|e)\/[a-zA-Z0-9_-]{3,80}$/.test(url.pathname);
+      // MyStream embed pattern: /embed/<id>, /e/<id>, or /video/<id> with alphanumeric/dash token (3 to 80 chars)
+      return /^\/(?:embed|e|video)\/[a-zA-Z0-9_-]{3,80}$/.test(url.pathname);
+    }
+
+    function isAllowedAnimeFlashTarget(url) {
+      if (
+        url.protocol !== "https:" ||
+        url.username ||
+        url.password ||
+        url.port ||
+        url.hash
+      ) return false;
+      return /^\/(?:episode|movie|anime)\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?\/?$/.test(url.pathname);
     }
 
     function isPositiveInteger(value, maxDigits = 12) {
@@ -654,6 +667,12 @@
       if (host === "ravok.buzz") {
         return isAllowedRavokTarget(url);
       }
+      if (host === "animeflash.live" || host === "www.animeflash.live") {
+        return isAllowedAnimeFlashTarget(url);
+      }
+      if (host === "archive.animeinfinity.me") {
+        return /^\/player\/[a-zA-Z0-9+/=_%-]+$/.test(url.pathname);
+      }
       return false;
     }
 
@@ -920,6 +939,10 @@
           parsedTarget.hostname === "www.animesalt.cx" ||
           parsedTarget.hostname.endsWith(".animesalt.cx");
 
+        const isAnimeFlashHost =
+          parsedTarget.hostname === "animeflash.live" ||
+          parsedTarget.hostname === "www.animeflash.live";
+
         const proxyHeaders = {
           "User-Agent": BROWSER_UA,
           Accept: request.headers.get("Accept") || "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -937,6 +960,10 @@
             "Sec-Fetch-Site": "same-origin",
             "Sec-Fetch-User": "?1",
             "Upgrade-Insecure-Requests": "1",
+          } : {}),
+          ...(isAnimeFlashHost ? {
+            Referer: "https://animeflash.live/",
+            Origin: "https://animeflash.live",
           } : {}),
           ...(parsedTarget.pathname.includes("admin-ajax.php") ? { "X-Requested-With": "XMLHttpRequest" } : {}),
         };
@@ -2196,12 +2223,29 @@
             headers: { "User-Agent": BROWSER_UA, Accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
           });
           if (!page.response.ok) continue;
-          const token = page.text.match(/https?:\/\/archive\.animeinfinity\.me\/player\/([A-Za-z0-9+/_=%-]+)/i);
-          if (!token) continue;
-          const embed = "https://archive.animeinfinity.me/player/" + token[1].replace(/\\/g, "");
+          let playzenToken = null;
+          const rscMatch = page.text.match(/:T([0-9a-fA-F]+),https?:\/\/archive\.animeinfinity\.me\/player\/([^\r\n"']+)/);
+          if (rscMatch) {
+            const totalLen = parseInt(rscMatch[1], 16);
+            const prefixLen = "https://archive.animeinfinity.me/player/".length;
+            const tokenLen = totalLen - prefixLen;
+            if (tokenLen > 0 && rscMatch[2].length >= tokenLen) {
+              playzenToken = rscMatch[2].slice(0, tokenLen);
+            }
+          }
+          if (!playzenToken) {
+            const quotedMatch = page.text.match(/https?:\/\/archive\.animeinfinity\.me\/player\/([A-Za-z0-9+/_=%-]+?)["'\s\\]/);
+            if (quotedMatch) playzenToken = quotedMatch[1];
+          }
+          if (!playzenToken) {
+            const chunkMatch = page.text.match(/https?:\/\/archive\.animeinfinity\.me\/player\/([A-Za-z0-9+/_=%-]+?)(?:[0-9a-f]{1,4}:[T\[]|["'\s\\]|$)/i);
+            if (chunkMatch) playzenToken = chunkMatch[1];
+          }
+          if (!playzenToken) continue;
+          const embed = "https://archive.animeinfinity.me/player/" + playzenToken.replace(/\\/g, "");
           return {
-            server: "PlayZen", source: "PlayZen", sourceProvider: "PlayZen",
-            label: "PlayZen", embed, url: embed, type: "embed",
+            server: "Server 3", source: "PlayZen", sourceProvider: "PlayZen",
+            label: "Server 3 · PlayZen", embed, url: embed, type: "embed",
             audioLanguage: "hi", languageLabel: "Hindi Dub", adFree: true,
           };
         } catch { /* try next URL */ }
@@ -2259,28 +2303,25 @@
           fetchGoogleDriveSource(id, season, ep).catch(() => null),
           fetchPlayZenSource(id, season, ep).catch(() => null),
         ]);
-        const hls = salt.find((item) => item.type === "hls" && item.directHlsUrl);
         const mystream = salt.find((item) =>
           item.type === "embed" && /mystream|ravok\.buzz/i.test(String(item.label || "") + " " + String(item.embed || ""))
         );
         const selected = [
-          { source: hls, slot: 1 },
-          { source: mystream, slot: 2 },
-          { source: drive, slot: 3 },
-          { source: playzen, slot: 4 },
+          { source: mystream, slot: 1, label: "Server 1 · MyStream" },
+          { source: drive, slot: 2, label: "Server 2 · Google Drive" },
+          { source: playzen, slot: 3, label: "Server 3 · PlayZen" },
         ].filter((entry) => Boolean(entry.source));
         const labels = [
-          "Server 1 · Hindi Anime HLS",
-          "Server 2 · MyStream Embed",
-          "Server 3 · Google Drive",
-          "Server 4 · PlayZen",
+          "Server 1 · MyStream",
+          "Server 2 · Google Drive",
+          "Server 3 · PlayZen",
         ];
         const results = [];
         for (const entry of selected) {
           const item = entry.source;
           const slot = entry.slot;
           let result = { ...item, adFree: true };
-          if (slot === 2 || /mystream|ravok\.buzz/i.test(String(item.label || "") + " " + String(item.embed || ""))) {
+          if (slot === 1 || /mystream|ravok\.buzz/i.test(String(item.label || "") + " " + String(item.embed || ""))) {
             result.restrictNavigation = true;
           }
           if (item.type === "hls" && item.directHlsUrl) {

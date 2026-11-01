@@ -11,5 +11,5 @@ export const ALLOWED_WORKER_HOSTS: ReadonlySet<string> = new Set([
   WORKER_CUSTOM_HOST,
 ]);
 
-/** The preferred default for new server-side requests. */
-export const DEFAULT_WORKER_BASE_URL = `https://${WORKER_CUSTOM_HOST}`;
+/** The active worker hostname with /sources and full proxy support. */
+export const DEFAULT_WORKER_BASE_URL = `https://${WORKER_LEGACY_HOST}`;
