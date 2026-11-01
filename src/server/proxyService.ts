@@ -3044,17 +3044,23 @@ export async function fetchNormalizedPlaybackSources(
   }
 
   // 2. Server 2: Google Drive Stream
-  const gdriveCandidates = allRaw.filter((item) => item.type === 'gdrive' || item.sourceProvider === 'AnimaHD' || (item.url && item.url.includes('drive.google.com')));
+  const gdriveCandidates = allRaw.filter((item) =>
+    item.type === 'gdrive' ||
+    /^(?:animahd|googledrive)$/i.test(String(item.sourceProvider || item.source || '')) ||
+    /anima\s*hd|google\s*drive/i.test(String(item.label || '')) ||
+    (item.url && (/drive\.google\.com/i.test(item.url) || /\/gdrive-stream(?:\?|$)/i.test(item.url)))
+  );
   let server2: any = null;
   if (gdriveCandidates.length > 0) {
     const best = gdriveCandidates[0];
+    const serverNum = list.length + 1;
     server2 = {
-      server: 'Server 2',
-      slot: 'server-2',
+      server: `Server ${serverNum}`,
+      slot: `server-${serverNum}`,
       kind: 'google-drive',
       type: 'mp4',
       sourceProvider: 'GoogleDrive',
-      label: 'Server 2 · Fast Drive Direct (1080p)',
+      label: `Server ${serverNum} · Fast Drive Direct (1080p)`,
       audioLanguage: 'hi',
       languageLabel: 'Hindi Dub',
       url: best.url,

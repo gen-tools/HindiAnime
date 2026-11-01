@@ -688,6 +688,37 @@ export async function createApp() {
     }
   });
 
+  // Stable combined-source contract for the Cloudflare Worker/frontend.
+  // Keeps the backend bearer token server-side and exposes normalized HLS,
+  // Google Drive, MyStream, and PlayZen slots from one request.
+  app.get('/api/normalized-stream', async (req, res) => {
+    const rawId = (req.query.id as string) || (req.query.slug as string) || '';
+    const season = (req.query.season as string) || '1';
+    const ep = (req.query.ep as string) || (req.query.episode as string) || '1';
+
+    if (!rawId || typeof rawId !== 'string' || rawId.length > 120 ||
+      !/^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/i.test(rawId) ||
+      !/^\d{1,4}$/.test(season) || !/^\d{1,5}$/.test(ep)) {
+      return res.status(400).json({ success: false, message: 'Invalid id, season, or episode' });
+    }
+
+    try {
+      const requestOrigin = `${req.protocol}://${req.get('host')}`;
+      const payload = await fetchNormalizedPlaybackSources(
+        rawId,
+        season,
+        ep,
+        requestOrigin,
+        PROXY_SECRET || undefined
+      );
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.json(payload);
+    } catch (err: any) {
+      console.error('[normalized-stream-route-error]', err);
+      return res.status(502).json({ success: false, message: 'Failed to resolve playback sources' });
+    }
+  });
+
   // ── Route: /playzen-stream & /api/playzen/stream ─────────────────────────────
   app.get(['/playzen-stream', '/api/playzen/stream'], async (req, res) => {
     const rawId = (req.query.id as string) || (req.query.slug as string);
