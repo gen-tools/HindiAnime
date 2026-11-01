@@ -1,0 +1,198 @@
+import type { Metadata } from "next";
+import { cache } from "react";
+import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
+import { createCanonicalMetadata } from "@/lib/seo";
+import { StreamPlayer } from "@/components/player/StreamPlayer";
+import { ReadMoreText } from "@/components/ui/ReadMoreText";
+import { WatchTracker } from "@/components/player/WatchTracker";
+import { PosterArt } from "@/components/anime/PosterArt";
+import { getAnimeBySlug } from "@/lib/mock/anime";
+import { anime } from "@/lib/mock/anime";
+import { MockWatchUnavailable } from "@/components/player/MockWatchUnavailable";
+import {
+  cleanAnimeSlug,
+  formatDisplayTitle,
+  getAnimeInfo,
+  getAvailableSeasons,
+  getEpisodes,
+  getMovieInfo,
+  mapSearchItemToAnime,
+  resolveAnimeInfoData,
+  resolveMovieInfoData,
+  searchAnime,
+  scrapeDirectSeriesData,
+  isUsableImageUrl,
+  parseDurationMinutes,
+  SYNOPSIS_FALLBACK,
+} from "@/lib/api/client";
+
+// Public watch landing pages are cached as shared CDN responses rather than
+// durable ISR snapshots, so a long tail of slugs does not write ISR entries.
+export const dynamic = "force-dynamic";
+export const dynamicParams = true;
+
+export function generateStaticParams() {
+  return anime
+    .filter((item) => !item.isMock && item.type === "Movie")
+    .sort((a, b) => (a.popularityRank ?? Number.MAX_SAFE_INTEGER) - (b.popularityRank ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, 5)
+    .map((item) => ({ animeSlug: item.slug }));
+}
+
+const getMovieWatchPageData = cache(async (slug: string) => {
+  const keyword = formatDisplayTitle(slug).toLowerCase();
+  return Promise.all([
+    getAnimeInfo(slug),
+    getMovieInfo(slug),
+    searchAnime(keyword, 1),
+    scrapeDirectSeriesData(slug),
+    getAvailableSeasons(slug),
+    getEpisodes(slug, 1),
+  ]);
+});
+
+function normalizeTitle(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function movieTitleMatchesSlug(title: string, slug: string): boolean {
+  const normalizedTitle = normalizeTitle(title).replace(/-movie$/, "");
+  const normalizedSlug = normalizeTitle(slug).replace(/-movie$/, "");
+  return normalizedTitle === normalizedSlug;
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ animeSlug: string }>;
+}): Promise<Metadata> {
+  const { animeSlug: rawSlug } = await params;
+  const slug = cleanAnimeSlug(rawSlug) || rawSlug;
+  const title = formatDisplayTitle(slug);
+  const mockAnime = getAnimeBySlug(slug);
+  return createCanonicalMetadata(`/watch/${slug}`, {
+    title: `${title} - Full Movie`,
+    description: `Watch ${title} full movie online in Hindi and regional languages on Hindi Anime.`,
+    ...(mockAnime?.isMock ? { robots: { index: false, follow: true } } : {}),
+  });
+}
+
+export default async function MovieWatchPage({
+  params,
+}: {
+  params: Promise<{ animeSlug: string }>;
+}) {
+  const { animeSlug: rawSlug } = await params;
+  const slug = cleanAnimeSlug(rawSlug) || rawSlug;
+  const mockRecord = getAnimeBySlug(slug);
+  if (mockRecord?.isMock) return <MockWatchUnavailable anime={mockRecord} />;
+  const [apiInfo, movieInfo, searchResult, directData, seasons, episodes] =
+    await getMovieWatchPageData(slug);
+
+  const animeData = resolveAnimeInfoData(apiInfo);
+  const movieData = resolveMovieInfoData(movieInfo);
+  const searchMatch = searchResult?.results?.results?.find(
+    (item) => cleanAnimeSlug(item.anime_id) === slug
+  );
+  const searchType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
+  const mockAnime = getAnimeBySlug(slug);
+  const matchingMovie =
+    movieData?.title && movieTitleMatchesSlug(movieData.title, slug)
+      ? movieData
+      : null;
+  const hasSeriesEpisodes = Boolean(episodes?.results?.episodes?.length);
+  const hasMultipleSeasons = (seasons?.length || 0) > 1 || (directData?.seasons?.length || 0) > 1;
+  const isMovie =
+    animeData?.format?.toUpperCase() === "MOVIE" ||
+    movieData?.format?.toUpperCase() === "MOVIE" ||
+    mockAnime?.type === "Movie" ||
+    directData?.isMovie === true ||
+    animeData?.quality?.toUpperCase().includes("MOVIE") === true ||
+    searchType === "Movie" ||
+    (!hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      mockAnime?.type !== "TV" &&
+      Boolean(matchingMovie?.title));
+
+  if (!isMovie) {
+    redirect(`/watch/${slug}/ep-1-1`);
+  }
+
+  const title =
+    matchingMovie?.title ||
+    (isMovie ? movieData?.title : undefined) ||
+    directData?.title ||
+    animeData?.title ||
+    searchMatch?.title ||
+    mockAnime?.title ||
+    formatDisplayTitle(slug);
+  const poster =
+    (directData?.poster && isUsableImageUrl(directData.poster) ? directData.poster : "") ||
+    (matchingMovie?.poster && isUsableImageUrl(matchingMovie.poster) ? matchingMovie.poster : "") ||
+    (mockAnime?.poster && isUsableImageUrl(mockAnime.poster) ? mockAnime.poster : "") ||
+    slug;
+  const synopsis =
+    (typeof matchingMovie?.overview === "string" ? matchingMovie.overview : "") ||
+    directData?.synopsis ||
+    (mockAnime?.synopsis && mockAnime.synopsis !== SYNOPSIS_FALLBACK ? mockAnime.synopsis : "");
+
+  // The existing playback API accepts season/episode parameters; this page does
+  // not create an Episode record or expose episode controls for a movie.
+  return (
+    <div className="pb-14">
+      <div className="container-page pt-5">
+        <nav className="mb-4 text-sm text-text-muted" aria-label="Breadcrumb">
+          <Link href="/" className="hover:text-green-light">Home</Link>
+          <span className="mx-1.5">/</span>
+          <span className="text-text-secondary">{title}</span>
+        </nav>
+
+        <WatchTracker
+          animeSlug={slug}
+          animeTitle={title}
+          animePoster={poster}
+          type="Movie"
+          season={0}
+          episode={0}
+          episodeId="movie"
+          episodeTitle="Full Movie"
+          durationMinutes={movieData?.run_time || movieData?.runningTime
+            ? parseDurationMinutes(movieData.run_time || movieData.runningTime)
+            : undefined}
+          genres={directData?.genres || matchingMovie?.genres?.map((genre) => genre.toLowerCase().replace(/\s+/g, "-")) || []}
+        />
+
+        <StreamPlayer
+          key={`${slug}:movie`}
+          animeSlug={slug}
+          animeTitle={title}
+          season={1}
+          episode={1}
+          episodeTitle={`${title} — Full Movie`}
+          isMovie
+        />
+
+        <div className="mt-5 flex gap-4">
+          <div className="hidden w-24 shrink-0 overflow-hidden rounded-lg sm:block">
+            <PosterArt seed={poster} title={title} className="h-full w-full object-cover" />
+          </div>
+          <div>
+            <h1 className="font-display text-xl font-bold text-text-primary md:text-2xl">{title}</h1>
+            <p className="mt-1 text-sm text-text-secondary">Full Movie</p>
+            {synopsis && (
+              <ReadMoreText
+                text={synopsis}
+                className="mt-2 max-w-3xl text-sm leading-relaxed text-text-secondary"
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

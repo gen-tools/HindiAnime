@@ -1,0 +1,882 @@
+import type { Metadata } from "next";
+import { cache } from "react";
+import { AnimeInfo } from "@/components/anime/AnimeInfo";
+import { PosterArt } from "@/components/anime/PosterArt";
+import { AnimeSeasonBrowser } from "@/components/episodes/AnimeSeasonBrowser";
+import { AnimeRow } from "@/components/anime/AnimeRow";
+import { genres } from "@/lib/mock/genres";
+import { getAnimeBySlug, getAnimeByGenre } from "@/lib/mock/anime";
+import { staticCatalog } from "@/lib/static-catalog";
+import {
+  getAnimeInfo,
+  getEpisodes,
+  searchAnime,
+  mapApiInfoToAnime,
+  mapSearchItemToAnime,
+  mapApiEpisodeToEpisode,
+  cleanAnimeSlug,
+  getAvailableSeasons,
+  getMovieInfo,
+  mapMovieInfoToAnime,
+  resolveAnimeInfoData,
+  resolveMovieInfoData,
+  scrapeDirectSeriesData,
+  SYNOPSIS_FALLBACK,
+  formatDisplayTitle,
+  isUsableImageUrl,
+  parseLanguages,
+} from "@/lib/api/client";
+import type { Anime } from "@/types/anime";
+import { createCanonicalMetadata } from "@/lib/seo";
+import type { Episode } from "@/types/episode";
+import type { SeasonItem } from "@/types/api";
+import { deduplicateEpisodes } from "@/lib/episodes";
+import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
+import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
+
+// These public pages use shared CDN response caching instead of durable ISR
+// snapshots. This avoids an ISR write for every newly visited anime slug.
+export const dynamic = "force-dynamic";
+export const dynamicParams = true;
+export function generateStaticParams() {
+  return [];
+}
+
+function isMatchingMovie(movieTitle: string | undefined, slug: string): boolean {
+  if (!movieTitle) return false;
+  const sTitle = movieTitle
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const sSlug = slug
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (sTitle === sSlug) return true;
+  if (sTitle.replace(/-movie$/, "") === sSlug.replace(/-movie$/, "")) return true;
+  return false;
+}
+
+const getAnimePageBaseData = cache(async (slug: string) => {
+  const searchKeyword = formatDisplayTitle(slug).toLowerCase();
+  return Promise.all([
+    getAnimeInfo(slug),
+    getMovieInfo(slug),
+    searchAnime(searchKeyword, 1),
+    scrapeDirectSeriesData(slug),
+  ]);
+});
+
+const getAnimePageEpisodes = cache((slug: string, season: number) => getEpisodes(slug, season));
+const getAnimePageSeasons = cache((slug: string) => getAvailableSeasons(slug));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const cleanSlug = cleanAnimeSlug(slug) || slug;
+  const mockRecord = getAnimeBySlug(cleanSlug);
+  if (mockRecord?.isMock) {
+    const mockTitle = `${mockRecord.title} Hindi Dubbed | Hindi Anime`;
+    const mockArtwork = new URL(MOCK_ARTWORK_URL, CANONICAL_SITE_ORIGIN).toString();
+    return createCanonicalMetadata(`/anime/${cleanSlug}`, {
+      title: { absolute: mockTitle },
+      description: mockRecord.synopsis,
+      robots: { index: false, follow: true },
+      openGraph: { title: mockTitle, description: mockRecord.synopsis, images: [{ url: mockArtwork, alt: mockRecord.title }] },
+      twitter: { card: "summary_large_image", title: mockTitle, description: mockRecord.synopsis, images: [mockArtwork] },
+    });
+  }
+  const [[apiInfo, movieInfo, searchRes, directData], epApiRes] = await Promise.all([
+    getAnimePageBaseData(cleanSlug),
+    getAnimePageEpisodes(cleanSlug, 1),
+  ]);
+
+  const searchMatch = searchRes?.results?.results?.find(
+    (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
+  );
+
+  const rawEpisodes = epApiRes?.results?.episodes || [];
+  const s1Fallback = directData?.s1Episodes && !directData.isMovie ? directData.s1Episodes : [];
+  const hasSeriesEpisodes = rawEpisodes.length > 0 || s1Fallback.length > 0;
+  const hasMultipleSeasons = Boolean(
+    (epApiRes?.results?.seasons?.length ?? 0) > 1 || (directData?.seasons?.length ?? 0) > 1
+  );
+
+  const movieData = resolveMovieInfoData(movieInfo);
+  const animeData = resolveAnimeInfoData(apiInfo);
+  const mockItem = getAnimeBySlug(cleanSlug);
+  const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
+
+  const hasSeriesIdentity =
+    hasSeriesEpisodes || hasMultipleSeasons || mockItem?.type === "TV";
+  const isMovie = !hasSeriesIdentity && (
+    Boolean(directData?.isMovie) ||
+    (
+      !hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      (
+        mockItem?.type === "Movie" ||
+        (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
+      )
+    )
+  );
+
+  let item: Anime | undefined;
+  if (isMovie && matchingMovieData?.title) {
+    item = mapMovieInfoToAnime(
+      matchingMovieData,
+      searchMatch?.poster || directData?.poster || undefined,
+      directData?.title || undefined
+    );
+  } else if (animeData?.title) {
+    item = mapApiInfoToAnime(
+      animeData,
+      searchMatch?.poster || directData?.poster || undefined,
+      directData?.title || undefined
+    );
+  } else if (directData) {
+    const isTitleOk = (t?: string) => Boolean(t && !t.toLowerCase().includes("404"));
+    const formattedTitle =
+      (isTitleOk(directData.title) ? directData.title : "") ||
+      mockItem?.title ||
+      (isTitleOk(matchingMovieData?.title) ? matchingMovieData!.title : "") ||
+      searchMatch?.title ||
+      formatDisplayTitle(cleanSlug);
+    item = {
+      id: cleanSlug,
+      slug: cleanSlug,
+      title: formattedTitle,
+      synopsis:
+        directData.synopsis ||
+        mockItem?.synopsis ||
+        (typeof matchingMovieData?.overview === "string" && matchingMovieData.overview.length > 0
+          ? matchingMovieData.overview
+          : SYNOPSIS_FALLBACK),
+      poster: directData.poster || mockItem?.poster || cleanSlug,
+      backdrop: directData.backdrop || mockItem?.backdrop || directData.poster || cleanSlug,
+      rating: mockItem?.rating || 8.5,
+      year: mockItem?.year || 0,
+      type: isMovie ? "Movie" : (mockItem?.type || "TV"),
+      status: isMovie ? "Completed" : (mockItem?.status || "Ongoing"),
+      durationMinutes: mockItem?.durationMinutes || (isMovie ? 110 : 24),
+      episodeCount: rawEpisodes.length || s1Fallback.length || mockItem?.episodeCount || 1,
+      genres:
+        (directData.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
+        (mockItem?.genres && mockItem.genres.length > 0 ? mockItem.genres : undefined) ||
+        (matchingMovieData?.genres && matchingMovieData.genres.length > 0
+          ? matchingMovieData.genres.map((g) => g.toLowerCase().replace(/\s+/g, "-"))
+          : undefined) ||
+        [],
+      languages: mockItem?.languages || ["hindi", "japanese", "english"],
+      seasons: directData.seasons.length || mockItem?.seasons || 1,
+      studio: mockItem?.studio || "Anime",
+      updatedAt: mockItem?.updatedAt || "",
+    };
+  } else if (searchMatch) {
+    item = mapSearchItemToAnime(searchMatch);
+  } else if (mockItem) {
+    item = mockItem;
+  }
+
+  if (!item) {
+    const formattedTitle = mockItem?.title || formatDisplayTitle(cleanSlug);
+    item = {
+      id: cleanSlug,
+      slug: cleanSlug,
+      title: formattedTitle,
+      synopsis: directData?.synopsis || mockItem?.synopsis || "",
+      poster: directData?.poster || mockItem?.poster || cleanSlug,
+      backdrop: directData?.backdrop || mockItem?.backdrop || directData?.poster || cleanSlug,
+      rating: mockItem?.rating || 8.0,
+      year: mockItem?.year || 0,
+      type: mockItem?.type || "TV",
+      status: mockItem?.status || "Ongoing",
+      durationMinutes: mockItem?.durationMinutes || 24,
+      episodeCount: mockItem?.episodeCount || 1,
+      genres: mockItem?.genres || ["action"],
+      languages: mockItem?.languages || ["hindi", "japanese", "english"],
+      seasons: mockItem?.seasons || 1,
+      studio: mockItem?.studio || "Anime Production",
+      updatedAt: mockItem?.updatedAt || "",
+    };
+  }
+
+  // Override synopsis with scraped or mock data if empty
+  if (
+    directData?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available.")
+  ) {
+    item = { ...item, synopsis: directData.synopsis };
+  } else if (
+    mockItem?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available.")
+  ) {
+    item = { ...item, synopsis: mockItem.synopsis };
+  }
+
+  // Override title if current title contains percent encoding or 404
+  if (directData?.title && !directData.title.toLowerCase().includes("404") && (!item.title || item.title.includes("%") || item.title.toLowerCase().includes("404"))) {
+    item = { ...item, title: directData.title };
+  } else if (!item.title || item.title.includes("%") || item.title.toLowerCase().includes("404")) {
+    item = { ...item, title: mockItem?.title || formatDisplayTitle(item.title || cleanSlug) };
+  }
+
+  // A poster parsed from this title's own AnimeSalt detail page is the source
+  // of truth. The legacy API can return a valid-looking image from another
+  // title, so do not keep it merely because it is a URL.
+  const verifiedArtwork =
+    (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
+    (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
+  if (verifiedArtwork) {
+    item = { ...item, poster: verifiedArtwork };
+  }
+  if (directData?.backdrop && isUsableImageUrl(directData.backdrop)) {
+    item = { ...item, backdrop: directData.backdrop };
+  } else if (directData?.poster && isUsableImageUrl(directData.poster)) {
+    item = { ...item, backdrop: directData.poster };
+  }
+
+  // Mock data fallback when AnimeSalt (directData) is unavailable on production
+  if (!isUsableImageUrl(item.poster) && isUsableImageUrl(mockItem?.poster)) {
+    item = { ...item, poster: mockItem!.poster };
+  }
+  if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(mockItem?.backdrop)) {
+    item = { ...item, backdrop: mockItem!.backdrop };
+  } else if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(item.poster)) {
+    item = { ...item, backdrop: item.poster };
+  }
+  if (
+    mockItem?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available." ||
+      item.synopsis.length < 20)
+  ) {
+    item = { ...item, synopsis: mockItem.synopsis };
+  }
+
+  // ── Build SEO metadata from resolved API data ─────────────────────────────
+
+  // 1. Clean promotional text from item.title (leaves item.title & visible H1 unchanged)
+  function cleanAnimeTitle(rawTitle: string): string {
+    return rawTitle
+      .replace(/\s*[-–—:]\s*Watch\s*(?:Now|Online).*$/i, "")
+      .replace(/\s*[-–—:]\s*Hindi\s*Dubbed.*$/i, "")
+      .replace(/\s*[-–—:]\s*All\s*Episodes.*$/i, "")
+      .replace(/\s*[-–—:]\s*Episodes?.*$/i, "")
+      .replace(/\s*[-–—:]\s*Anime\s*Salt.*$/i, "")
+      .replace(/\s*[([]?\s*Hindi\s*Dub(?:bed)?\s*[)\]]?\s*$/i, "")
+      .trim();
+  }
+
+  const rawBase = item.title ? cleanAnimeTitle(item.title) : "";
+  const cleanTitle = rawBase || formatDisplayTitle(cleanSlug);
+
+  // 2. Determine whether Hindi is verified by reliable data
+  //    (Do not infer from slug, title, query, branding, or hardcoded fallbacks)
+  const isHindiConfirmed = Boolean(
+    (typeof animeData?.language === "string" &&
+      animeData.language.trim().length > 0 &&
+      animeData.language.toLowerCase().includes("hindi")) ||
+    (Array.isArray(matchingMovieData?.languages) &&
+      matchingMovieData.languages.some(
+        (l) => typeof l === "string" && l.trim().toLowerCase().includes("hindi")
+      )) ||
+    (mockItem?.languages &&
+      Array.isArray(mockItem.languages) &&
+      mockItem.languages.some(
+        (l) => typeof l === "string" && l.toLowerCase() === "hindi"
+      ))
+  );
+
+  // 3. Generate SEO title based on verified Hindi availability
+  const seoTitle = isHindiConfirmed
+    ? `${cleanTitle} Hindi Dubbed | Hindi Anime`
+    : `${cleanTitle} | Hindi Anime`;
+
+  // Build description: prefer synopsis, then construct from available fields.
+  // Never invent language/dub/sub claims — only use what the API confirmed.
+  function buildAnimeDescription(anime: Anime): string {
+    const hasSynopsis =
+      anime.synopsis &&
+      anime.synopsis !== SYNOPSIS_FALLBACK &&
+      anime.synopsis !== "No synopsis available." &&
+      anime.synopsis.length > 20;
+
+    if (hasSynopsis) {
+      // Truncate cleanly at word boundary, max 155 chars
+      const raw = anime.synopsis!.replace(/\s+/g, " ").trim();
+      if (raw.length <= 155) return raw;
+      const cut = raw.lastIndexOf(" ", 152);
+      return (cut > 80 ? raw.slice(0, cut) : raw.slice(0, 152)) + "…";
+    }
+
+    // Fallback: construct from available structured data
+    const parts: string[] = [];
+    if (anime.type === "Movie") {
+      parts.push(`Watch ${cleanTitle}`);
+    } else {
+      const epInfo =
+        anime.episodeCount && anime.episodeCount > 0
+          ? ` (${anime.episodeCount} episode${anime.episodeCount > 1 ? "s" : ""})`
+          : "";
+      const seasonInfo =
+        anime.seasons && anime.seasons > 1 ? `, ${anime.seasons} seasons` : "";
+      parts.push(`Watch ${cleanTitle}${epInfo}${seasonInfo}`);
+    }
+    if (anime.year && anime.year > 1990) parts.push(`from ${anime.year}`);
+    if (anime.genres && anime.genres.length > 0) {
+      parts.push(`— ${anime.genres.slice(0, 3).join(", ")} anime`);
+    }
+    parts.push("on Hindi Anime.");
+    return parts.join(" ");
+  }
+
+  const seoDescription = buildAnimeDescription(item);
+  const ogType = item.type === "Movie" ? "video.movie" : "video.tv_show";
+  const canonicalUrl = getCanonicalUrl(`/anime/${cleanSlug}`);
+  const posterUrl = item.poster && item.poster.startsWith("http") ? item.poster : DEFAULT_OG_IMAGE;
+
+  return createCanonicalMetadata(`/anime/${cleanSlug}`, {
+    title: {
+      absolute: seoTitle,
+    },
+    description: seoDescription,
+    alternates: { canonical: canonicalUrl },
+    openGraph: {
+      title: seoTitle,
+      description: seoDescription,
+      type: ogType,
+      url: canonicalUrl,
+      siteName: "Hindi Anime",
+      locale: "en_US",
+      images: [
+        {
+          url: posterUrl,
+          alt: cleanTitle,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: seoTitle,
+      description: seoDescription,
+      images: [posterUrl],
+    },
+  });
+}
+
+export default async function AnimeDetailPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  const cleanSlug = cleanAnimeSlug(slug) || slug;
+  // The canonical page HTML always contains season 1. A query-selected season
+  // is loaded in the browser after hydration, so query strings do not disable ISR.
+  const currentSeason = "1";
+  const sParams: Record<string, string | undefined> = {};
+  const seasonNum = parseInt(currentSeason, 10) || 1;
+  const mockRecord = getAnimeBySlug(cleanSlug);
+  if (mockRecord?.isMock) {
+    return (
+      <div className="pb-14">
+        <div className="relative h-64 overflow-hidden border-b border-border-line sm:h-80 md:h-96">
+          <PosterArt seed={mockRecord.backdrop} title={mockRecord.title} orientation="landscape" className="h-full" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-background/10" />
+        </div>
+        <AnimeInfo item={mockRecord} />
+      </div>
+    );
+  }
+
+  // 1. Fetch info, movieInfo, search, direct scraper, seasons, and episodes in parallel
+  const [[apiInfo, movieInfo, searchRes, directData], availableSeasons, epApiRes] =
+    await Promise.all([
+      getAnimePageBaseData(cleanSlug),
+      getAnimePageSeasons(cleanSlug),
+      getAnimePageEpisodes(cleanSlug, seasonNum),
+    ]);
+
+  // Match ONLY by exact slug
+  const searchMatch = searchRes?.results?.results?.find(
+    (r) => cleanAnimeSlug(r.anime_id) === cleanSlug
+  );
+
+  const rawEpisodes = epApiRes?.results?.episodes || [];
+  const s1Fallback =
+    // Do NOT count scraper's movie s1Episodes as series episodes
+    seasonNum === 1 && directData?.s1Episodes && !directData.isMovie ? directData.s1Episodes : [];
+  const effectiveRawEpisodes =
+    rawEpisodes.length > 0 ? rawEpisodes : s1Fallback;
+
+  const hasSeriesEpisodes = effectiveRawEpisodes.length > 0;
+  const hasMultipleSeasons =
+    (availableSeasons && availableSeasons.length > 1) ||
+    (directData?.seasons && directData.seasons.length > 1);
+
+  const movieData = resolveMovieInfoData(movieInfo);
+  const animeData = resolveAnimeInfoData(apiInfo);
+  const mockItem = getAnimeBySlug(cleanSlug);
+  const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
+  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
+
+  // Series episodes, multiple seasons, or a known TV catalog record take
+  // precedence over a conflicting cached movie classification.
+  const hasSeriesIdentity =
+    hasSeriesEpisodes || hasMultipleSeasons || mockItem?.type === "TV" || searchItemType === "TV";
+  const isMovie =
+    !hasSeriesIdentity &&
+    (Boolean(directData?.isMovie) ||
+    (
+      !hasSeriesEpisodes &&
+      !hasMultipleSeasons &&
+      (
+        mockItem?.type === "Movie" ||
+        (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
+      )
+    ));
+
+  let item: Anime | undefined;
+  if (isMovie && matchingMovieData?.title) {
+    item = mapMovieInfoToAnime(
+      matchingMovieData,
+      searchMatch?.poster || directData?.poster || undefined,
+      directData?.title || undefined
+    );
+  } else if (animeData?.title) {
+    item = mapApiInfoToAnime(
+      animeData,
+      searchMatch?.poster || directData?.poster || undefined,
+      directData?.title || undefined
+    );
+  } else if (mockItem && (!directData || !directData.title || directData.title.toLowerCase().includes("404"))) {
+    item = mockItem;
+  } else {
+    const formattedTitle =
+      directData?.title ||
+      mockItem?.title ||
+      (matchingMovieData?.title ? matchingMovieData.title : "") ||
+      searchMatch?.title ||
+      formatDisplayTitle(cleanSlug);
+    const poster =
+      directData?.poster ||
+      mockItem?.poster ||
+      searchMatch?.poster ||
+      matchingMovieData?.poster ||
+      cleanSlug;
+
+    const totalSeasonsCount =
+      availableSeasons.length || directData?.seasons?.length || mockItem?.seasons || 1;
+
+    item = {
+      id: cleanSlug,
+      slug: cleanSlug,
+      title: formattedTitle,
+      synopsis:
+        directData?.synopsis ||
+        mockItem?.synopsis ||
+        (typeof matchingMovieData?.overview === "string" && matchingMovieData.overview.length > 0
+          ? matchingMovieData.overview
+          : SYNOPSIS_FALLBACK),
+      poster,
+      backdrop: directData?.backdrop || mockItem?.backdrop || poster,
+      rating: mockItem?.rating || Number(matchingMovieData?.rating) || 8.5,
+      year: mockItem?.year || Number(matchingMovieData?.year) || 0,
+      type: isMovie ? "Movie" : (mockItem?.type || "TV"),
+      status: isMovie ? "Completed" : (mockItem?.status || "Ongoing"),
+      durationMinutes: mockItem?.durationMinutes || (isMovie ? 110 : 24),
+      episodeCount: effectiveRawEpisodes.length || mockItem?.episodeCount || 12,
+      genres:
+        (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
+        (mockItem?.genres && mockItem.genres.length > 0 ? mockItem.genres : undefined) ||
+        matchingMovieData?.genres?.map((g) => g.toLowerCase().replace(/\s+/g, "-")) ||
+        ["action", "animation"],
+      languages: mockItem?.languages || (matchingMovieData?.languages
+        ? parseLanguages(matchingMovieData.languages.join(","))
+        : ["hindi", "japanese", "english"]),
+      seasons: totalSeasonsCount,
+      studio: mockItem?.studio || "Anime",
+      updatedAt: mockItem?.updatedAt || "",
+    };
+  }
+
+  if (!item) {
+    const formattedTitle = mockItem?.title || formatDisplayTitle(cleanSlug);
+    item = {
+      id: cleanSlug,
+      slug: cleanSlug,
+      title: formattedTitle,
+      synopsis: directData?.synopsis || mockItem?.synopsis || "",
+      poster: directData?.poster || mockItem?.poster || cleanSlug,
+      backdrop: directData?.backdrop || mockItem?.backdrop || directData?.poster || cleanSlug,
+      rating: mockItem?.rating || 8.0,
+      year: mockItem?.year || 0,
+      type: mockItem?.type || "TV",
+      status: mockItem?.status || "Ongoing",
+      durationMinutes: mockItem?.durationMinutes || 24,
+      episodeCount: mockItem?.episodeCount || 1,
+      genres: mockItem?.genres || ["action"],
+      languages: mockItem?.languages || ["hindi", "japanese", "english"],
+      seasons: mockItem?.seasons || 1,
+      studio: mockItem?.studio || "Anime Production",
+      updatedAt: mockItem?.updatedAt || "",
+    };
+  }
+
+  // Override synopsis with scraped or mock data if empty
+  if (
+    directData?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available.")
+  ) {
+    item = { ...item, synopsis: directData.synopsis };
+  } else if (
+    mockItem?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available.")
+  ) {
+    item = { ...item, synopsis: mockItem.synopsis };
+  }
+
+  // Override title if current title contains percent encoding or 404
+  if (directData?.title && !directData.title.toLowerCase().includes("404") && (!item.title || item.title.includes("%") || item.title.toLowerCase().includes("404"))) {
+    item = { ...item, title: directData.title };
+  } else if (!item.title || item.title.includes("%") || item.title.toLowerCase().includes("404")) {
+    item = { ...item, title: mockItem?.title || formatDisplayTitle(item.title || cleanSlug) };
+  }
+
+  // Prefer the verified image from this exact source page over an unrelated
+  // image that the fallback API may have attached to the same title.
+  const verifiedArtwork =
+    (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
+    (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
+  if (verifiedArtwork) {
+    item = { ...item, poster: verifiedArtwork };
+  }
+  if (directData?.backdrop && isUsableImageUrl(directData.backdrop)) {
+    item = { ...item, backdrop: directData.backdrop };
+  } else if (directData?.poster && isUsableImageUrl(directData.poster)) {
+    item = { ...item, backdrop: directData.poster };
+  }
+
+  // When AnimeSalt (directData) is unavailable on production (403), fall back to
+  // mock data for poster, backdrop, and synopsis so the page never shows blank fields.
+  if (!isUsableImageUrl(item.poster) && isUsableImageUrl(mockItem?.poster)) {
+    item = { ...item, poster: mockItem!.poster };
+  }
+  if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(mockItem?.backdrop)) {
+    item = { ...item, backdrop: mockItem!.backdrop };
+  } else if (!isUsableImageUrl(item.backdrop) && isUsableImageUrl(item.poster)) {
+    item = { ...item, backdrop: item.poster };
+  }
+  if (
+    mockItem?.synopsis &&
+    (!item.synopsis ||
+      item.synopsis === SYNOPSIS_FALLBACK ||
+      item.synopsis === "No synopsis available." ||
+      item.synopsis.length < 20)
+  ) {
+    item = { ...item, synopsis: mockItem.synopsis };
+  }
+
+  // Ensure slug and id are strictly preserved
+  item = {
+    ...item,
+    id: cleanSlug,
+    slug: cleanSlug,
+    type: isMovie ? "Movie" : hasSeriesIdentity ? "TV" : item.type,
+  };
+
+  // Resolve actual genres from scraped, API, movie, or mock data
+  const resolvedGenres =
+    (directData?.genres && directData.genres.length > 0 ? directData.genres : undefined) ||
+    (animeData?.genres && animeData.genres.length > 0 ? animeData.genres : undefined) ||
+    (matchingMovieData?.genres && matchingMovieData.genres.length > 0
+      ? matchingMovieData.genres.map((g) => g.toLowerCase().replace(/\s+/g, "-"))
+      : undefined) ||
+    (mockItem?.genres && mockItem.genres.length > 0 ? mockItem.genres : undefined) ||
+    [];
+
+  if (resolvedGenres.length > 0) {
+    item = { ...item, genres: resolvedGenres };
+  }
+
+  // 2. Discover episodes & seasons
+  let episodes: Episode[] = [];
+
+  if (isMovie) {
+    episodes = [
+      {
+        id: "movie",
+        animeSlug: cleanSlug,
+        animeTitle: item.title,
+        animePoster: item.poster,
+        season: 1,
+        number: 1,
+        title: "Full Movie",
+        thumbnail: item.poster,
+        durationMinutes: item.durationMinutes || 110,
+        languages: item.languages,
+        releasedAt: "",
+      },
+    ];
+  } else {
+    const totalSeasons =
+      availableSeasons.length || directData?.seasons?.length || mockItem?.seasons || item.seasons;
+    item = { ...item, seasons: totalSeasons };
+
+    if (effectiveRawEpisodes.length > 0) {
+      episodes = deduplicateEpisodes(
+        effectiveRawEpisodes.map((ep, idx) =>
+          mapApiEpisodeToEpisode(
+            ep,
+            item!.slug,
+            item!.title,
+            item!.poster,
+            item!.languages,
+            seasonNum,
+            idx
+          )
+        )
+      );
+    } else {
+      // Synthesize at least Episode 1 fallback so episode options are never empty
+      episodes = [
+        {
+          id: `ep-${seasonNum}-1`,
+          animeSlug: item.slug,
+          animeTitle: item.title,
+          animePoster: item.poster,
+          season: seasonNum,
+          number: 1,
+          title: `Episode 1`,
+          thumbnail: item.poster,
+          durationMinutes: 24,
+          languages: item.languages,
+          releasedAt: "",
+        },
+      ];
+    }
+  }
+
+  // 3. Build season list
+  const allSeasons = isMovie
+    ? []
+    : Array.from(
+        new Set([
+          ...(availableSeasons.length ? availableSeasons : [1]),
+          ...(directData?.seasons || []),
+          ...(mockItem?.seasons ? Array.from({ length: mockItem.seasons }, (_, i) => i + 1) : []),
+          seasonNum,
+        ])
+      ).sort((a, b) => a - b);
+
+  const seasonList: SeasonItem[] = isMovie
+    ? []
+    : allSeasons.map((s) => ({
+        season: String(s),
+        text: `Season ${s}`,
+      }));
+
+  const firstEpisodeId = isMovie
+    ? "movie"
+    : episodes.length > 0
+    ? episodes[0].id
+    : `ep-${seasonNum}-1`;
+
+  // ── Build "You Might Also Like" genre-based anime ─────────────────────────
+  const nonGenreTags = new Set([
+    "animation",
+    "adult-cast",
+    "award-winning",
+    "all-episodes",
+    "subbed",
+    "dubbed",
+    "hindi",
+    "english",
+    "japanese",
+  ]);
+
+  const rawGenres = (item.genres || [])
+    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
+    .filter((g) => g && !nonGenreTags.has(g) && !g.startsWith("page"));
+
+  const knownGenres = new Set(genres.map((g) => g.slug));
+
+  const genrePriority = [
+    "sports",
+    "romance",
+    "mystery",
+    "horror",
+    "thriller",
+    "comedy",
+    "isekai",
+    "sci-fi",
+    "action",
+    "fantasy",
+    "adventure",
+    "slice-of-life",
+    "psychological",
+    "supernatural",
+    "drama",
+    "shounen",
+    "school",
+    "super-power",
+  ];
+
+  const primaryGenre =
+    genrePriority.find((p) => rawGenres.includes(p)) ||
+    rawGenres.find((g) => knownGenres.has(g)) ||
+    rawGenres[0] ||
+    "action";
+
+  const seenSlugs = new Set<string>([item.slug]);
+  const youMightAlsoLikeItems: Anime[] = [];
+
+  const localRelatedItems = staticCatalog.filter((candidate) =>
+    candidate.genres?.some((genre) => {
+      const normalizedGenre = genre.toLowerCase().trim().replace(/\s+/g, "-");
+      return (rawGenres.length ? rawGenres : [primaryGenre]).includes(normalizedGenre);
+    })
+  );
+
+  for (const genreItem of localRelatedItems) {
+    if (genreItem.slug && !seenSlugs.has(genreItem.slug)) {
+      seenSlugs.add(genreItem.slug);
+      youMightAlsoLikeItems.push(genreItem);
+    }
+  }
+
+  for (const g of (rawGenres.length ? rawGenres : [primaryGenre])) {
+    const mockGenreItems = getAnimeByGenre(g);
+    for (const mockItem of mockGenreItems) {
+      if (mockItem.slug && !seenSlugs.has(mockItem.slug)) {
+        seenSlugs.add(mockItem.slug);
+        youMightAlsoLikeItems.push(mockItem);
+      }
+    }
+  }
+
+  const related = youMightAlsoLikeItems.slice(0, 18);
+
+  return (
+    <div className="pb-14">
+      <div className="relative h-64 overflow-hidden border-b border-border-line sm:h-80 md:h-96">
+        <PosterArt
+          seed={item.backdrop}
+          title={item.title}
+          orientation="landscape"
+          className="h-full"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-background/10" />
+      </div>
+
+      <AnimeInfo item={item} firstEpisodeId={firstEpisodeId} />
+
+      {!isMovie && episodes.length > 0 && (
+        <div className="container-page mt-10">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <h2 className="font-display text-xl font-bold text-text-primary">
+                Episodes
+              </h2>
+              {!isMovie && (
+                <span className="rounded-full bg-surface-elevated px-2.5 py-0.5 text-xs font-semibold text-text-secondary border border-border-line">
+                  {episodes.length} Episodes
+                </span>
+              )}
+            </div>
+          </div>
+          <AnimeSeasonBrowser
+            initialEpisodes={episodes}
+            animeSlug={item.slug}
+            animeTitle={item.title}
+            animePoster={item.poster}
+            languages={item.languages}
+            seasons={seasonList}
+            currentSeason={currentSeason}
+          />
+        </div>
+      )}
+
+      {related.length > 0 && (
+        <AnimeRow
+          title="You Might Also Like"
+          items={related}
+          viewAllHref={`/genre/${primaryGenre}`}
+        />
+      )}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@graph": [
+              {
+                "@type": isMovie ? "Movie" : "TVSeries",
+                "@id": `${getCanonicalUrl(`/anime/${cleanSlug}`)}#media`,
+                url: getCanonicalUrl(`/anime/${cleanSlug}`),
+                name: item.title,
+                description: item.synopsis,
+                image: item.poster,
+                datePublished: item.year ? `${item.year}-01-01` : undefined,
+                genre: item.genres,
+                inLanguage: item.languages,
+                aggregateRating: item.rating
+                  ? {
+                      "@type": "AggregateRating",
+                      ratingValue: item.rating,
+                      bestRating: "10",
+                      worstRating: "1",
+                      ratingCount: 120,
+                    }
+                  : undefined,
+                ...(!isMovie && item.episodeCount
+                  ? { numberOfEpisodes: item.episodeCount, numberOfSeasons: item.seasons || 1 }
+                  : {}),
+              },
+              {
+                "@type": "BreadcrumbList",
+                "@id": `${getCanonicalUrl(`/anime/${cleanSlug}`)}#breadcrumbs`,
+                itemListElement: [
+                  {
+                    "@type": "ListItem",
+                    position: 1,
+                    name: "Home",
+                    item: CANONICAL_SITE_ORIGIN,
+                  },
+                  {
+                    "@type": "ListItem",
+                    position: 2,
+                    name: isMovie ? "Movies" : "Series",
+                    item: `${CANONICAL_SITE_ORIGIN}/${isMovie ? "movies" : "series"}`,
+                  },
+                  {
+                    "@type": "ListItem",
+                    position: 3,
+                    name: item.title,
+                    item: getCanonicalUrl(`/anime/${cleanSlug}`),
+                  },
+                ],
+              },
+            ],
+          }).replace(/</g, "\\u003c"),
+        }}
+      />
+    </div>
+  );
+}

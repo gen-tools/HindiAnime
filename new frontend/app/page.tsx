@@ -1,0 +1,39 @@
+import { BrowserHomepageSections } from "@/components/home/BrowserHomepageSections";
+import { LanguageSection } from "@/components/home/LanguageSection";
+import { GenreSection } from "@/components/home/GenreSection";
+import { DiscoverySection } from "@/components/home/DiscoverySection";
+import { FadeIn } from "@/components/ui/FadeIn";
+import type { Metadata } from "next";
+import {
+  getHomepageData,
+} from "@/lib/api/client";
+
+import { createCanonicalMetadata } from "@/lib/seo";
+
+// The page snapshot can stay cached for six hours; BrowserHomepageSections
+// refreshes the live trending/latest feed from /api/homepage on the client.
+export const revalidate = 21600;
+
+export const metadata: Metadata = createCanonicalMetadata("/");
+
+export default async function HomePage() {
+  const homepageData = await getHomepageData();
+
+  return (
+    <>
+      <h1 className="sr-only">Hindi Anime – Watch Hindi Dubbed Anime Online</h1>
+      <BrowserHomepageSections initialData={homepageData} />
+
+      {/* 8. Other existing sections */}
+      <FadeIn>
+        <LanguageSection />
+      </FadeIn>
+      <FadeIn>
+        <GenreSection />
+      </FadeIn>
+      <FadeIn>
+        <DiscoverySection />
+      </FadeIn>
+    </>
+  );
+}

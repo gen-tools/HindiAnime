@@ -1,0 +1,179 @@
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  images: {
+    unoptimized: true,
+    formats: ["image/avif", "image/webp"],
+    minimumCacheTTL: 604800,
+    remotePatterns: [
+      { protocol: "https", hostname: "image.tmdb.org" },
+      { protocol: "https", hostname: "**.anilist.co" },
+      { protocol: "https", hostname: "s4.anilist.co" },
+      { protocol: "https", hostname: "img.animesalt.cx" },
+      { protocol: "https", hostname: "animesalt.cx" },
+      { protocol: "https", hostname: "**.animesalt.cx" },
+      { protocol: "https", hostname: "**.tmdb.org" },
+      { protocol: "https", hostname: "multishows.top" },
+      { protocol: "https", hostname: "**.multishows.top" },
+      // WordPress Photon CDN used by animesalt og:image
+      { protocol: "https", hostname: "i0.wp.com" },
+      { protocol: "https", hostname: "i1.wp.com" },
+      { protocol: "https", hostname: "i2.wp.com" },
+      { protocol: "https", hostname: "i3.wp.com" },
+      // General CDN catchall (covers any img CDN animesalt.cx might use)
+      { protocol: "https", hostname: "**.wp.com" },
+    ],
+    // Disable domain-based blocking for external images entirely
+    dangerouslyAllowSVG: true,
+    contentDispositionType: "inline",
+  },
+
+  async redirects() {
+    return [
+      {
+        // www → non-www permanent redirect
+        source: "/:path*",
+        has: [{ type: "host", value: "www.hindi-anime.com" }],
+        destination: "https://hindi-anime.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
+
+  async headers() {
+    const publicHtmlCacheHeader = (ttlSeconds: number) => [{
+      key: "Cloudflare-CDN-Cache-Control",
+      value: `public, max-age=${ttlSeconds}`,
+    }];
+    const publicDynamicDocumentCacheHeaders = (ttlSeconds: number) => [
+      {
+        key: "Cache-Control",
+        value: `public, max-age=0, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds}`,
+      },
+      {
+        key: "Vercel-CDN-Cache-Control",
+        value: `public, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds}`,
+      },
+      ...publicHtmlCacheHeader(ttlSeconds),
+    ];
+
+    return [
+      // Cloudflare can cache public document responses separately from the
+      // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
+      // GETs with no query string; API and account routes are intentionally absent.
+      { source: "/", headers: publicHtmlCacheHeader(300) },
+      // Anime and watch HTML is identical for all visitors. Cache it at Vercel
+      // and Cloudflare after dynamic rendering, instead of storing each slug or
+      // episode as a durable ISR entry.
+      {
+        source: "/anime/:path*",
+        has: [{ type: "header", key: "accept", value: ".*text/html.*" }],
+        headers: publicDynamicDocumentCacheHeaders(86400),
+      },
+      {
+        source: "/watch/:path*",
+        has: [{ type: "header", key: "accept", value: ".*text/html.*" }],
+        headers: publicDynamicDocumentCacheHeaders(86400),
+      },
+      { source: "/series", headers: publicHtmlCacheHeader(86400) },
+      {
+        source: "/latest",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=0, s-maxage=900, stale-while-revalidate=300",
+          },
+          {
+            key: "Vercel-CDN-Cache-Control",
+            value: "public, s-maxage=900, stale-while-revalidate=300",
+          },
+          ...publicHtmlCacheHeader(900),
+        ],
+      },
+      { source: "/movies", headers: publicHtmlCacheHeader(86400) },
+      { source: "/language", headers: publicHtmlCacheHeader(86400) },
+      { source: "/language/:path*", headers: publicHtmlCacheHeader(86400) },
+      { source: "/popular", headers: publicHtmlCacheHeader(86400) },
+      { source: "/browse", headers: publicHtmlCacheHeader(86400) },
+      { source: "/genre", headers: publicHtmlCacheHeader(86400) },
+      { source: "/genre/:path*", headers: publicHtmlCacheHeader(86400) },
+      { source: "/schedule", headers: publicHtmlCacheHeader(1800) },
+      { source: "/search", headers: publicHtmlCacheHeader(1800) },
+      {
+        source: "/search-index.json",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800",
+          },
+        ],
+      },
+      {
+        // Global security headers for all routes — NO X-Robots-Tag here (let meta robots handle it per page)
+        source: "/:path*",
+        headers: [
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "X-Frame-Options",
+            value: "SAMEORIGIN",
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://*.profitableratecpmnetwork.com https://profitableratecpmnetwork.com",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https: https://image.tmdb.org https://*.anilist.co https://s4.anilist.co https://img.animesalt.cx https://animesalt.cx https://*.animesalt.cx https://*.tmdb.org https://multishows.top https://*.multishows.top https://i0.wp.com https://i1.wp.com https://i2.wp.com https://i3.wp.com https://*.wp.com",
+              "font-src 'self' data:",
+              "connect-src 'self' https: http: blob: data: https://graphql.anilist.co https://anime-api2-3rkec57qu-sheztechy.vercel.app https://animesalt.cx https://*.workers.dev https://wispy-cherry-6934.sheztech.workers.dev https://cloud.hindi-anime.com",
+              // Permissive frame-src and media-src so embedded video players and streams function smoothly
+              "frame-src 'self' https: http:",
+              "media-src 'self' blob: data: https: http: https://*.workers.dev https://wispy-cherry-6934.sheztech.workers.dev https://cloud.hindi-anime.com",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+            ].join("; "),
+          },
+        ],
+      },
+      {
+        source: "/api/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" }],
+      },
+      {
+        // The animesalt proxy re-serves third-party player pages inside our iframe.
+        // Override X-Frame-Options to ALLOW embedding (remove the SAMEORIGIN block).
+        source: "/api/animesalt-proxy",
+        headers: [
+          {
+            // Empty string removes the header — the proxied page must be embeddable.
+            key: "X-Frame-Options",
+            value: "",
+          },
+          {
+            // Allow the proxied content to be framed by us
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'self'",
+          },
+        ],
+      },
+    ];
+  },
+};
+
+export default nextConfig;
