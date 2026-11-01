@@ -18,7 +18,6 @@
     const BROWSER_UA =
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-    const TOKO_API_URL = "https://anime-api2-3rkec57qu-sheztechy.vercel.app";
     const PROXY_SECRET_BINDING = "HINDIANIME_PROXY_SECRET";
     const PROXY_SECRET_HEADER = "x-hindianime-proxy-secret";
     const PUBLIC_STREAM_API_BINDING = "PUBLIC_STREAM_API_ENABLED";
@@ -75,7 +74,6 @@
       "as-cdn24.top",
       "as-cdn25.top",
       "as-cdn26.top",
-      "anime-api2-3rkec57qu-sheztechy.vercel.app",
       "ravok.buzz",
       "animeflash.live",
       "www.animeflash.live",
@@ -661,9 +659,6 @@
       if (ALLOWED_CDN_HOSTS.has(host)) {
         return true;
       }
-      if (host === "anime-api2-3rkec57qu-sheztechy.vercel.app") {
-        return isAllowedTokoStreamTarget(url);
-      }
       if (host === "ravok.buzz") {
         return isAllowedRavokTarget(url);
       }
@@ -1080,10 +1075,7 @@
             if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(classifyPromise);
             else classifyPromise.catch(() => {});
           }
-          const maxResponseBytes = parsedTarget.hostname === "anime-api2-3rkec57qu-sheztechy.vercel.app"
-            ? GENERAL_RESPONSE_MAX_BYTES
-            : ANIMESALT_RESPONSE_MAX_BYTES;
-          const boundedResponse = limitProxyResponseBody(response, maxResponseBytes, upstreamController, upstreamTimeout);
+          const boundedResponse = limitProxyResponseBody(response, ANIMESALT_RESPONSE_MAX_BYTES, upstreamController, upstreamTimeout);
           if (!boundedResponse) {
             return new Response(JSON.stringify({ error: "Proxy response exceeded size limit" }), {
               status: 413,
@@ -2393,20 +2385,10 @@
 
       const cleanId = slugify(id);
 
-      // Fetch Toko + AnimeSalt in parallel
-      const [tokoData, animeSaltItems] = await Promise.all([
-        fetchToko(cleanId, season, ep),
-        fetchAnimeSaltStream(cleanId, season, ep),
-      ]);
-      const rawSources = tokoData?.sources || [];
-      const byLanguage = Object.fromEntries(
-        Object.entries(tokoData?.byLanguage || {}).map(([code, group]) => [
-          code,
-          { ...group, sources: (group?.sources || []).filter((source) => !isBlockedStreamSource(source)) },
-        ])
-      );
+      // Fetch AnimeSalt sources (MyStream + Abyss mirrors)
+      const animeSaltItems = await fetchAnimeSaltStream(cleanId, season, ep);
 
-      if (rawSources.length === 0 && (!animeSaltItems || animeSaltItems.length === 0)) {
+      if (!animeSaltItems || animeSaltItems.length === 0) {
         return jsonResponse({ success: false, message: "No valid streams found", results: [] }, 404, request);
       }
 
@@ -2417,89 +2399,8 @@
         const lb = (s.languageLabel || "").toLowerCase();
         return a === "hi" || l.includes("hindi") || lb.includes("hindi");
       }
-      function isJapanese(s) {
-        const a = (s.audioLanguage || "").toLowerCase();
-        const l = (s.language || "").toLowerCase();
-        const lb = (s.languageLabel || "").toLowerCase();
-        return a === "ja" || l.includes("japanese") || lb.includes("japanese");
-      }
-      function isTamil(s) {
-        const a = (s.audioLanguage || "").toLowerCase();
-        const l = (s.language || "").toLowerCase();
-        const lb = (s.languageLabel || "").toLowerCase();
-        return a === "ta" || l.includes("tamil") || lb.includes("tamil");
-      }
-      function isTelugu(s) {
-        const a = (s.audioLanguage || "").toLowerCase();
-        const l = (s.language || "").toLowerCase();
-        const lb = (s.languageLabel || "").toLowerCase();
-        return a === "te" || l.includes("telugu") || lb.includes("telugu");
-      }
-      function isEnglish(s) {
-        const a = (s.audioLanguage || "").toLowerCase();
-        const l = (s.language || "").toLowerCase();
-        const lb = (s.languageLabel || "").toLowerCase();
-        return a === "en" || l.includes("english") || lb.includes("english");
-      }
-      function isVidmolySource(s) {
-        return /vidmoly|vmnow\.online/i.test(
-          `${s.providerKey || ""} ${s.providerName || ""} ${s.source || ""} ${s.url || ""}`
-        );
-      }
 
-      function isHlsSource(s) {
-        return s.type === "hls" || Boolean(s.isM3U8) || /\.m3u8(?:[?#]|$)/i.test(s.url || "");
-      }
-
-      function isDirect(s) {
-        // Vidmoly playlist links are unreliable through our HLS proxy. Use their
-        // actual iframe URL from Referer when Toko provides one.
-        if (isVidmolySource(s)) return false;
-        return isHlsSource(s) || s.type === "mp4";
-      }
-
-      function isToonStreamSource(s) {
-        return /toon[\s._-]*stream/i.test(
-          `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""} ${s.server || ""} ${s.url || ""} ${s.headers?.Referer || s.headers?.referer || ""}`
-        );
-      }
-
-      // Build a result item from a Toko raw source
-      function buildTokoResult(s, serverNum, customLabel) {
-        const isDirectStream = isDirect(s);
-        const flag = isHindi(s) ? "🇮🇳" : isJapanese(s) ? "🇯🇵" : isTamil(s) ? "🌐" : isTelugu(s) ? "🌐" : isEnglish(s) ? "🇬🇧" : "🌐";
-        const langName = isHindi(s) ? "Hindi Dub" : isJapanese(s) ? "Japanese" : isTamil(s) ? "Tamil" : isTelugu(s) ? "Telugu" : isEnglish(s) ? "English" : (s.language || "Multi");
-        const streamUrl = (s.url || "")
-          .replace(/\\+u0026/gi, "&")
-          .replace(/&amp;/gi, "&")
-          .trim();
-        const referer = s.headers?.Referer || s.headers?.referer || "";
-        const embedFallback = referer.startsWith("http") && !referer.includes(".m3u8")
-          ? referer
-          : streamUrl;
-        let hlsProxyUrl;
-        if (isDirectStream && streamUrl) {
-          const origin  = s.headers?.Origin  || s.headers?.origin  || "";
-          const p = new URLSearchParams({ url: streamUrl });
-          if (referer) p.set("referer", referer);
-          if (origin)  p.set("origin",  origin);
-          hlsProxyUrl = `${url.origin}/hls-proxy?${p.toString()}`;
-        }
-        return {
-          server: `Server ${serverNum}`,
-          label: customLabel || `Server ${serverNum} · ${flag} ${langName}`,
-          embed: isDirectStream || (isHlsSource(s) && embedFallback !== streamUrl) ? embedFallback : streamUrl,
-          url: isDirectStream ? (hlsProxyUrl || streamUrl) : undefined,
-          hlsProxyUrl,
-          type: isDirectStream ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
-          audioLanguage: s.audioLanguage || (isHindi(s) ? "hi" : isJapanese(s) ? "ja" : isEnglish(s) ? "en" : ""),
-          languageLabel: s.languageLabel || `${flag} ${langName}`,
-          adFree: isDirectStream,
-          headers: s.headers,
-        };
-      }
-
-      // Build a result item from an AnimeSalt item (already has embed, server, label)
+      // Build a result item from an AnimeSalt item
       function buildSaltResult(s, serverNum, customLabel) {
         return {
           ...s,
@@ -2508,21 +2409,9 @@
         };
       }
 
-      // ── 9-Slot Assembly ────────────────────────────────────────────────────────
       const list = [];
       const usedUrls = new Set();
 
-      function getByLangSources(langCode) {
-        const entry = byLanguage[langCode];
-        return entry?.sources || [];
-      }
-
-      function addToko(s, label) {
-        if (!s || !s.url || usedUrls.has(s.url)) return false;
-        usedUrls.add(s.url);
-        list.push(buildTokoResult(s, list.length + 1, label));
-        return true;
-      }
       function addSalt(s, label) {
         if (!s) return false;
         const key = s.embed || s.url;
@@ -2532,152 +2421,20 @@
         return true;
       }
 
-      // Slot 1 — AnimeSalt Hindi source
-      const saltMyStream = (animeSaltItems || []).find((s) =>
+      // Slot 1 — MyStream (ravok.buzz)
+      const mystream = animeSaltItems.find((s) =>
         isHindi(s) && (s.embed || "").includes("ravok.buzz")
-      );
-      const preferredSaltHindi = saltMyStream || (animeSaltItems || []).find(isHindi);
-      if (preferredSaltHindi) {
-        addSalt(preferredSaltHindi, (preferredSaltHindi.embed || "").includes("ravok.buzz")
-          ? "Server 1 · 🇮🇳 AnimeSalt MyStream"
-          : "Server 1 · 🇮🇳 AnimeSalt Hindi (Abyss)");
+      ) || animeSaltItems.find((s) => (s.embed || "").includes("ravok.buzz"));
+      if (mystream) addSalt(mystream, "Server 1 · 🇮🇳 MyStream");
+
+      // Remaining AnimeSalt mirrors (skip Abyss multi-audio bundles)
+      for (const s of animeSaltItems) {
+        if (list.length >= 6) break;
+        if ((s.embed || "").includes("abyssplayer.com") || (s.label || "").toLowerCase().includes("abyss")) continue;
+        addSalt(s, `Server ${list.length + 1} · ${s.languageLabel || s.label || "Mirror"}`);
       }
 
-      // Slot 2 — RubyVidHub Hindi source when Toko supplies it
-      const isRubyVidHub = (s) => {
-        const provider = `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""}`.toLowerCase();
-        let host = "";
-        try { host = new URL(s.url).hostname.toLowerCase(); } catch { /* invalid URL */ }
-        return host === "rubyvidhub.com" || host.endsWith(".rubyvidhub.com") || provider.includes("rubyvidhub");
-      };
-      const rubyVidHub = rawSources.find((s) =>
-        !isBlockedStreamSource(s) && s.url && isRubyVidHub(s) && !usedUrls.has(s.url)
-      );
-      if (rubyVidHub) {
-        addToko(rubyVidHub, "Server 2 · 🇮🇳 RubyVidHub");
-      } else {
-        // Keep the existing AnimeSalt/Toko fallback in slot 2 when RubyVidHub is absent.
-      const myStream = (animeSaltItems || []).find((s) =>
-        isHindi(s) && ((s.embed || "").includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream")) &&
-        !usedUrls.has(s.embed || "")
-      );
-      if (myStream) {
-        addSalt(myStream, "Server 2 · 🇮🇳 MyStream");
-      } else {
-        // Fallback: Toko Hindi embed or ravok.buzz from rawSources
-        const s2Toko = rawSources.find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && (s.url.includes("ravok.buzz") || (isHindi(s) && !isDirect(s))) && !usedUrls.has(s.url));
-        if (s2Toko) {
-          const isRavok = (s2Toko.url || "").includes("ravok.buzz");
-          addToko(s2Toko, isRavok ? "Server 2 · 🇮🇳 MyStream" : "Server 2 · 🇮🇳 Hindi Dub");
-        }
-      }
-      }
-
-      // Slot 3 — remaining Toko Hindi embed, skipping Vidmoly.
-      const isVidmoly = (s) => /vidmoly|vmnow\.online|vmpx\.online|vmeas\.cloud/i.test(
-        `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""} ${s.url || ""}`
-      );
-      const s3 = rawSources.find((s) =>
-        !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !isVidmoly(s) && !isToonStreamSource(s) && !usedUrls.has(s.url)
-      );
-      if (s3) {
-        addToko(s3, "Server 3 · 🇮🇳 Hindi Dub (Toko)");
-      } else {
-        // Fallback: any remaining AnimeSalt Hindi
-        const s3Salt = (animeSaltItems || []).find((s) => s.audioLanguage === "hi" && !usedUrls.has(s.embed || ""));
-        if (s3Salt) addSalt(s3Salt, "Server 3 · 🇮🇳 Hindi Dub (Abyss)");
-      }
-
-      // Slot 4 — Toko Hindi Dub Embed #2
-      const s4 = rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isHindi(s) && !isDirect(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
-      if (s4) {
-        addToko(s4, "Server 4 · 🇮🇳 Hindi Dub (Toko Alt)");
-      } else {
-        const s4Salt = (animeSaltItems || []).find((s) => s.audioLanguage === "hi" && !usedUrls.has(s.embed || ""));
-        if (s4Salt) addSalt(s4Salt, "Server 4 · 🇮🇳 Hindi Dub (Abyss Alt)");
-      }
-
-      // Slot 5 — Tamil (AnimeSalt first, then Toko byLanguage, then rawSources)
-      const s5Salt = (animeSaltItems || []).find((s) => isTamil(s) && !usedUrls.has(s.embed || ""));
-      if (s5Salt) {
-        addSalt(s5Salt, "Server 5 · 🌐 Tamil (Abyss)");
-      } else {
-        const s5Toko = getByLangSources("ta").find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && !usedUrls.has(s.url)) ||
-          rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isTamil(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
-        if (s5Toko) addToko(s5Toko, "Server 5 · 🌐 Tamil");
-      }
-
-      // Slot 6 — Telugu (AnimeSalt first, then Toko byLanguage, then rawSources)
-      const s6Salt = (animeSaltItems || []).find((s) => isTelugu(s) && !usedUrls.has(s.embed || ""));
-      if (s6Salt) {
-        addSalt(s6Salt, "Server 6 · 🌐 Telugu (Abyss)");
-      } else {
-        const s6Toko = getByLangSources("te").find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && !usedUrls.has(s.url)) ||
-          rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isTelugu(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
-        if (s6Toko) addToko(s6Toko, "Server 6 · 🌐 Telugu");
-      }
-
-      // Slot 7 — English (AnimeSalt first, then Toko byLanguage, then rawSources)
-      const s7Salt = (animeSaltItems || []).find((s) => isEnglish(s) && !usedUrls.has(s.embed || ""));
-      if (s7Salt) {
-        addSalt(s7Salt, "Server 7 · 🇬🇧 English");
-      } else {
-        const s7Toko = getByLangSources("en").find((s) => !isBlockedStreamSource(s) && s.url && !isToonStreamSource(s) && !usedUrls.has(s.url) && !isHindi(s)) ||
-          rawSources.find((s) => !isBlockedStreamSource(s) && s.url && isEnglish(s) && !isHindi(s) && !isToonStreamSource(s) && !usedUrls.has(s.url));
-        if (s7Toko) addToko(s7Toko, "Server 7 · 🇬🇧 English");
-      }
-
-      // Keep Japanese HLS out of server results.
-      for (const source of rawSources) {
-        if (isJapanese(source) && isHlsSource(source) && source.url) usedUrls.add(source.url);
-      }
-
-      // Slot 8 — Toko ToonStream embed
-      const toonStream = rawSources.find((s) =>
-        !isBlockedStreamSource(s) && s.url && isToonStreamSource(s) && !isDirect(s) && !usedUrls.has(s.url)
-      );
-      if (toonStream) {
-        addToko(toonStream, "Server 8 · 📺 ToonStream");
-        usedUrls.add(toonStream.url);
-      }
-
-      // Slot 9 — Japanese AnimeSalt embed
-      const s9Salt = (animeSaltItems || []).find((s) => isJapanese(s) && !usedUrls.has(s.embed || ""));
-      if (s9Salt) {
-        addSalt(s9Salt, "Server 9 · 🇯🇵 Japanese (Abyss)");
-      } else {
-        const s8By = getByLangSources("ja").find((s) => !isBlockedStreamSource(s) && s.url && !usedUrls.has(s.url));
-        if (s8By && !isHlsSource(s8By)) addToko(s8By, "Server 9 · 🇯🇵 Japanese");
-      }
-
-      // ── Fill remaining slots up to 9 with other available languages/sources ──
-      if (list.length < 9 && Object.keys(byLanguage).length > 0) {
-        for (const langCode of Object.keys(byLanguage)) {
-          if (list.length >= 9) break;
-          const sources = getByLangSources(langCode);
-          for (const s of sources) {
-            if (list.length >= 9) break;
-            if (isBlockedStreamSource(s) || isToonStreamSource(s) || (langCode === "ja" && isHlsSource(s))) continue;
-            const key = s.url || "";
-            if (!key || usedUrls.has(key)) continue;
-            const flag = langCode === "fr" ? "🇫🇷" : langCode === "es" ? "🇪🇸" : langCode === "de" ? "🇩🇪" : "🌐";
-            const langName = s.languageLabel || `${flag} ${s.language || langCode.toUpperCase()}`;
-            addToko(s, `Server ${list.length + 1} · ${langName}`);
-          }
-        }
-      }
-
-      if (list.length < 9) {
-        for (const s of rawSources) {
-          if (list.length >= 9) break;
-          if (isBlockedStreamSource(s) || isToonStreamSource(s) || (isJapanese(s) && isHlsSource(s))) continue;
-          const key = s.url || "";
-          if (!key || usedUrls.has(key)) continue;
-          addToko(s, `Server ${list.length + 1} · ${s.languageLabel || s.language || "Mirror"}`);
-        }
-      }
-
-      // Renumber sequentially Server 1..N
+      // Renumber sequentially
       const finalResults = list.map((item, idx) => {
         const num = idx + 1;
         const cleanLabel = (item.label || "").replace(/^Server(?:\s+\d+)?\s*·?\s*/, "");
@@ -2694,7 +2451,6 @@
             success: true,
             message: "Stream Found!!",
             results: finalResults,
-            byLanguage,
           },
           200,
           request
@@ -3301,47 +3057,7 @@
       }
     }
 
-    // ── Toko Fetcher ──────────────────────────────────────────────────────────────
-
-    async function fetchToko(cleanId, season, ep) {
-      const titleVariants = slugToSeasonTitles(cleanId, season);
-      const params = new URLSearchParams();
-      for (const t of titleVariants) params.append("titles[]", t);
-      // Pass both season and episode so Season 2 Episode 1 ≠ Season 1 Episode 1
-      params.set("season", season);
-      params.set("episode", ep);
-      params.set("stream", "0");
-
-      const tokoUrl = `${TOKO_API_URL}/api/v3/toko/stream?${params.toString()}`;
-
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 25000);
-        let res;
-        let text;
-        try {
-          res = await fetch(tokoUrl, {
-            signal: controller.signal,
-            headers: {
-              Accept: "application/json, text/plain, */*",
-              "User-Agent": BROWSER_UA,
-              "Accept-Language": "en-US,en;q=0.9",
-              "Sec-Fetch-Dest": "empty",
-              "Sec-Fetch-Mode": "cors",
-              "Sec-Fetch-Site": "cross-site",
-            },
-          });
-          if (res.ok) text = await readResponseTextWithLimit(res, GENERAL_RESPONSE_MAX_BYTES);
-        } finally {
-          clearTimeout(timer);
-        }
-        if (res.ok && !text.includes("<!DOCTYPE html") && !text.includes("challenge")) {
-          return JSON.parse(text);
-        }
-      } catch { /* ignore */ }
-
-      return null;
-    }
+    // ── Toko Fetcher removed — Toko (anime-api2) is no longer a source ──────────
 
     /**
      * Fetch streaming embed sources directly from AnimeSalt (animesalt.cx).

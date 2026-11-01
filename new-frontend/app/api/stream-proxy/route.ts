@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { createHmac } from "crypto";
-import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug, formatDisplayTitle } from "@/lib/api/client";
+import { BLOCKED_STREAM_DOMAINS, cleanAnimeSlug } from "@/lib/api/client";
 import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSaltHtml } from "@/lib/animesalt-stream";
 import { buildServerWorkerProxyUrl, getServerWorkerHeaders } from "@/lib/api/worker-auth";
-import type { StreamItem, TokoSource, TokoStreamResponse } from "@/types/api";
+import type { StreamItem } from "@/types/api";
 
 function isCloudflareChallenge(text: string): boolean {
   return (
@@ -24,17 +24,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/** Toko streaming aggregator backend */
-const TOKO_API_URL = (
-  process.env.TOKO_API_URL || "https://anime-api2-3rkec57qu-sheztechy.vercel.app"
-).replace(/\/+$/, "");
 
-const TOKO_TIMEOUT_MS = 25_000;
-const TOKO_SOURCE_CACHE_TTL_MS = 5_000;
-const tokoSourceCache = new Map<
-  string,
-  { expiresAt: number; value: { rawSources: TokoSource[]; byLanguage?: Record<string, unknown> } }
->();
 
 const DEFAULT_HEADERS = {
   "User-Agent":
@@ -82,197 +72,6 @@ function buildCfProxyUrl(targetUrl: string): string {
   return proxyUrl.toString();
 }
 
-/**
- * Generate title search variants for Toko.
- * Toko does NOT use the ?season= param for content routing — it uses the title.
- * For Season 2+ we must include season-specific titles so Toko returns the right
- * content (e.g. "Jujutsu Kaisen Season 2" yields JJK S2 episodes, not S1).
- */
-function slugToTitleVariants(slug: string, season: string): string[] {
-  // Strip any season suffix already in the slug (e.g. attack-on-titan-season-2)
-  const cleanSlug = slug
-    .replace(/-season-\d+$/i, "")
-    .replace(/-s\d+$/i, "")
-    .replace(/-\d+(st|nd|rd|th)-season$/i, "");
-
-  const base = formatDisplayTitle(cleanSlug) || formatDisplayTitle(slug);
-  if (!base) return [];
-
-  const sNum = parseInt(season, 10) || 1;
-
-  if (sNum <= 1) {
-    return [base];
-  }
-
-  // Season 2+: Season-specific titles MUST come first so providers match Season 2 instead of Season 1
-  const ordinal = sNum === 2 ? "2nd" : sNum === 3 ? "3rd" : `${sNum}th`;
-  return [
-    `${base} Season ${sNum}`,
-    `${base} ${ordinal} Season`,
-    `${base} S${sNum}`,
-    base,
-  ];
-}
-
-type TokoPrioritySource = TokoSource & { providerPriority?: number };
-
-function orderTokoSources(sources: TokoSource[]): TokoSource[] {
-  const languageTier = (source: TokoSource) => {
-    const language = (source.audioLanguage || "").toLowerCase().trim();
-    if (language === "hi") return 0;
-    if (["ta", "te", "ml", "kn", "bn", "mr"].includes(language)) return 1;
-    if (language === "en") return 2;
-    if (language === "ja") return 3;
-    return 4;
-  };
-  const typeTier = (source: TokoSource) => {
-    if (source.type === "hls" || source.isM3U8) return 0;
-    if (source.type === "mp4") return 1;
-    return 2;
-  };
-
-  // Match the backend's final JSON ordering while SSE sources arrive in provider
-  // completion order. This keeps existing role selection and provider priority.
-  return [...sources].sort((left, right) => {
-    const languageDifference = languageTier(left) - languageTier(right);
-    if (languageDifference) return languageDifference;
-    const typeDifference = typeTier(left) - typeTier(right);
-    if (typeDifference) return typeDifference;
-    const leftPriority = (left as TokoPrioritySource).providerPriority ?? 999;
-    const rightPriority = (right as TokoPrioritySource).providerPriority ?? 999;
-    return leftPriority - rightPriority;
-  });
-}
-
-function groupTokoSourcesByLanguage(sources: TokoSource[]): Record<string, unknown> {
-  const groups: Record<string, { code: string; label: string; flag: string; isDub: boolean; sources: TokoSource[] }> = {};
-  for (const source of sources) {
-    const code = source.audioLanguage || "und";
-    if (!groups[code]) {
-      groups[code] = {
-        code,
-        label: source.language || code.toUpperCase(),
-        flag: source.languageLabel?.trim().split(/\s+/)[0] || "🌐",
-        isDub: Boolean(source.isDub),
-        sources: [],
-      };
-    }
-    groups[code].sources.push(source);
-  }
-  return groups;
-}
-
-async function readTokoResponse(
-  response: Response,
-  onSource?: (source: TokoSource) => void
-): Promise<{ rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null> {
-  const rawSources: TokoSource[] = [];
-  const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-  let complete = false;
-  let byLanguage: Record<string, unknown> | undefined;
-
-  const processEvent = (frame: string) => {
-    let eventName = "message";
-    const dataLines: string[] = [];
-    for (const line of frame.split(/\r?\n/)) {
-      if (line.startsWith("event:")) eventName = line.slice(6).trim();
-      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
-    }
-    if (!dataLines.length) return;
-
-    try {
-      const payload = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
-      if (eventName === "source") {
-        const source = payload as unknown as TokoSource;
-        if (typeof source.url === "string" && source.url.trim()) {
-          rawSources.push(source);
-          onSource?.(source);
-        }
-      } else if (eventName === "done") {
-        complete = true;
-        if (payload.byLanguage && typeof payload.byLanguage === "object") {
-          byLanguage = payload.byLanguage as Record<string, unknown>;
-        }
-      }
-    } catch {
-      // Ignore single malformed frame
-    }
-  };
-
-  if (!contentType.includes("text/event-stream")) {
-    const text = await response.text();
-    if (text.includes("<!DOCTYPE html") || text.toLowerCase().includes("challenge")) return null;
-    if (text.includes("event:") || text.includes("data:")) {
-      const frames = text.split(/\r?\n\r?\n/);
-      for (const frame of frames) processEvent(frame);
-      return { rawSources, byLanguage, complete: complete || rawSources.length > 0 };
-    }
-    try {
-      const data = JSON.parse(text) as TokoStreamResponse;
-      for (const source of data.sources || []) onSource?.(source);
-      return { rawSources: data.sources || [], byLanguage: data.byLanguage, complete: true };
-    } catch {
-      return null;
-    }
-  }
-
-  if (!response.body) return null;
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let pending = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      pending += decoder.decode(value, { stream: true });
-      const frames = pending.split(/\r?\n\r?\n/);
-      pending = frames.pop() || "";
-      for (const frame of frames) processEvent(frame);
-    }
-    pending += decoder.decode();
-    if (pending.trim()) processEvent(pending);
-  } catch {
-    // Keep sources already received if the provider sweep or request is aborted.
-  }
-
-  if (!complete && rawSources.length === 0) return null;
-  return { rawSources, byLanguage, complete: complete || rawSources.length > 0 };
-}
-
-function isBlockedSource(s: TokoSource): boolean {
-  const provider = `${s.providerName || ""} ${s.providerKey || ""} ${s.source || ""} ${s.server || ""}`.toLowerCase();
-  if (
-    provider.includes("hindmovie") ||
-    provider.includes("mvlink") ||
-    provider.includes("animesama") ||
-    provider.includes("moviebox") ||
-    provider.includes("rubystm") ||
-    /p2p[\s._-]*play/i.test(provider) ||
-    provider.includes("cloudy") ||
-    provider.includes("upns")
-  ) return true;
-
-  const urlStr = (s.url || "").toLowerCase();
-  if (/\.(mkv|zip|rar|7z|tar|gz|torrent|iso)(\?|$)/i.test(urlStr)) return true;
-  if (
-    urlStr.includes("cloudy.upns.one") ||
-    urlStr.includes("upns.one") ||
-    urlStr.includes("rubystm.com") ||
-    urlStr.includes("p2pplay.pro")
-  ) return true;
-  if (BLOCKED_STREAM_DOMAINS.some((d) => urlStr.includes(d) || provider.includes(d))) return true;
-
-  try {
-    const u = new URL(urlStr);
-    const host = u.hostname.toLowerCase();
-    if (BLOCKED_STREAM_DOMAINS.some((d) => host.includes(d))) return true;
-  } catch {
-    return true;
-  }
-  return false;
-}
-
 function isValidStreamUrl(s: string): boolean {
   if (!s || typeof s !== "string") return false;
   try {
@@ -283,185 +82,11 @@ function isValidStreamUrl(s: string): boolean {
   }
 }
 
-/**
- * Fetch and prioritize stream sources from Toko aggregator.
- * Priority:
- *   1. AnimeSalt Hindi source (Server 1 default)
- *   2. English Dub/Sub
- *   3. Japanese Audio
- *   4. Other languages
- */
-async function fetchTokoSources(
-  slug: string,
-  season: string,
-  episodeNumber: string,
-  requestSignal?: AbortSignal,
-  onSource?: (source: TokoSource) => void
-): Promise<{ rawSources: TokoSource[]; byLanguage?: Record<string, unknown> }> {
-  const cacheKey = JSON.stringify([slug.toLowerCase(), season, episodeNumber]);
-  if (requestSignal?.aborted) return { rawSources: [] };
-  const cached = tokoSourceCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
-  if (cached) tokoSourceCache.delete(cacheKey);
-
-  // Season-aware title variants: Toko uses the title (not ?season=) for content routing
-  const titleVariants = slugToTitleVariants(slug, season);
-  if (titleVariants.length === 0) return { rawSources: [] };
-
-  const params = new URLSearchParams();
-  for (const t of titleVariants) params.append("titles[]", t);
-  // Keep season + episode for any Toko backends that DO parse them
-  params.set("season", season);
-  params.set("episode", episodeNumber);
-  // Omit stream=0 to use the backend's existing progressive SSE response.
-
-  const directUrl = `${TOKO_API_URL}/api/v3/toko/stream?${params.toString()}`;
-  const proxyUrl = buildCfProxyUrl(directUrl);
-  const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
-
-  let data: { rawSources: TokoSource[]; byLanguage?: Record<string, unknown>; complete: boolean } | null = null;
-
-  const fetchSources = async (url: string, throughWorker = false) => {
-    const controller = new AbortController();
-    const abortFromRequest = () => controller.abort();
-    if (requestSignal?.aborted) controller.abort();
-    else requestSignal?.addEventListener("abort", abortFromRequest, { once: true });
-    const timer = setTimeout(() => controller.abort(), TOKO_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        signal: controller.signal,
-        cache: "no-store",
-        headers: throughWorker ? {
-          ...DEFAULT_HEADERS,
-          ...(workerSecret ? { "x-hindianime-proxy-secret": workerSecret } : {}),
-        } : DEFAULT_HEADERS,
-      });
-      if (!res.ok) {
-        if (throughWorker) {
-          console.error("[toko-worker] Worker returned a non-OK response; Toko sources were unavailable.", {
-            status: res.status,
-          });
-        }
-        return null;
-      }
-      return await readTokoResponse(res, onSource);
-    } finally {
-      clearTimeout(timer);
-      requestSignal?.removeEventListener("abort", abortFromRequest);
-    }
-  };
-
-  // Vercel egress is not a reliable path to Toko; use the existing Worker
-  // immediately there instead of waiting on a request that is likely to fail.
-  if (process.env.VERCEL !== "1") {
-    try {
-      data = await fetchSources(directUrl);
-    } catch {
-      // direct fetch error, fall back to worker proxy
-    }
-  }
-
-  // 2. Try proxy fetch if direct fetch failed or returned no sources
-  if (!data || data.rawSources.length === 0) {
-    if (!workerSecret) {
-      console.error("[stream-proxy] Worker Toko fallback skipped: server proxy secret is not configured");
-    } else {
-      try {
-        data = await fetchSources(proxyUrl, true);
-      } catch (err) {
-        console.error("[stream-proxy] Worker Toko fallback error:", err);
-      }
-    }
-  }
-
-  // 3. Fallback: try stream=0 via Worker proxy if still empty
-  if (!data || data.rawSources.length === 0) {
-    if (workerSecret) {
-      try {
-        const stream0Url = `${directUrl}&stream=0`;
-        const proxyStream0Url = buildCfProxyUrl(stream0Url);
-        data = await fetchSources(proxyStream0Url, true);
-      } catch {
-        // stream=0 fallback error
-      }
-    }
-  }
-
-
-  const rawSources = orderTokoSources(data?.rawSources || []);
-  const result = { rawSources, byLanguage: data?.byLanguage || groupTokoSourcesByLanguage(rawSources) };
-  if (rawSources.length > 0 && data?.complete) {
-    // Toko links are short-lived. Reuse only briefly and only for this exact
-    // anime/season/episode; never cache empty or failed responses.
-    if (tokoSourceCache.size >= 100) {
-      const now = Date.now();
-      for (const [key, entry] of tokoSourceCache) {
-        if (entry.expiresAt <= now) tokoSourceCache.delete(key);
-      }
-      if (tokoSourceCache.size >= 100) tokoSourceCache.delete(tokoSourceCache.keys().next().value!);
-    }
-    tokoSourceCache.set(cacheKey, { expiresAt: Date.now() + TOKO_SOURCE_CACHE_TTL_MS, value: result });
-  }
-  return result;
-}
-
 function isHindi(s: { audioLanguage?: string; language?: string; languageLabel?: string }): boolean {
   const a = (s.audioLanguage || "").toLowerCase();
   const l = (s.language || "").toLowerCase();
   const lb = (s.languageLabel || "").toLowerCase();
   return a === "hi" || l.includes("hindi") || lb.includes("hindi");
-}
-
-function isJapanese(s: { audioLanguage?: string; language?: string; languageLabel?: string }): boolean {
-  const a = (s.audioLanguage || "").toLowerCase();
-  const l = (s.language || "").toLowerCase();
-  const lb = (s.languageLabel || "").toLowerCase();
-  return a === "ja" || l.includes("japanese") || lb.includes("japanese");
-}
-
-function isTamil(s: { audioLanguage?: string; language?: string; languageLabel?: string }): boolean {
-  const a = (s.audioLanguage || "").toLowerCase();
-  const l = (s.language || "").toLowerCase();
-  const lb = (s.languageLabel || "").toLowerCase();
-  return a === "ta" || l.includes("tamil") || lb.includes("tamil");
-}
-
-function isTelugu(s: { audioLanguage?: string; language?: string; languageLabel?: string }): boolean {
-  const a = (s.audioLanguage || "").toLowerCase();
-  const l = (s.language || "").toLowerCase();
-  const lb = (s.languageLabel || "").toLowerCase();
-  return a === "te" || l.includes("telugu") || lb.includes("telugu");
-}
-
-function isEnglish(s: { audioLanguage?: string; language?: string; languageLabel?: string }): boolean {
-  const a = (s.audioLanguage || "").toLowerCase();
-  const l = (s.language || "").toLowerCase();
-  const lb = (s.languageLabel || "").toLowerCase();
-  return a === "en" || l.includes("english") || lb.includes("english");
-}
-
-function isVidmolySource(s: TokoSource): boolean {
-  return /vidmoly|vmnow\.online/i.test(
-    `${s.providerKey || ""} ${s.providerName || ""} ${s.source || ""} ${s.url || ""}`
-  );
-}
-
-function isHlsSource(s: TokoSource): boolean {
-  return s.type === "hls" || Boolean(s.isM3U8) || /\.m3u8(?:[?#]|$)/i.test(s.url || "");
-}
-
-function isDirect(s: TokoSource): boolean {
-  // Vidmoly playlist links are unreliable through our HLS proxy. Use their
-  // actual iframe URL from Referer when Toko provides one.
-  if (isVidmolySource(s)) return false;
-  return isHlsSource(s) || s.type === "mp4";
-}
-
-function isUnverifiedMegaPlayEmbed(s: TokoSource): boolean {
-  // MegaPlay embed URLs don't carry a matched anime title, so the app cannot
-  // verify what they will play. Avoid attaching an unverified iframe to a
-  // different anime's watch page. Direct streams keep their existing handling.
-  return s.type === "embed" && /megaplay\.buzz/i.test(s.url || "");
 }
 
 function buildSignedHlsUrl(streamUrl: string, referer?: string, origin?: string): string {
@@ -476,44 +101,6 @@ function buildSignedHlsUrl(streamUrl: string, referer?: string, origin?: string)
     p.set("sig", sig);
   }
   return `/api/hls-proxy?${p.toString()}`;
-}
-
-function buildTokoItem(s: TokoSource): StreamItem {
-  const isDirectStream = isDirect(s);
-  const flag = isHindi(s) ? "🇮🇳" : isJapanese(s) ? "🇯🇵" : isEnglish(s) ? "🇬🇧" : "🌐";
-  const langName = isHindi(s) ? "Hindi Dub" : isJapanese(s) ? "Japanese" : (s.language || "Multi");
-  const streamUrl = (s.url || "")
-    .replace(/\\+u0026/gi, "&")
-    .replace(/&amp;/gi, "&")
-    .trim();
-
-  const hdrs = (s.headers as Record<string, string>) || {};
-  const referer = hdrs.Referer || hdrs.referer || "";
-  const origin  = hdrs.Origin  || hdrs.origin  || "";
-
-  let hlsProxyUrl: string | undefined;
-  if (isDirectStream) {
-    hlsProxyUrl = buildSignedHlsUrl(streamUrl, referer, origin);
-  }
-
-  // Playable embed fallback if direct stream fails:
-  // For toonstream-vidmoly, referer is the actual working embed URL (https://vidmoly.net/embed-...html)
-  const embedFallback = (referer && referer.startsWith("http") && !referer.includes(".m3u8"))
-    ? referer
-    : streamUrl;
-
-  return {
-    server: "",
-    label: "",
-    embed: isDirectStream || (isHlsSource(s) && embedFallback !== streamUrl) ? embedFallback : streamUrl,
-    url: isDirectStream ? (hlsProxyUrl || streamUrl) : undefined,
-    hlsProxyUrl,
-    type: isDirectStream ? (s.type === "mp4" ? "mp4" : "hls") : "embed",
-    audioLanguage: s.audioLanguage || (isHindi(s) ? "hi" : isJapanese(s) ? "ja" : isTamil(s) ? "ta" : isTelugu(s) ? "te" : isEnglish(s) ? "en" : "und"),
-    languageLabel: s.languageLabel || `${flag} ${langName}`,
-    adFree: isDirectStream,
-    headers: s.headers,
-  };
 }
 
 async function resolveRavokHls(hash: string): Promise<string | null> {
@@ -752,7 +339,6 @@ async function fetchPlayZenSource(slug: string, season: string, ep: string): Pro
 }
 
 function assembleServers(
-  rawSources: TokoSource[],
   animeSaltItems: StreamItem[],
   animeSlug: string,
   gdriveSource?: StreamItem | null,
@@ -760,7 +346,6 @@ function assembleServers(
 ): StreamItem[] {
   const list: StreamItem[] = [];
   const usedUrls = new Set<string>();
-  const safeRawSources = rawSources.filter((source) => !isUnverifiedMegaPlayEmbed(source));
 
   function add(item: StreamItem | null | undefined, label: string, slot?: string) {
     if (!item) return;
@@ -773,33 +358,15 @@ function assembleServers(
   }
 
   // ── Slot 1: MyStream Embed (default; no ads, navigation restricted) ───────
-  // HLS (Hindi Anime direct stream) is disabled until VPS hosting is ready.
-  // To re-enable HLS as Server 1, uncomment the HLS block below and move
-  // MyStream back to Slot 2.
   const mystream = animeSaltItems.find(
     (s) => s.type === "embed" && !s.languageSources?.length && isHindi(s) && (s.embed.includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream")) && !usedUrls.has(s.embed)
   ) || animeSaltItems.find(
     (s) => s.type === "embed" && !s.languageSources?.length && (s.embed.includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream")) && !usedUrls.has(s.embed)
-  ) || safeRawSources.find((s) => !isBlockedSource(s) && !isDirect(s) && (s.url || "").includes("ravok.buzz"));
+  );
 
   if (mystream) {
-    if ("embed" in mystream) {
-      add({ ...(mystream as StreamItem), adFree: true, restrictNavigation: true }, "Server 1 · MyStream", "server-1");
-    } else {
-      add({ ...buildTokoItem(mystream as TokoSource), adFree: true, restrictNavigation: true }, "Server 1 · MyStream", "server-1");
-    }
+    add({ ...mystream, adFree: true, restrictNavigation: true }, "Server 1 · MyStream", "server-1");
   }
-
-  // ── HLS disabled — re-enable when VPS hosting is available ───────────────
-  // const hlsSource = animeSaltItems.find((s) => s.type === "hls" && Boolean(s.directHlsUrl || s.url)) ||
-  //   safeRawSources.find((s) => !isBlockedSource(s) && isDirect(s) && isHindi(s));
-  // if (hlsSource) {
-  //   if ("url" in hlsSource && (hlsSource as StreamItem).directHlsUrl) {
-  //     add(hlsSource as StreamItem, "Server 2 · Hindi Anime HLS", "server-2");
-  //   } else {
-  //     add(buildTokoItem(hlsSource as TokoSource), "Server 2 · Hindi Anime HLS", "server-2");
-  //   }
-  // }
 
   // ── Slot 2: Google Drive ─────────────────────────────────────────────────
   if (gdriveSource) {
@@ -811,19 +378,12 @@ function assembleServers(
     add(playzenSource, "Server 3 · PlayZen", "server-3");
   }
 
-  // ── Remaining Fallback Mirrors (Toko, etc.) ─────────────────────────────
+  // ── Additional AnimeSalt mirrors (no Abyss, no multi-audio bundles) ──────
   for (const s of animeSaltItems) {
-    if (list.length >= 7) break;
+    if (list.length >= 6) break;
     if (s.embed.includes("abyssplayer.com") || (s.label || "").toLowerCase().includes("abyss") || (s.languageSources?.length || 0) > 0) continue;
     if (!s.languageSources?.length && !usedUrls.has(s.embed)) {
       add(s, `Server ${list.length + 1} · ${s.languageLabel || s.label || "Alternative"}`);
-    }
-  }
-
-  for (const s of safeRawSources) {
-    if (list.length >= 7) break;
-    if (!isBlockedSource(s) && !usedUrls.has(s.url || "")) {
-      add(buildTokoItem(s), `Server ${list.length + 1} · ${s.languageLabel || s.language || "Alternative"}`);
     }
   }
 
@@ -1075,8 +635,7 @@ async function buildStreamResponse(
   browserResult?: { targetUrl: string; html: string; isMovie?: boolean } | null,
   isMovieRequest = false
 ) {
-  const [tokoData, animeSaltItems, gdriveSource, playzenSource] = await Promise.all([
-    fetchTokoSources(cleanId, season, ep).catch(() => ({ rawSources: [] as TokoSource[], byLanguage: undefined })),
+  const [animeSaltItems, gdriveSource, playzenSource] = await Promise.all([
     (browserResult === undefined
       ? fetchAnimeSaltSources(cleanId, season, ep, undefined, isMovieRequest)
       : browserResult === null
@@ -1087,13 +646,7 @@ async function buildStreamResponse(
     fetchPlayZenSource(cleanId, season, ep).catch(() => null),
   ]);
 
-  const finalResults = assembleServers(
-    tokoData.rawSources,
-    animeSaltItems,
-    cleanId,
-    gdriveSource,
-    playzenSource
-  );
+  const finalResults = assembleServers(animeSaltItems, cleanId, gdriveSource, playzenSource);
 
   if (finalResults.length > 0) {
     return NextResponse.json(
@@ -1103,7 +656,6 @@ async function buildStreamResponse(
         version: "v2-cf-animesalt",
         saltCount: animeSaltItems.length,
         results: finalResults,
-        byLanguage: tokoData.byLanguage,
       },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
@@ -1284,20 +836,19 @@ export async function POST(request: Request) {
       let animeSaltItems: StreamItem[] | null = null;
       let gdriveSource: StreamItem | null = null;
       let playzenSource: StreamItem | null = null;
-      let tokoRaw: TokoSource[] = [];
       let lastSnapshot = "";
       const emit = (value: Record<string, unknown>) => {
         if (request.signal.aborted) return;
         try {
           controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
         } catch {
-          // The client may have navigated away while Toko was still resolving.
+          // Client navigated away
         }
       };
 
-      const emitSnapshot = (complete: boolean, byLanguage?: Record<string, unknown>) => {
+      const emitSnapshot = (complete: boolean) => {
         if (!animeSaltItems) return;
-        const results = assembleServers(orderTokoSources(tokoRaw), animeSaltItems, cleanId, gdriveSource, playzenSource);
+        const results = assembleServers(animeSaltItems, cleanId, gdriveSource, playzenSource);
         const signature = results.map((item) => `${item.server}\0${item.label}\0${item.embed}`).join("\x01");
         if (!complete && signature === lastSnapshot) return;
         lastSnapshot = signature;
@@ -1312,7 +863,6 @@ export async function POST(request: Request) {
               : {}),
             results,
             saltCount: animeSaltItems.length,
-            ...(byLanguage ? { byLanguage } : {}),
             complete,
           });
         }
@@ -1323,18 +873,15 @@ export async function POST(request: Request) {
         fetchPlayZenSource(cleanId, season, ep).then((s) => { playzenSource = s; emitSnapshot(false); }).catch(() => {}),
       ]);
 
-      const tokoPromise = fetchTokoSources(cleanId, season, ep, request.signal, (source) => {
-        tokoRaw.push(source);
-        emitSnapshot(false);
-      });
-
       void (async () => {
         animeSaltItems = await animeSaltPromise;
         emitSnapshot(false);
-
-        const { rawSources, byLanguage } = await tokoPromise;
-        tokoRaw = rawSources;
-        emitSnapshot(true, byLanguage);
+        // Await parallel source resolution then emit final snapshot
+        await Promise.allSettled([
+          fetchGoogleDriveSource(cleanId, season, ep).then((s) => { if (s) gdriveSource = s; }),
+          fetchPlayZenSource(cleanId, season, ep).then((s) => { if (s) playzenSource = s; }),
+        ]);
+        emitSnapshot(true);
         controller.close();
       })().catch((error) => controller.error(error));
     },
