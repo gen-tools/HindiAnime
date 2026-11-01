@@ -2947,13 +2947,11 @@ function buildServerWorkerCatalogUrl(kind: "series" | "movies", page: number): s
 
 function getServerWorkerHeaders(headers?: HeadersInit): Headers {
   if (typeof window !== "undefined") throw new Error("Authenticated Worker requests are server-only.");
-  const secret = process.env.CF_PROXY_SHARED_SECRET;
-  if (!secret) {
-    console.error("[worker-auth] CF_PROXY_SHARED_SECRET is missing; protected Worker request was not sent.");
-    throw new Error("CF_PROXY_SHARED_SECRET is required for authenticated Worker requests.");
-  }
   const result = new Headers(headers);
-  result.set(WORKER_SECRET_HEADER, secret);
+  const secret = process.env.CF_PROXY_SHARED_SECRET?.trim();
+  if (secret) {
+    result.set(WORKER_SECRET_HEADER, secret);
+  }
   return result;
 }
 

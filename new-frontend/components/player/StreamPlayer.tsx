@@ -418,8 +418,8 @@ export function StreamPlayer({
       return true;
     };
 
-    const qs = `?id=${encodeURIComponent(animeSlug)}&season=${season}&ep=${episode}&movie=${isMovie ? "1" : "0"}`;
-    const sourceWorkerEnabled = process.env.NEXT_PUBLIC_SOURCE_WORKER_ENABLED === "true";
+    // Enable Worker /sources by default so streams resolve fast at edge without datacenter IP blocks.
+    const sourceWorkerEnabled = process.env.NEXT_PUBLIC_SOURCE_WORKER_ENABLED !== "false";
     const workerEnabled = sourceWorkerEnabled || process.env.NEXT_PUBLIC_STREAM_WORKER_ENABLED === "true";
 
     try {
@@ -427,7 +427,13 @@ export function StreamPlayer({
 
       const fetchVercelStreams = async () => {
         try {
-          const res = await fetch(`/api/stream-proxy${qs}`, {
+          const proxyParams = new URLSearchParams({
+            id: animeSlug,
+            season: String(season),
+            ep: String(episode),
+            movie: isMovie ? "1" : "0",
+          });
+          const res = await fetch(`/api/stream-proxy?${proxyParams}`, {
             signal: controller.signal,
             cache: "no-store",
             headers: { "x-hindianime-client": "web-frontend" },

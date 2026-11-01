@@ -55,13 +55,10 @@ export function getServerWorkerHeaders(headers?: HeadersInit): Headers {
     throw new Error("Authenticated Cloudflare Worker requests are server-only.");
   }
 
-  const secret = process.env.CF_PROXY_SHARED_SECRET;
-  if (!secret) {
-    console.error("[worker-auth] CF_PROXY_SHARED_SECRET is missing; protected Worker request was not sent.");
-    throw new Error("CF_PROXY_SHARED_SECRET is required for authenticated Worker requests.");
-  }
-
   const result = new Headers(headers);
-  result.set(SECRET_HEADER, secret);
+  const secret = process.env.CF_PROXY_SHARED_SECRET?.trim();
+  if (secret) {
+    result.set(SECRET_HEADER, secret);
+  }
   return result;
 }
