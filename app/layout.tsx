@@ -118,6 +118,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <head>
         <link rel="preconnect" href="https://image.tmdb.org" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://image.tmdb.org" />
+        <link rel="preconnect" href="https://cloud.hindi-anime.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://cloud.hindi-anime.com" />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd).replace(/</g, "\\u003c") }} />
       </head>
       <body
@@ -140,9 +143,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <MobileBottomNav />
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-TJRESED02F"
-          strategy="afterInteractive"
+          strategy="lazyOnload"
         />
-        <Script id="google-analytics" strategy="afterInteractive">
+        <Script id="google-analytics" strategy="lazyOnload">
           {`
             window.dataLayer = window.dataLayer || [];
             function gtag(){window.dataLayer.push(arguments);}

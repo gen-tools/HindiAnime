@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  compress: true,
+  poweredByHeader: false,
+  experimental: {
+    optimizePackageImports: ["lucide-react"],
+  },
   images: {
     unoptimized: true,
     formats: ["image/avif", "image/webp"],
@@ -58,6 +63,15 @@ const nextConfig: NextConfig = {
     ];
 
     return [
+      {
+        source: "/_next/static/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
       // Cloudflare can cache public document responses separately from the
       // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
       // GETs with no query string; API and account routes are intentionally absent.

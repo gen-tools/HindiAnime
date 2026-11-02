@@ -12,4 +12,4 @@ export const ALLOWED_WORKER_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 /** The active worker hostname with /sources and full proxy support. */
-export const DEFAULT_WORKER_BASE_URL = `https://${WORKER_LEGACY_HOST}`;
+export const DEFAULT_WORKER_BASE_URL = `https://${WORKER_CUSTOM_HOST}`;

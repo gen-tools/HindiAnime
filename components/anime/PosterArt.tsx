@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 
 interface PosterArtProps {
   seed: string;
@@ -11,7 +12,7 @@ interface PosterArtProps {
   orientation?: "portrait" | "landscape";
   /** Use a smaller source variant for compact catalog cards. */
   imageSize?: "card" | "poster";
-  /** Preserve the source artwork (`contain`) or crop it to fill the frame (`cover`). */
+  /** Preserve the source artwork (contain) or crop it to fill the frame (cover). */
   fit?: "cover" | "contain";
   /** Lets full-bleed callers provide their own frame height instead of an aspect ratio. */
   fillContainer?: boolean;
@@ -21,6 +22,64 @@ interface PosterArtProps {
   sizes?: string;
   showOverlay?: boolean;
   showSprocket?: boolean;
+}
+
+/**
+ * Hostnames whose images require a CORS/hotlink proxy on the live domain.
+ * img.animesalt.cx blocks cross-origin image requests from external domains.
+ */
+const HOTLINK_PROTECTED_HOSTS = new Set([
+  "img.animesalt.cx",
+  "animesalt.cx",
+  "www.animesalt.cx",
+  "as-cdn.top",
+  "as-cdn23.top",
+  "as-cdn24.top",
+  "as-cdn25.top",
+  "as-cdn26.top",
+]);
+
+/**
+ * Returns a proxied image URL through the Cloudflare Worker for hosts that
+ * block hotlinking from external domains (e.g. img.animesalt.cx).
+ * Falls back to the original URL when the worker URL is not configured or
+ * the host is not in the hotlink-protected list.
+ */
+function maybeProxyImageUrl(src: string): string {
+  let hostname: string;
+  try {
+    hostname = new URL(src).hostname.toLowerCase();
+  } catch {
+    return src;
+  }
+
+  if (!HOTLINK_PROTECTED_HOSTS.has(hostname)) return src;
+
+  // Only proxy on the live site (not localhost) to avoid unnecessary latency
+  // in local development where hotlinking protection is not active.
+  if (typeof window !== "undefined" && window.location.hostname === "localhost") {
+    return src;
+  }
+
+  const configuredWorkerUrl = (
+    process.env.NEXT_PUBLIC_CF_PROXY_URL || DEFAULT_WORKER_BASE_URL
+  ).trim();
+
+  let workerOrigin: string;
+  try {
+    const parsed = new URL(configuredWorkerUrl.replace(/\/+$/, ""));
+    if (parsed.protocol !== "https:" || !ALLOWED_WORKER_HOSTS.has(parsed.hostname)) {
+      return src;
+    }
+    workerOrigin = parsed.origin;
+  } catch {
+    return src;
+  }
+
+  // Use the worker's general CORS proxy: GET /?url=<encoded>
+  const proxyUrl = new URL("/", workerOrigin);
+  proxyUrl.searchParams.set("url", src);
+  return proxyUrl.toString();
 }
 
 /** Renders verified source artwork. Missing or failed assets remain neutral. */
@@ -41,6 +100,10 @@ export function PosterArt({
 }: PosterArtProps) {
   let imageSrc = seed && seed.startsWith("//") ? `https:${seed}` : seed;
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
+
+  // Apply worker proxy for hotlink-protected image hosts (animesalt CDN, etc.)
+  imageSrc = maybeProxyImageUrl(imageSrc);
+
   const imageFailed = failedImageSrc === imageSrc;
   const isExternalImage = Boolean(
     imageSrc &&

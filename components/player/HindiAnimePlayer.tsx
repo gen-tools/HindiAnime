@@ -29,6 +29,7 @@ export interface HindiAnimePlayerProps {
   className?: string;
   onEnded?: () => void;
   onError?: (error: string) => void;
+  hideTopOverlay?: boolean;
 }
 
 interface AudioTrack {
@@ -55,6 +56,7 @@ export const HindiAnimePlayer: React.FC<HindiAnimePlayerProps> = ({
   className = '',
   onEnded,
   onError,
+  hideTopOverlay = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -582,6 +584,7 @@ export const HindiAnimePlayer: React.FC<HindiAnimePlayerProps> = ({
       {/* Left: Transparent Website Logo + Season & Episode badge  */}
       {/* Right: Anime Title                                      */}
       {/* ======================================================== */}
+      {!hideTopOverlay && (
       <div
         className={`absolute top-0 left-0 right-0 p-3 sm:p-5 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex items-center justify-between z-20 transition-opacity duration-300 pointer-events-auto ${
           controlsVisible || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -613,6 +616,7 @@ export const HindiAnimePlayer: React.FC<HindiAnimePlayerProps> = ({
           </span>
         </div>
       </div>
+      )}
 
       {/* ======================================================== */}
       {/* BOTTOM CONTROLS OVERLAY                                 */}

@@ -3024,7 +3024,7 @@ async function fetchHtmlUncached(url: string, deadlineAt?: number): Promise<stri
     try {
       const proxyUrl = buildServerWorkerProxyUrl(url);
       console.log(`[Worker Request Outbound] Proxying: ${url}`);
-      const workerHtml = await fetchHtmlTextAttempt(proxyUrl, 6000, DEFAULT_SCRAPER_HEADERS, deadlineAt);
+      const workerHtml = await fetchHtmlTextAttempt(proxyUrl, 6000, getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS), deadlineAt);
       if (workerHtml) return workerHtml;
     } catch (error) {
       rethrowNextControlFlow(error);

@@ -526,8 +526,8 @@ export const anime: Anime[] = [
     alternativeTitle: "君の名は。",
     synopsis:
       "Two teenagers share a profound, magical connection upon discovering they are swapping bodies. Things manage to become even more complicated when the boy and girl decide to meet in person.",
-    poster: "https://image.tmdb.org/t/p/w500/1W5Kg4K27U3dx9Kxb8DaE6WFLHI.jpg",
-    backdrop: "https://image.tmdb.org/t/p/original/dIWwZWOPHowMNHKNiagtt8vISNg.jpg",
+    poster: "https://image.tmdb.org/t/p/w500/q719jXXEzOoYaps6babgKnONONX.jpg",
+    backdrop: "https://image.tmdb.org/t/p/original/8x9iKH8kWA0zdkgNdpAew7OstYe.jpg",
     rating: 9.0,
     year: 2022,
     type: "Movie",
