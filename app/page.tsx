@@ -10,9 +10,9 @@ import {
 
 import { createCanonicalMetadata } from "@/lib/seo";
 
-// The page snapshot can stay cached for six hours; BrowserHomepageSections
-// refreshes the live trending/latest feed from /api/homepage on the client.
-export const revalidate = 21600;
+// Revalidate the homepage every two minutes so fresh upstream drops
+// appear quickly on the SSR page.
+export const revalidate = 120;
 
 export const metadata: Metadata = createCanonicalMetadata("/");
 

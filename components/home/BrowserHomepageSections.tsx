@@ -15,7 +15,7 @@ import {
   type HomepageData,
 } from "@/lib/api/client";
 import type { HomepageApiResponse } from "@/types/api";
-import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
+import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL, WORKER_LEGACY_HOST } from "@/lib/api/worker-config";
 
 const HOMEPAGE_SNAPSHOT_KEY = "hindi-anime-homepage-v1";
 const HOMEPAGE_SNAPSHOT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -98,41 +98,51 @@ async function fetchWorkerHomepage(signal: AbortSignal): Promise<HomepageData> {
     // Use the allowlisted default Worker URL.
   }
 
+  const candidateOrigins = [...new Set([workerOrigin, `https://${WORKER_LEGACY_HOST}`])];
+
   // 1. Try pre-parsed JSON snapshot endpoint on Worker (/data/homepage)
-  try {
-    const jsonUrl = `${workerOrigin}/data/homepage`;
-    const res = await fetch(jsonUrl, { signal, cache: "default" });
-    if (res.ok && (res.headers.get("content-type") || "").includes("application/json")) {
-      const feed = await res.json();
-      if (feed && feed.data?.results) {
-        const mapped = mapHomepageFeedToData(feed as HomepageApiResponse);
-        if (hasHomepageActivity(mapped)) {
-          return mapped;
+  for (const origin of candidateOrigins) {
+    try {
+      const jsonUrl = `${origin}/data/homepage`;
+      const res = await fetch(jsonUrl, { signal, cache: "default" });
+      if (res.ok && (res.headers.get("content-type") || "").includes("application/json")) {
+        const feed = await res.json();
+        if (feed && feed.data?.results) {
+          const mapped = mapHomepageFeedToData(feed as HomepageApiResponse);
+          if (hasHomepageActivity(mapped)) {
+            return mapped;
+          }
         }
       }
+    } catch (err) {
+      if (err instanceof Error && (err.name === "AbortError" || signal.aborted)) throw err;
+      // Try next candidate origin
     }
-  } catch (err) {
-    // Re-throw AbortErrors so the outer caller's catch can handle them properly
-    // instead of silently falling through to the HTML scrape path.
-    if (err instanceof Error && (err.name === "AbortError" || signal.aborted)) throw err;
-    // Fall back to scraping HTML
   }
 
   if (signal.aborted) throw new DOMException("unmounted", "AbortError");
 
   // 2. Fall back to scraping the Worker HTML proxy
-  const proxyUrl = `${workerOrigin}/?url=https://animesalt.cx/`;
-  const response = await fetch(proxyUrl, { signal, cache: "default" });
-  if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
-    throw new Error(`Homepage Worker returned ${response.status}`);
+  for (const origin of candidateOrigins) {
+    try {
+      const proxyUrl = `${origin}/?url=https://animesalt.cx/`;
+      const response = await fetch(proxyUrl, { signal, cache: "default" });
+      if (response.ok && (response.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
+        const html = await response.text();
+        if (new TextEncoder().encode(html).byteLength <= 1024 * 1024) {
+          const feed = parseHomepageSourceHtml(html);
+          if (feed) {
+            const mapped = mapHomepageFeedToData(feed);
+            if (hasHomepageActivity(mapped)) return mapped;
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && (err.name === "AbortError" || signal.aborted)) throw err;
+    }
   }
-  const html = await response.text();
-  if (new TextEncoder().encode(html).byteLength > 1024 * 1024) {
-    throw new Error("Homepage Worker response exceeded the size limit");
-  }
-  const feed = parseHomepageSourceHtml(html);
-  if (!feed) throw new Error("Homepage Worker HTML had no recognized data sections");
-  return mapHomepageFeedToData(feed);
+
+  throw new Error("All worker homepage endpoints failed");
 }
 
 export function BrowserHomepageSections({ initialData }: { initialData: HomepageData }) {

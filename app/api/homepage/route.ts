@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { getHomepageData } from "@/lib/api/client";
+import { getHomepageData, mapHomepageFeedToData } from "@/lib/api/client";
+import { WORKER_LEGACY_HOST } from "@/lib/api/worker-config";
+import type { HomepageApiResponse } from "@/types/api";
 
 export const runtime = "nodejs";
 const HOMEPAGE_CDN_SECONDS = 900;
@@ -24,13 +26,34 @@ export async function GET() {
   // This endpoint is already shared-cached at the CDN. Resolve a fresh parsed
   // AnimeSalt feed on each cache refresh instead of reusing a failed scraper
   // result/cooldown from the server data cache.
-  const data = await getHomepageData();
+  let data = await getHomepageData();
+
+  if (data.trendingItems.length === 0 && data.latestEpisodes.length === 0) {
+    try {
+      const res = await fetch(`https://${WORKER_LEGACY_HOST}/data/homepage`, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const feed = (await res.json()) as HomepageApiResponse;
+        if (feed && feed.data?.results) {
+          const directData = mapHomepageFeedToData(feed);
+          if (directData.trendingItems.length > 0 || directData.latestEpisodes.length > 0) {
+            data = directData;
+          }
+        }
+      }
+    } catch {
+      // Fall through to empty fallback response
+    }
+  }
+
   if (data.trendingItems.length === 0 && data.latestEpisodes.length === 0) {
     // This is a valid fallback snapshot, not a server error. The browser
     // already keeps its rendered data when the feed has no fresh activity.
     return NextResponse.json(
       data,
-      { headers: homepageCacheHeaders(60) }
+      { headers: homepageCacheHeaders(15) }
     );
   }
 

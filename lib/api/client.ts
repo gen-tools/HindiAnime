@@ -30,6 +30,7 @@ import { matchesCountry } from "@/lib/mock/countries";
 import { shareInFlightRequest } from "@/lib/api/in-flight";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 import { getServerSnapshotUrl, isServerSnapshotApiEnabled } from "@/lib/api/worker-data";
+import { WORKER_LEGACY_HOST } from "@/lib/api/worker-config";
 
 function isLegacyApiEnabled(): boolean {
   return typeof window === "undefined" && process.env.LEGACY_API_FALLBACK_ENABLED === "true";
@@ -55,23 +56,35 @@ const scraperNegativeCache = new Map<string, number>();
 
 async function fetchWorkerSnapshot<T>(path: string): Promise<T | null> {
   if (!isServerSnapshotApiEnabled()) return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
-  try {
-    const response = await fetch(getServerSnapshotUrl(path), {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) return null;
-    const data: unknown = await response.json();
-    return data && typeof data === "object" ? data as T : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const candidateUrls = [
+    getServerSnapshotUrl(path),
+    `https://${WORKER_LEGACY_HOST}${normalizedPath}`,
+  ];
+  const uniqueUrls = [...new Set(candidateUrls)];
+
+  for (const targetUrl of uniqueUrls) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const response = await fetch(targetUrl, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
+      if (response.ok) {
+        const data: unknown = await response.json();
+        if (data && typeof data === "object") return data as T;
+      }
+    } catch {
+      // try next candidate
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  return null;
 }
 
 function normalizeApiSearchQuery(query: string): string {
