@@ -170,7 +170,7 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
     const refreshHomepage = async (): Promise<HomepageData | null> => {
       // 1. Try /api/homepage first (server-cached or CDN response)
       try {
-        const response = await fetch("/api/homepage", { signal: controller.signal, cache: "default" });
+        const response = await fetch(`/api/homepage?t=${Math.floor(Date.now() / 60000)}`, { signal: controller.signal, cache: "default" });
         if (response.ok) {
           const payload: unknown = await response.json();
           const parsed = payload && typeof payload === "object" && "data" in payload

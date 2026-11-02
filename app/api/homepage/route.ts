@@ -49,11 +49,15 @@ export async function GET() {
   }
 
   if (data.trendingItems.length === 0 && data.latestEpisodes.length === 0) {
-    // This is a valid fallback snapshot, not a server error. The browser
-    // already keeps its rendered data when the feed has no fresh activity.
     return NextResponse.json(
       data,
-      { headers: homepageCacheHeaders(15) }
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Cloudflare-CDN-Cache-Control": "no-store",
+          "Vercel-CDN-Cache-Control": "no-store",
+        },
+      }
     );
   }
 
