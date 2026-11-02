@@ -203,7 +203,7 @@ async function fetchGoogleDriveSource(slug: string, season: string, ep: string):
     slot: "server-2",
     source: "GoogleDrive",
     sourceProvider: "GoogleDrive",
-    label: "Server 2 · Google Drive",
+    label: "Server 2",
     embed,
     url: embed,
     type: "embed",
@@ -274,7 +274,7 @@ async function fetchPlayZenSource(slug: string, season: string, ep: string): Pro
           slot: "server-3",
           source: "PlayZen",
           sourceProvider: "PlayZen",
-          label: "Server 3 · PlayZen",
+          label: "Server 3",
           embed,
           url: embed,
           type: "embed",
@@ -318,7 +318,7 @@ async function fetchPlayZenSource(slug: string, season: string, ep: string): Pro
             slot: "server-3",
             source: "PlayZen",
             sourceProvider: "PlayZen",
-            label: "Server 3 · PlayZen",
+            label: "Server 3",
             embed: playzen.embed,
             url: playzen.embed,
             type: "embed",
@@ -365,17 +365,17 @@ function assembleServers(
   );
 
   if (mystream) {
-    add({ ...mystream, adFree: true, restrictNavigation: true }, "Server 1 · MyStream", "server-1");
+    add({ ...mystream, adFree: true, restrictNavigation: true }, "Server 1", "server-1");
   }
 
   // ── Slot 2: Google Drive ─────────────────────────────────────────────────
   if (gdriveSource) {
-    add(gdriveSource, "Server 2 · Google Drive", "server-2");
+    add(gdriveSource, "Server 2", "server-2");
   }
 
   // ── Slot 3: PlayZen ──────────────────────────────────────────────────────
   if (playzenSource) {
-    add(playzenSource, "Server 3 · PlayZen", "server-3");
+    add(playzenSource, "Server 3", "server-3");
   }
 
   // ── Additional AnimeSalt mirrors (no Abyss, no multi-audio bundles) ──────
@@ -383,7 +383,7 @@ function assembleServers(
     if (list.length >= 6) break;
     if (s.embed.includes("abyssplayer.com") || (s.label || "").toLowerCase().includes("abyss") || (s.languageSources?.length || 0) > 0) continue;
     if (!s.languageSources?.length && !usedUrls.has(s.embed)) {
-      add(s, `Server ${list.length + 1} · ${s.languageLabel || s.label || "Alternative"}`);
+      add(s, `Server ${list.length + 1}`);
     }
   }
 
@@ -526,9 +526,9 @@ async function fetchAnimeSaltSources(
             usedUrls.add(src);
             const isRavok = src.includes("ravok.buzz");
             items.push({
-              server: isRavok ? "AnimeSalt MyStream" : "AnimeSalt Embed",
+              server: "Server 1",
               sourceProvider: "AnimeSalt",
-              label: isRavok ? "AnimeSalt · 🇮🇳 MyStream" : "AnimeSalt · Embed",
+              label: "Server 1",
               embed: src,
               type: "embed",
               audioLanguage: "hi",
@@ -605,9 +605,9 @@ async function fetchAnimeSaltSources(
           ) || wData.serverSlots?.server2;
           if (mystream && mystream.embed) {
             return [{
-              server: "AnimeSalt MyStream",
+              server: "Server 1",
               sourceProvider: "AnimeSalt",
-              label: "AnimeSalt · 🇮🇳 MyStream",
+              label: "Server 1",
               embed: mystream.embed,
               type: "embed",
               audioLanguage: "hi",

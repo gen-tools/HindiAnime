@@ -98,9 +98,11 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     if (!isOwnProxy && !isBackendGoogleDriveStream && !isValidEmbedUrl(streamUrl)) continue;
 
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
-    const label = item.label || item.server || `Server ${servers.length + 1}`;
-    const serverName = item.server || label.match(/^Server\s+(\d+)/)?.[0] || `Server ${servers.length + 1}`;
+    const serverNum = servers.length + 1;
+    const label = `Server ${serverNum}`;
+    const serverName = `Server ${serverNum}`;
     const displayLanguage = item.languageLabel || item.audioLanguage || "Hindi Dub";
+    const isMyStream = /mystream|ravok\.buzz/i.test(`${rawEmbed} ${streamUrl} ${item.label || ""} ${item.server || ""}`);
 
     seen.add(dedupeKey);
     servers.push({
@@ -116,8 +118,8 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       adFree: Boolean(item.adFree) || isDirect,
       languageSources: item.languageSources,
       displayLanguage,
-      restrictNavigation: false,
-      allowSandboxedForms: false,
+      restrictNavigation: isMyStream || Boolean(item.restrictNavigation),
+      allowSandboxedForms: true,
     });
   }
 
@@ -907,7 +909,7 @@ export function StreamPlayer({
               >
                 {servers.map((srv) => (
                   <option key={srv.id} value={srv.id}>
-                    {srv.label}{srv.adFree ? " ⚡" : ""}
+                    {srv.label}
                   </option>
                 ))}
               </select>

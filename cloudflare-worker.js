@@ -2237,7 +2237,7 @@
           const embed = "https://archive.animeinfinity.me/player/" + playzenToken.replace(/\\/g, "");
           return {
             server: "Server 3", source: "PlayZen", sourceProvider: "PlayZen",
-            label: "Server 3 · PlayZen", embed, url: embed, type: "embed",
+            label: "Server 3", embed, url: embed, type: "embed",
             audioLanguage: "hi", languageLabel: "Hindi Dub", adFree: true,
           };
         } catch { /* try next URL */ }
@@ -2299,14 +2299,14 @@
           item.type === "embed" && /mystream|ravok\.buzz/i.test(String(item.label || "") + " " + String(item.embed || ""))
         );
         const selected = [
-          { source: mystream, slot: 1, label: "Server 1 · MyStream" },
-          { source: drive, slot: 2, label: "Server 2 · Google Drive" },
-          { source: playzen, slot: 3, label: "Server 3 · PlayZen" },
+          { source: mystream, slot: 1, label: "Server 1" },
+          { source: drive, slot: 2, label: "Server 2" },
+          { source: playzen, slot: 3, label: "Server 3" },
         ].filter((entry) => Boolean(entry.source));
         const labels = [
-          "Server 1 · MyStream",
-          "Server 2 · Google Drive",
-          "Server 3 · PlayZen",
+          "Server 1",
+          "Server 2",
+          "Server 3",
         ];
         const results = [];
         for (const entry of selected) {
@@ -2425,23 +2425,22 @@
       const mystream = animeSaltItems.find((s) =>
         isHindi(s) && (s.embed || "").includes("ravok.buzz")
       ) || animeSaltItems.find((s) => (s.embed || "").includes("ravok.buzz"));
-      if (mystream) addSalt(mystream, "Server 1 · 🇮🇳 MyStream");
+      if (mystream) addSalt(mystream, "Server 1");
 
       // Remaining AnimeSalt mirrors (skip Abyss multi-audio bundles)
       for (const s of animeSaltItems) {
         if (list.length >= 6) break;
         if ((s.embed || "").includes("abyssplayer.com") || (s.label || "").toLowerCase().includes("abyss")) continue;
-        addSalt(s, `Server ${list.length + 1} · ${s.languageLabel || s.label || "Mirror"}`);
+        addSalt(s, `Server ${list.length + 1}`);
       }
 
       // Renumber sequentially
       const finalResults = list.map((item, idx) => {
         const num = idx + 1;
-        const cleanLabel = (item.label || "").replace(/^Server(?:\s+\d+)?\s*·?\s*/, "");
         return {
           ...item,
           server: `Server ${num}`,
-          label: cleanLabel ? `Server ${num} · ${cleanLabel}` : `Server ${num}`,
+          label: `Server ${num}`,
         };
       });
 
