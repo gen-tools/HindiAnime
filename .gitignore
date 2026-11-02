@@ -165,3 +165,4 @@ metadata.json
 server.json
 bun.lock
 AGENTS.md
+cloudflare-worker.js
