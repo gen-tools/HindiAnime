@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { parseHomepageSourceHtml } from "@/lib/api/client";
+import {
+  parseHomepageSourceHtml,
+  scrapeDirectHomepageFeed,
+  DEFAULT_SCRAPER_HEADERS,
+} from "@/lib/api/client";
+import { getServerWorkerHeaders } from "@/lib/api/worker-auth";
 import {
   ALLOWED_WORKER_HOSTS,
   DEFAULT_WORKER_BASE_URL,
@@ -8,83 +13,128 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const UPSTREAM_URL = "https://animesalt.cx/";
-const MAX_HTML_BYTES = 1024 * 1024;
-
-function workerBaseUrl(): string {
-  const configured = process.env.CF_PROXY_URL || process.env.NEXT_PUBLIC_CF_PROXY_URL;
-  try {
-    const parsed = new URL(configured || DEFAULT_WORKER_BASE_URL);
-    if (parsed.protocol === "https:" && ALLOWED_WORKER_HOSTS.has(parsed.hostname)) {
-      return parsed.origin;
-    }
-  } catch {
-    // Fall back to the allowlisted default below.
-  }
-  return DEFAULT_WORKER_BASE_URL;
-}
-
 export async function GET() {
-  const target = new URL("/", workerBaseUrl());
-  target.searchParams.set("url", UPSTREAM_URL);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const diag: Record<string, any> = {
+    env_CF_PROXY_URL: process.env.CF_PROXY_URL || null,
+    env_NEXT_PUBLIC_CF_PROXY_URL: process.env.NEXT_PUBLIC_CF_PROXY_URL || null,
+    has_CF_PROXY_SHARED_SECRET: Boolean(process.env.CF_PROXY_SHARED_SECRET),
+  };
+
+  const testEndpoint = async (name: string, url: string, useAuth: boolean) => {
+    const started = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const headers = useAuth
+        ? getServerWorkerHeaders(DEFAULT_SCRAPER_HEADERS)
+        : DEFAULT_SCRAPER_HEADERS;
+      const res = await fetch(url, {
+        headers,
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      const text = await res.text();
+      return {
+        status: res.status,
+        headers: {
+          cfCache: res.headers.get("cf-cache-status"),
+          cfMitigated: res.headers.get("cf-mitigated"),
+          cfRay: res.headers.get("cf-ray"),
+          server: res.headers.get("server"),
+          contentType: res.headers.get("content-type"),
+        },
+        length: text.length,
+        elapsed: Date.now() - started,
+        hasFreshDrops: text.includes("fresh_drops") || text.includes("fresh-drops"),
+        preview: text.slice(0, 500),
+      };
+    } catch (e: any) {
+      return {
+        error: e?.name || "Error",
+        message: e?.message,
+        elapsed: Date.now() - started,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  diag.dataHomepageClean = await (async () => {
+    try {
+      const res = await fetch("https://cloud.hindi-anime.com/data/homepage", {
+        headers: { "Accept": "application/json" },
+        cache: "no-store",
+      });
+      const text = await res.text();
+      return { status: res.status, length: text.length, preview: text.slice(0, 300) };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  })();
+
+  diag.dataHomepageWithSecret = await (async () => {
+    try {
+      const res = await fetch("https://cloud.hindi-anime.com/data/homepage", {
+        headers: getServerWorkerHeaders({ "Accept": "application/json", "Referer": "https://hindi-anime.com/" }),
+        cache: "no-store",
+      });
+      const text = await res.text();
+      return { status: res.status, length: text.length, preview: text.slice(0, 300) };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  })();
+  diag.directAnimeSalt = await testEndpoint(
+    "directAnimeSalt",
+    "https://animesalt.cx/",
+    false
+  );
+  diag.workerDirectHealth = await testEndpoint(
+    "workerDirectHealth",
+    "https://cloud.hindi-anime.com/",
+    false
+  );
+  diag.httpbinTest = await testEndpoint(
+    "httpbin",
+    "https://cloud.hindi-anime.com/?url=https://httpbin.org/get",
+    false
+  );
+  diag.customDomainWithHeaders = await testEndpoint(
+    "customDomainWithHeaders",
+    "https://cloud.hindi-anime.com/?url=https://animesalt.cx/",
+    false
+  );
+  diag.customDomainWithAuth = await testEndpoint(
+    "customDomainWithAuth",
+    "https://cloud.hindi-anime.com/?url=https://animesalt.cx/",
+    true
+  );
+  diag.workersDevWithHeaders = await testEndpoint(
+    "workersDevWithHeaders",
+    "https://wispy-cherry-6934.sheztech.workers.dev/?url=https://animesalt.cx/",
+    false
+  );
 
   try {
-    const response = await fetch(target, {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-      headers: { Accept: "text/html,application/xhtml+xml" },
-    });
-    const contentType = response.headers.get("content-type");
-    const declaredBytes = Number(response.headers.get("content-length")) || null;
-    if (!response.ok || !contentType?.toLowerCase().includes("text/html")) {
-      return NextResponse.json({
-        workerStatus: response.status,
-        contentType,
-        declaredBytes,
-        parsed: false,
-        reason: "worker-non-html-response",
-      }, { status: 502, headers: { "Cache-Control": "no-store" } });
-    }
-
-    const html = await response.text();
-    const bytes = new TextEncoder().encode(html).byteLength;
-    if (bytes > MAX_HTML_BYTES) {
-      return NextResponse.json({
-        workerStatus: response.status,
-        contentType,
-        bytes,
-        parsed: false,
-        reason: "worker-response-too-large",
-      }, { status: 502, headers: { "Cache-Control": "no-store" } });
-    }
-
-    const feed = parseHomepageSourceHtml(html, true);
-    const sections = feed?.data?.results;
-    return NextResponse.json({
-      workerStatus: response.status,
-      contentType,
-      bytes,
-      workerCache: response.headers.get("cf-cache-status"),
-      parsed: Boolean(feed),
-      sections: {
-        mostWatchedSeries: sections?.mostWatched_Series?.length ?? 0,
-        mostWatchedFilms: sections?.mostWatched_Films?.length ?? 0,
-        freshDrops: sections?.fresh_drops?.length ?? 0,
-        onAirSeries: sections?.on_air_series?.length ?? 0,
-        latestAnimeMovies: sections?.latest_animeMovies?.length ?? 0,
-      },
-      reason: feed ? null : "homepage-html-had-no-recognized-sections",
-    }, { headers: { "Cache-Control": "no-store" } });
-  } catch (error) {
-    return NextResponse.json({
-      parsed: false,
-      reason: controller.signal.aborted ? "worker-request-timeout" : "worker-request-failed",
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    }, { status: 502, headers: { "Cache-Control": "no-store" } });
-  } finally {
-    clearTimeout(timer);
+    const feed = await scrapeDirectHomepageFeed(true);
+    diag.scrapeResult = {
+      success: Boolean(feed),
+      sections: feed?.data?.results
+        ? {
+            freshDrops: feed.data.results.fresh_drops?.length ?? 0,
+            mostWatchedSeries: feed.data.results.mostWatched_Series?.length ?? 0,
+            mostWatchedFilms: feed.data.results.mostWatched_Films?.length ?? 0,
+            onAirSeries: feed.data.results.on_air_series?.length ?? 0,
+            latestAnimeMovies: feed.data.results.latest_animeMovies?.length ?? 0,
+          }
+        : null,
+    };
+  } catch (err: any) {
+    diag.scrapeError = { name: err?.name, message: err?.message };
   }
+
+  return NextResponse.json(diag, {
+    status: 200,
+    headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+  });
 }

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import { useState } from "react";
@@ -12,7 +12,7 @@ interface PosterArtProps {
   orientation?: "portrait" | "landscape";
   /** Use a smaller source variant for compact catalog cards. */
   imageSize?: "card" | "poster";
-  /** Preserve the source artwork (contain) or crop it to fill the frame (cover). */
+  /** Preserve the source artwork (`contain`) or crop it to fill the frame (`cover`). */
   fit?: "cover" | "contain";
   /** Lets full-bleed callers provide their own frame height instead of an aspect ratio. */
   fillContainer?: boolean;
@@ -39,12 +39,6 @@ const HOTLINK_PROTECTED_HOSTS = new Set([
   "as-cdn26.top",
 ]);
 
-/**
- * Returns a proxied image URL through the Cloudflare Worker for hosts that
- * block hotlinking from external domains (e.g. img.animesalt.cx).
- * Falls back to the original URL when the worker URL is not configured or
- * the host is not in the hotlink-protected list.
- */
 function maybeProxyImageUrl(src: string): string {
   let hostname: string;
   try {
@@ -55,8 +49,6 @@ function maybeProxyImageUrl(src: string): string {
 
   if (!HOTLINK_PROTECTED_HOSTS.has(hostname)) return src;
 
-  // Only proxy on the live site (not localhost) to avoid unnecessary latency
-  // in local development where hotlinking protection is not active.
   if (typeof window !== "undefined" && window.location.hostname === "localhost") {
     return src;
   }
@@ -76,7 +68,6 @@ function maybeProxyImageUrl(src: string): string {
     return src;
   }
 
-  // Use the worker's general CORS proxy: GET /?url=<encoded>
   const proxyUrl = new URL("/", workerOrigin);
   proxyUrl.searchParams.set("url", src);
   return proxyUrl.toString();

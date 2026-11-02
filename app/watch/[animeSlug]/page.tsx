@@ -106,7 +106,10 @@ export default async function MovieWatchPage({
     movieData?.title && movieTitleMatchesSlug(movieData.title, slug)
       ? movieData
       : null;
-  const hasSeriesEpisodes = Boolean(episodes?.results?.episodes?.length);
+  const hasSeriesEpisodes = Boolean(
+    episodes?.results?.episodes?.length ||
+    ((directData?.s1Episodes?.length || 0) > 0 && !directData?.isMovie)
+  );
   const hasMultipleSeasons = (seasons?.length || 0) > 1 || (directData?.seasons?.length || 0) > 1;
   const isKnownTv = mockAnime?.type === "TV" || isKnownTvMovieTitleCollision(slug, directData?.title);
   const isMovieConfirmed =

@@ -378,11 +378,23 @@ function assembleServers(
     add(playzenSource, "Server 3", "server-3");
   }
 
+  // ── Slot 4: Abyss Multi-Audio (multi-language bundle from AnimeSalt) ──────
+  const abyssItem = animeSaltItems.find(
+    (s) => (s.languageSources?.length || 0) > 0 && !usedUrls.has(s.embed)
+  );
+  if (abyssItem) {
+    add(
+      { ...abyssItem, adFree: false },
+      "Server 4 · 🌐 Multi-Audio",
+      "server-4"
+    );
+  }
+
   // ── Additional AnimeSalt mirrors (no Abyss, no multi-audio bundles) ──────
   for (const s of animeSaltItems) {
     if (list.length >= 6) break;
-    if (s.embed.includes("abyssplayer.com") || (s.label || "").toLowerCase().includes("abyss") || (s.languageSources?.length || 0) > 0) continue;
-    if (!s.languageSources?.length && !usedUrls.has(s.embed)) {
+    if ((s.languageSources?.length || 0) > 0) continue;
+    if (!usedUrls.has(s.embed)) {
       add(s, `Server ${list.length + 1}`);
     }
   }
@@ -416,9 +428,14 @@ async function fetchAnimeSaltSources(
     `https://animesalt.cx/movies/${baseSlug}/`,
   ];
   const movieLookup = isMovieRequest || browserResult?.isMovie === true;
-  const candidates = movieLookup ? movieCandidates : episodeCandidates;
-  const validMovieUrl = browserResult?.isMovie && candidates.some((c) => c.includes("/movies/") && browserResult.targetUrl === c);
-  if (browserResult && !validMovieUrl && !candidates.includes(browserResult.targetUrl)) return [];
+  // For episode requests: try episode URLs first, then movie URLs as fallback
+  // (fixes movies that AnimeSalt only has at /movies/, and single-episode anime
+  // whose episode path doesn't exist on AnimeSalt).
+  const primaryCandidates = movieLookup ? movieCandidates : episodeCandidates;
+  const fallbackCandidates = movieLookup ? [] : movieCandidates;
+  const candidates = [...primaryCandidates, ...fallbackCandidates];
+  const validMovieUrl = browserResult?.isMovie && primaryCandidates.some((c) => c.includes("/movies/") && browserResult.targetUrl === c);
+  if (browserResult && !validMovieUrl && !primaryCandidates.includes(browserResult.targetUrl)) return [];
 
   // Retrieve AnimeSalt through the general Worker proxy. Use direct fallback
   // only for network/server failures; a 4xx on a candidate moves to the next candidate.
@@ -581,13 +598,14 @@ async function fetchAnimeSaltSources(
   // Fallback: If scraping AnimeSalt was blocked on this host (e.g. Vercel),
   // get MyStream directly from the Worker's /sources endpoint
   if (!browserResult) {
+    const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
+
     try {
       const workerSourcesUrl = new URL("/sources", CF_WORKER_BASE);
       workerSourcesUrl.searchParams.set("id", baseSlug || slug);
       workerSourcesUrl.searchParams.set("season", season);
       workerSourcesUrl.searchParams.set("ep", episode);
       workerSourcesUrl.searchParams.set("movie", isMovieRequest ? "1" : "0");
-      const workerSecret = process.env.CF_PROXY_SHARED_SECRET?.trim();
       const workerController = new AbortController();
       const workerTimer = setTimeout(() => workerController.abort(), 8_000);
       try {
@@ -622,6 +640,53 @@ async function fetchAnimeSaltSources(
       }
     } catch {
       // ignore
+    }
+
+    // Movie fallback: if not an explicit movie request and episode lookup returned
+    // no stream, retry with movie=1. This handles titles that AnimeSalt only has
+    // at /movies/ (misclassified movies and single-episode OVAs/specials).
+    if (!isMovieRequest) {
+      try {
+        const movieWorkerUrl = new URL("/sources", CF_WORKER_BASE);
+        movieWorkerUrl.searchParams.set("id", baseSlug || slug);
+        movieWorkerUrl.searchParams.set("season", season);
+        movieWorkerUrl.searchParams.set("ep", episode);
+        movieWorkerUrl.searchParams.set("movie", "1");
+        const movieController = new AbortController();
+        const movieTimer = setTimeout(() => movieController.abort(), 8_000);
+        try {
+          const mRes = await fetch(movieWorkerUrl.toString(), {
+            signal: movieController.signal,
+            headers: {
+              ...DEFAULT_HEADERS,
+              ...(workerSecret ? { "x-hindianime-proxy-secret": workerSecret } : {}),
+            },
+          });
+          if (mRes.ok) {
+            const mData = (await mRes.json()) as { results?: StreamItem[]; serverSlots?: Record<string, StreamItem> };
+            const mystream = mData.results?.find(
+              (s) => (s.embed || "").includes("ravok.buzz") || (s.label || "").toLowerCase().includes("mystream")
+            ) || mData.serverSlots?.server2;
+            if (mystream && mystream.embed) {
+              return [{
+                server: "Server 1",
+                sourceProvider: "AnimeSalt",
+                label: "Server 1",
+                embed: mystream.embed,
+                type: "embed",
+                audioLanguage: "hi",
+                languageLabel: "🇮🇳 Hindi",
+                adFree: true,
+                restrictNavigation: true,
+              }];
+            }
+          }
+        } finally {
+          clearTimeout(movieTimer);
+        }
+      } catch {
+        // ignore
+      }
     }
   }
 

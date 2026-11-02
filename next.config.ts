@@ -63,15 +63,6 @@ const nextConfig: NextConfig = {
     ];
 
     return [
-      {
-        source: "/_next/static/:path*",
-        headers: [
-          {
-            key: "Cache-Control",
-            value: "public, max-age=31536000, immutable",
-          },
-        ],
-      },
       // Cloudflare can cache public document responses separately from the
       // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
       // GETs with no query string; API and account routes are intentionally absent.
@@ -79,15 +70,17 @@ const nextConfig: NextConfig = {
       // Anime and watch HTML is identical for all visitors. Cache it at Vercel
       // and Cloudflare after dynamic rendering, instead of storing each slug or
       // episode as a durable ISR entry.
+      // TTL: 2h for anime detail pages, 1h for watch/episode pages — short enough
+      // that a deployment's H1 or metadata fix reaches users within an hour.
       {
         source: "/anime/:path*",
         has: [{ type: "header", key: "accept", value: ".*text/html.*" }],
-        headers: publicDynamicDocumentCacheHeaders(86400),
+        headers: publicDynamicDocumentCacheHeaders(7200),
       },
       {
         source: "/watch/:path*",
         has: [{ type: "header", key: "accept", value: ".*text/html.*" }],
-        headers: publicDynamicDocumentCacheHeaders(86400),
+        headers: publicDynamicDocumentCacheHeaders(3600),
       },
       { source: "/series", headers: publicHtmlCacheHeader(86400) },
       {

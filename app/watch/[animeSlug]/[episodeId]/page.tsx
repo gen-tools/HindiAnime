@@ -463,7 +463,7 @@ export default async function WatchPage({
     type: isMovie ? "Movie" : "TV",
     status: isMovie ? "Completed" : anime.status || "Ongoing",
     durationMinutes: isMovie ? 110 : 24,
-    episodeCount: effectiveRawEpisodes.length || (wrongMovieDetail ? mockAnime?.episodeCount : undefined) || anime.episodeCount || 12,
+    episodeCount: effectiveRawEpisodes.length || (wrongMovieDetail ? mockAnime?.episodeCount : undefined) || anime.episodeCount || 1,
     seasons: totalSeasonsCount,
     genres: resolvedGenres.length > 0 ? resolvedGenres : anime.genres,
   };
@@ -542,10 +542,12 @@ export default async function WatchPage({
     }
   }
 
-  // If still empty, synthesize the full episode list for the season
+  // If still empty during SSR (e.g. upstream scraper challenged by WAF),
+  // synthesize only up to the currently requested episode number (e.g. 10 if on ep 10).
+  // Do NOT synthesize unreleased future episodes (which caused 404s).
   if (episodes.length === 0) {
-    const totalCount = Math.max(anime.episodeCount || 12, episodeNumber);
-    episodes = Array.from({ length: totalCount }, (_, i) => {
+    const count = Math.max(1, episodeNumber);
+    episodes = Array.from({ length: count }, (_, i) => {
       const num = i + 1;
       return {
         id: `ep-${seasonNumber}-${num}`,
@@ -722,9 +724,12 @@ export default async function WatchPage({
           <h1 className="font-display text-xl font-bold text-text-primary md:text-2xl">
             {anime.title}
             {!isMovie && (
-              <span className="ml-2 text-text-muted">
-                S{episode.season} · EP {episode.number}
-              </span>
+              <>
+                {" "}
+                <span className="ml-2 font-semibold text-text-muted">
+                  S{episode.season} · EP {episode.number}
+                </span>
+              </>
             )}
           </h1>
           <p className="mt-1 text-sm text-text-secondary">{episode.title}</p>
@@ -810,6 +815,7 @@ export default async function WatchPage({
             episodes={episodes}
             animeSlug={anime.slug}
             activeEpisodeId={episode.id}
+            seasonNumber={seasonNumber}
           />
         </div>
       )}

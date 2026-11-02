@@ -11,12 +11,14 @@ import { MovieSection } from "@/components/home/MovieSection";
 import { FadeIn } from "@/components/ui/FadeIn";
 import {
   mapHomepageFeedToData,
+  parseHomepageSourceHtml,
   type HomepageData,
 } from "@/lib/api/client";
 import type { HomepageApiResponse } from "@/types/api";
+import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 
 const HOMEPAGE_SNAPSHOT_KEY = "hindi-anime-homepage-v1";
-const HOMEPAGE_SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
+const HOMEPAGE_SNAPSHOT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 function hasHomepageActivity(data: HomepageData): boolean {
   return data.trendingItems.length > 0 || data.latestEpisodes.length > 0;
@@ -69,43 +71,124 @@ function saveHomepageSnapshot(data: HomepageData): void {
   }
 }
 
+function getWorkerHomepageUrl(): string {
+  let workerOrigin = DEFAULT_WORKER_BASE_URL;
+  try {
+    const configured = new URL(process.env.NEXT_PUBLIC_CF_PROXY_URL || DEFAULT_WORKER_BASE_URL);
+    if (configured.protocol === "https:" && ALLOWED_WORKER_HOSTS.has(configured.hostname)) {
+      workerOrigin = configured.origin;
+    }
+  } catch {
+    // Use the allowlisted default Worker URL.
+  }
+
+  const url = new URL("/", workerOrigin);
+  url.searchParams.set("url", "https://animesalt.cx/");
+  return url.toString();
+}
+
+async function fetchWorkerHomepage(signal: AbortSignal): Promise<HomepageData> {
+  let workerOrigin = DEFAULT_WORKER_BASE_URL;
+  try {
+    const configured = new URL(process.env.NEXT_PUBLIC_CF_PROXY_URL || DEFAULT_WORKER_BASE_URL);
+    if (configured.protocol === "https:" && ALLOWED_WORKER_HOSTS.has(configured.hostname)) {
+      workerOrigin = configured.origin;
+    }
+  } catch {
+    // Use the allowlisted default Worker URL.
+  }
+
+  // 1. Try pre-parsed JSON snapshot endpoint on Worker (/data/homepage)
+  try {
+    const jsonUrl = `${workerOrigin}/data/homepage`;
+    const res = await fetch(jsonUrl, { signal, cache: "default" });
+    if (res.ok && (res.headers.get("content-type") || "").includes("application/json")) {
+      const feed = await res.json();
+      if (feed && feed.data?.results) {
+        const mapped = mapHomepageFeedToData(feed as HomepageApiResponse);
+        if (hasHomepageActivity(mapped)) {
+          return mapped;
+        }
+      }
+    }
+  } catch (err) {
+    // Re-throw AbortErrors so the outer caller's catch can handle them properly
+    // instead of silently falling through to the HTML scrape path.
+    if (err instanceof Error && (err.name === "AbortError" || signal.aborted)) throw err;
+    // Fall back to scraping HTML
+  }
+
+  if (signal.aborted) throw new DOMException("unmounted", "AbortError");
+
+  // 2. Fall back to scraping the Worker HTML proxy
+  const proxyUrl = `${workerOrigin}/?url=https://animesalt.cx/`;
+  const response = await fetch(proxyUrl, { signal, cache: "default" });
+  if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
+    throw new Error(`Homepage Worker returned ${response.status}`);
+  }
+  const html = await response.text();
+  if (new TextEncoder().encode(html).byteLength > 1024 * 1024) {
+    throw new Error("Homepage Worker response exceeded the size limit");
+  }
+  const feed = parseHomepageSourceHtml(html);
+  if (!feed) throw new Error("Homepage Worker HTML had no recognized data sections");
+  return mapHomepageFeedToData(feed);
+}
 
 export function BrowserHomepageSections({ initialData }: { initialData: HomepageData }) {
-  const [data, setData] = useState(initialData);
-  const [isLoading, setIsLoading] = useState(
-    initialData.trendingItems.length === 0 && initialData.latestEpisodes.length === 0
-  );
+  // Lazy initializer: read localStorage on the very first client render so
+  // returning visitors never see the skeleton — even when the ISR snapshot is stale.
+  const [data, setData] = useState<HomepageData>(() => {
+    if (hasHomepageActivity(initialData)) return initialData;
+    const cached = readHomepageSnapshot();
+    return cached ?? initialData;
+  });
+  const [isLoading, setIsLoading] = useState(() => {
+    if (hasHomepageActivity(initialData)) return false;
+    const cached = readHomepageSnapshot();
+    return !cached || !hasHomepageActivity(cached);
+  });
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    // The server-rendered page can be up to six hours old. Reuse only a
-    // recently validated activity feed, then refresh it from the Worker.
+    // Save a fresh server snapshot so it is available on the next visit.
     if (hasHomepageActivity(initialData)) {
       saveHomepageSnapshot(initialData);
-    } else {
-      const cachedData = readHomepageSnapshot();
-      if (cachedData) {
-        void Promise.resolve().then(() => {
-          if (!active) return;
-          setData(cachedData);
-          setIsLoading(false);
-        });
-      }
     }
 
     const refreshHomepage = async (): Promise<HomepageData | null> => {
+      // 1. Try /api/homepage first (server-cached or CDN response)
       try {
-        const response = await fetch("/api/homepage", { signal: controller.signal, cache: "no-store" });
-        if (!response.ok) return null;
-        const payload: unknown = await response.json();
-        return payload && typeof payload === "object" && "data" in payload
-          ? mapHomepageFeedToData(payload as HomepageApiResponse)
-          : (payload as HomepageData);
+        const response = await fetch("/api/homepage", { signal: controller.signal, cache: "default" });
+        if (response.ok) {
+          const payload: unknown = await response.json();
+          const parsed = payload && typeof payload === "object" && "data" in payload
+            ? mapHomepageFeedToData(payload as HomepageApiResponse)
+            : (payload as HomepageData);
+          if (hasHomepageActivity(parsed)) {
+            return parsed;
+          }
+        }
       } catch {
-        if (controller.signal.aborted || !active) return null;
-        return null;
+        // Fall through to direct worker fetch
       }
+
+      if (controller.signal.aborted || !active) return null;
+
+      // 2. Direct client-side fetch from the Cloudflare Worker (bypasses serverless datacenter WAF blocks)
+      try {
+        const workerData = await fetchWorkerHomepage(controller.signal);
+        if (hasHomepageActivity(workerData)) {
+          return workerData;
+        }
+      } catch (err) {
+        if (!controller.signal.aborted && active) {
+          console.warn("[Homepage] Direct worker fetch failed:", err);
+        }
+      }
+
+      return null;
     };
 
     void refreshHomepage()
@@ -130,8 +213,10 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
       })
       .catch((error: unknown) => {
         // Suppress expected AbortErrors from component unmount cleanup.
+        // DOMException("unmounted", "AbortError") has .name === "AbortError".
+        if (controller.signal.aborted) return;
         if (error instanceof Error && error.name === "AbortError") return;
-        if (active && !controller.signal.aborted) {
+        if (active) {
           console.warn("[Homepage] Refresh failed; retaining current data.", error instanceof Error ? error.message : String(error));
         }
       })
@@ -141,10 +226,10 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
     return () => {
       active = false;
       if (!controller.signal.aborted) {
-        // Use a plain string reason so the AbortSignal.reason is not an Error
-        // object — this prevents Next.js / React DevTools from logging it as
-        // an unhandled runtime error in the browser console.
-        controller.abort("unmounted");
+        // Use a proper AbortError DOMException so that:
+        // 1. Fetch correctly identifies it as an AbortError (error.name === "AbortError")
+        // 2. Next.js / React DevTools do NOT surface it as a runtime error overlay
+        controller.abort(new DOMException("unmounted", "AbortError"));
       }
     };
   }, [initialData]);

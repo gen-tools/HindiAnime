@@ -2180,12 +2180,15 @@ async function scrapeDirectHomepageFeedUncached(diagnostics = false): Promise<Ho
   }
 
   if (isServerSnapshotApiEnabled()) {
-    const snapshot = await fetchWorkerSnapshot<HomepageApiResponse>("/data/homepage");
-    if (snapshot && hasHomepageItems(snapshot)) {
-      homepageFeedCache = { data: snapshot, timestamp: Date.now() };
-      return snapshot;
+    try {
+      const snapshot = await fetchWorkerSnapshot<HomepageApiResponse>("/data/homepage");
+      if (snapshot && hasHomepageItems(snapshot)) {
+        homepageFeedCache = { data: snapshot, timestamp: Date.now() };
+        return snapshot;
+      }
+    } catch {
+      // Fall through to HTML scrape
     }
-    return null;
   }
 
   const startedAt = Date.now();
@@ -3194,17 +3197,28 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
     let html: string | null = null;
     let isMovie = false;
 
-    // Try exact series and movie URLs concurrently, preserving series preference.
-    const seriesUrl = `https://animesalt.cx/series/${encodeURIComponent(decodedSlug)}/`;
-    const movieUrl = `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`;
-    const [seriesHtml, movieHtml] = await Promise.all([
-      fetchHtmlWithWorkerFallback(seriesUrl, false, undefined, deadlineAt),
-      fetchHtmlWithWorkerFallback(movieUrl, false, undefined, deadlineAt),
-    ]);
-    if (isAnimeDetailHtml(seriesHtml)) html = seriesHtml;
-    else if (isAnimeDetailHtml(movieHtml)) {
-      html = movieHtml;
-      isMovie = true;
+    // Try exact series or movie URL sequentially instead of concurrently.
+    // Over 95% of catalog items are series. Trying series first (or movie first
+    // if slug explicitly signals a movie) avoids firing redundant simultaneous
+    // outbound Worker proxy calls, keeping Cloudflare Worker requests and Vercel CPU low.
+    const isLikelyMovieSlug = decodedSlug.endsWith("-movie") || decodedSlug.includes("-movie-");
+    const primaryUrl = isLikelyMovieSlug
+      ? `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`
+      : `https://animesalt.cx/series/${encodeURIComponent(decodedSlug)}/`;
+    const secondaryUrl = isLikelyMovieSlug
+      ? `https://animesalt.cx/series/${encodeURIComponent(decodedSlug)}/`
+      : `https://animesalt.cx/movies/${encodeURIComponent(decodedSlug)}/`;
+
+    const primaryHtml = await fetchHtmlWithWorkerFallback(primaryUrl, false, undefined, deadlineAt);
+    if (isAnimeDetailHtml(primaryHtml)) {
+      html = primaryHtml;
+      isMovie = isLikelyMovieSlug;
+    } else {
+      const secondaryHtml = await fetchHtmlWithWorkerFallback(secondaryUrl, false, undefined, deadlineAt);
+      if (isAnimeDetailHtml(secondaryHtml)) {
+        html = secondaryHtml;
+        isMovie = !isLikelyMovieSlug;
+      }
     }
 
     // 3. Fallback: Search AnimeSalt by keyword if direct fetch failed
@@ -3219,7 +3233,7 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
             const exactLink = links.find(
               (match) => cleanAnimeSlug(match[1]) === decodedSlug
             );
-            if (exactLink) {
+            if (exactLink && exactLink[1] !== primaryUrl && exactLink[1] !== secondaryUrl) {
               const targetUrl = exactLink[1];
               html = await fetchHtmlWithWorkerFallback(targetUrl, false, undefined, deadlineAt);
               if (isAnimeDetailHtml(html)) {
@@ -3625,44 +3639,19 @@ export async function getEpisodes(
   );
   if (legacyEpisodes) return legacyEpisodes;
 
-  // 4. Synthesize a fallback episode list from AniList / bundled metadata.
-  try {
-    const mock = getAnimeBySlug(cleanId);
-    if (mock?.type === "Movie") {
-      return {
-        success: true,
-        results: {
-          totalSeasons: "1",
-          seasons: [{ season: "1", text: "Full Movie" }],
-          episodes: [],
-        },
-      };
-    }
-    const allSeasons = await getAvailableSeasons(cleanId);
-    const seasonsList = allSeasons.length > 0 ? allSeasons : [seasonNum];
-    const totalEp = parseInt(aniMeta?.episodes || "", 10) || mock?.episodeCount || 12;
-    if (totalEp > 0) {
-      const episodes: EpisodeItem[] = Array.from({ length: totalEp }, (_, i) => ({
-        title: `Episode ${i + 1}`,
-        season: String(seasonNum),
-        episode: String(i + 1),
-        image: aniMeta?.poster || mock?.poster || "",
-      }));
-      return {
-        success: true,
-        results: {
-          totalSeasons: String(seasonsList.length),
-          seasons: seasonsList.map((s) => ({
-            season: String(s),
-            text: `Season ${s}`,
-          })),
-          episodes,
-        },
-      };
-    }
-  } catch (error) {
-    rethrowNextControlFlow(error);
-    // fallback error
+  // 4. Do NOT synthesize fake episodes — returning null signals that no real
+  // episode data is available, which lets the WatchPage show an appropriate
+  // empty state instead of displaying placeholder links that cause 404 errors.
+  const mock = getAnimeBySlug(cleanId);
+  if (mock?.type === "Movie") {
+    return {
+      success: true,
+      results: {
+        totalSeasons: "1",
+        seasons: [{ season: "1", text: "Full Movie" }],
+        episodes: [],
+      },
+    };
   }
 
   return null;

@@ -218,32 +218,13 @@ export function StreamPlayer({
   const [isPictureInPicture, setIsPictureInPicture] = useState(false);
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const [showExitButton, setShowExitButton] = useState(false);
-  const [isPlayerHeaderVisible, setIsPlayerHeaderVisible] = useState(true);
-  const playerHeaderTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const triggerPlayerHeader = useCallback(() => {
-    setIsPlayerHeaderVisible(true);
-    if (playerHeaderTimerRef.current) clearTimeout(playerHeaderTimerRef.current);
-    playerHeaderTimerRef.current = setTimeout(() => {
-      setIsPlayerHeaderVisible(false);
-    }, 3000);
-  }, []);
-
-  useEffect(() => {
-    setIsPlayerHeaderVisible(true);
-    if (playerHeaderTimerRef.current) clearTimeout(playerHeaderTimerRef.current);
-    playerHeaderTimerRef.current = setTimeout(() => {
-      setIsPlayerHeaderVisible(false);
-    }, 3500);
-    return () => {
-      if (playerHeaderTimerRef.current) clearTimeout(playerHeaderTimerRef.current);
-    };
-  }, [playbackIdentity]);
   const [reloadKey, setReloadKey] = useState(0);
+  const [showPlayerHeader, setShowPlayerHeader] = useState(false);
   const playAdOpenedRef = useRef(false);
   const playerFrameRef = useRef<HTMLDivElement>(null);
   const embedPictureInPictureRef = useRef<Window | null>(null);
   const hideExitTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const hidePlayerHeaderTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isLanguageMenuOpen) return;
@@ -309,6 +290,12 @@ export function StreamPlayer({
 
   const cancelHideExit = useCallback(() => {
     if (hideExitTimerRef.current) { clearTimeout(hideExitTimerRef.current); hideExitTimerRef.current = null; }
+  }, []);
+
+  const triggerPlayerHeader = useCallback(() => {
+    setShowPlayerHeader(true);
+    if (hidePlayerHeaderTimerRef.current) clearTimeout(hidePlayerHeaderTimerRef.current);
+    hidePlayerHeaderTimerRef.current = setTimeout(() => setShowPlayerHeader(false), 3000);
   }, []);
 
   useEffect(() => {
@@ -700,13 +687,12 @@ export function StreamPlayer({
         ref={playerFrameRef}
         onMouseEnter={triggerPlayerHeader}
         onMouseMove={triggerPlayerHeader}
-        onTouchStart={triggerPlayerHeader}
         onMouseLeave={() => {
-          if (playerHeaderTimerRef.current) clearTimeout(playerHeaderTimerRef.current);
-          playerHeaderTimerRef.current = setTimeout(() => {
-            setIsPlayerHeaderVisible(false);
-          }, 800);
+          if (hidePlayerHeaderTimerRef.current) clearTimeout(hidePlayerHeaderTimerRef.current);
+          hidePlayerHeaderTimerRef.current = setTimeout(() => setShowPlayerHeader(false), 800);
         }}
+        onTouchStart={triggerPlayerHeader}
+        onTouchMove={triggerPlayerHeader}
         className={cn(
           "relative w-full overflow-hidden bg-black transition-all",
           isFullscreen
@@ -769,39 +755,37 @@ export function StreamPlayer({
               className="absolute inset-x-0 top-0 z-20 h-16 pointer-events-auto"
               aria-hidden="true"
             />
-            {/* Top Header Overlay: Logo, Badge, Title (appears on cursor move) */}
+            {/* Top Header Overlay: Logo, Badge, Title (appears on cursor move for all servers) */}
             <div
               className={cn(
                 "pointer-events-none absolute top-0 left-0 right-0 p-3 sm:p-5 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex items-center justify-between z-30 transition-all duration-300 ease-out",
-                isPlayerHeaderVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
+                showPlayerHeader ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
               )}
             >
-              {/* Left Side: Transparent Website Logo + Season and Episode */}
-              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                <img
-                  src="/hindi-anime-logo-transparent.png"
-                  alt="Hindi Anime"
-                  className="h-6 sm:h-7 w-auto object-contain bg-transparent drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] filter"
-                />
-                {(season !== undefined || episode !== undefined || isMovie) && (
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-[#22c55e]/40 text-[11px] sm:text-xs font-semibold text-white shadow-lg">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />
-                    <span className="tracking-wide">
-                      {isMovie
-                        ? "Movie"
-                        : `${season ? `S${String(season).padStart(2, "0")}` : "S01"} ${episode ? `E${String(episode).padStart(2, "0")}` : "E01"}`}
-                    </span>
-                  </div>
-                )}
-              </div>
+                {/* Left Side: Transparent Website Logo + Season and Episode */}
+                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                  <img
+                    src="/hindi-anime-logo-transparent.png"
+                    alt="Hindi Anime"
+                    className="h-6 sm:h-7 w-auto object-contain bg-transparent drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] filter"
+                  />
+                  {(season !== undefined || episode !== undefined) && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-[#22c55e]/40 text-[11px] sm:text-xs font-semibold text-white shadow-lg">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse"></span>
+                      <span className="tracking-wide">
+                        {isMovie ? "Movie" : `S${String(season).padStart(2, "0")} E${String(episode).padStart(2, "0")}`}
+                      </span>
+                    </div>
+                  )}
+                </div>
 
-              {/* Right Side: Anime Title */}
-              <div className={`flex items-center overflow-hidden pl-2 ${(activeServer.languageSources?.length || 0) > 1 ? "pr-24 sm:pr-28" : ""}`}>
-                <span className="text-xs sm:text-sm font-bold text-white drop-shadow truncate max-w-[200px] sm:max-w-md md:max-w-xl">
-                  {animeTitle || animeSlug}
-                </span>
+                {/* Right Side: Anime Title */}
+                <div className={`flex items-center overflow-hidden pl-2 ${(activeServer.languageSources?.length || 0) > 1 ? "pr-24 sm:pr-28" : ""}`}>
+                  <span className="text-xs sm:text-sm font-bold text-white drop-shadow truncate max-w-[200px] sm:max-w-md">
+                    {animeTitle || animeSlug}
+                  </span>
+                </div>
               </div>
-            </div>
           </>
         )}
         {state === "ready" && activeServer && (activeServer.languageSources?.length || 0) > 1 && (

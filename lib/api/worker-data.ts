@@ -1,7 +1,7 @@
 import { DEFAULT_WORKER_BASE_URL } from "@/lib/api/worker-config";
 
 function trimBaseUrl(value: string | undefined): string | null {
-  const trimmed = value?.trim().replace(/\/+$/, "");
+  const trimmed = value?.trim().replace(/\/\?url=.*$/, "").replace(/\/+$/, "");
   return trimmed || null;
 }
 
@@ -14,11 +14,11 @@ export function getPublicSnapshotUrl(path: string): string {
 }
 
 export function isPublicSnapshotApiEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_CF_SNAPSHOT_API_ENABLED === "true";
+  return process.env.NEXT_PUBLIC_CF_SNAPSHOT_API_ENABLED !== "false";
 }
 
 export function isServerSnapshotApiEnabled(): boolean {
-  return typeof window === "undefined" && process.env.CF_SNAPSHOT_API_ENABLED === "true";
+  return typeof window === "undefined" && process.env.CF_SNAPSHOT_API_ENABLED !== "false";
 }
 
 export function getServerSnapshotUrl(path: string): string {

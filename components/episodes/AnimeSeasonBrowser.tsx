@@ -36,7 +36,7 @@ export function AnimeSeasonBrowser({
       const query = season === "1" ? "" : `?season=${encodeURIComponent(season)}`;
       window.history.pushState(null, "", `${pathname}${query}`);
     }
-    if (season === "1") {
+    if (season === "1" && initialEpisodes.length > 1) {
       setEpisodes(initialEpisodes);
       return;
     }
@@ -77,14 +77,14 @@ export function AnimeSeasonBrowser({
 
   useEffect(() => {
     const fromUrl = new URLSearchParams(window.location.search).get("season") || "1";
-    if (fromUrl !== "1") void loadSeason(fromUrl, false);
+    if (fromUrl !== "1" || initialEpisodes.length <= 1) void loadSeason(fromUrl, false);
     const onPopState = () => {
       const season = new URLSearchParams(window.location.search).get("season") || "1";
       void loadSeason(season, false);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [loadSeason]);
+  }, [loadSeason, initialEpisodes.length]);
 
   return (
     <>
