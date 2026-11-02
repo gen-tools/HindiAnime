@@ -25,6 +25,7 @@ import {
   isUsableImageUrl,
   parseDurationMinutes,
   SYNOPSIS_FALLBACK,
+  isKnownTvMovieTitleCollision,
 } from "@/lib/api/client";
 
 // Public watch landing pages are cached as shared CDN responses rather than
@@ -107,16 +108,20 @@ export default async function MovieWatchPage({
       : null;
   const hasSeriesEpisodes = Boolean(episodes?.results?.episodes?.length);
   const hasMultipleSeasons = (seasons?.length || 0) > 1 || (directData?.seasons?.length || 0) > 1;
-  const isMovie =
-    animeData?.format?.toUpperCase() === "MOVIE" ||
-    movieData?.format?.toUpperCase() === "MOVIE" ||
+  const isKnownTv = mockAnime?.type === "TV" || isKnownTvMovieTitleCollision(slug, directData?.title);
+  const isMovieConfirmed =
+    (Boolean(directData?.isMovie) && !isKnownTv) ||
     mockAnime?.type === "Movie" ||
-    directData?.isMovie === true ||
-    animeData?.quality?.toUpperCase().includes("MOVIE") === true ||
-    searchType === "Movie" ||
+    (searchType === "Movie" && !isKnownTv) ||
+    (movieData?.format?.toUpperCase() === "MOVIE" && !isKnownTv) ||
+    (animeData?.format?.toUpperCase() === "MOVIE" && !isKnownTv) ||
+    (animeData?.quality?.toUpperCase().includes("MOVIE") === true && !isKnownTv);
+
+  const isMovie =
+    isMovieConfirmed ||
     (!hasSeriesEpisodes &&
       !hasMultipleSeasons &&
-      mockAnime?.type !== "TV" &&
+      !isKnownTv &&
       Boolean(matchingMovie?.title));
 
   if (!isMovie) {

@@ -25,6 +25,7 @@ import {
   formatDisplayTitle,
   isUsableImageUrl,
   parseLanguages,
+  isKnownTvMovieTitleCollision,
 } from "@/lib/api/client";
 import type { Anime } from "@/types/anime";
 import { createCanonicalMetadata } from "@/lib/seo";
@@ -113,19 +114,22 @@ export async function generateMetadata({
   const mockItem = getAnimeBySlug(cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
 
-  const hasSeriesIdentity =
-    hasSeriesEpisodes || hasMultipleSeasons || mockItem?.type === "TV";
-  const isMovie = !hasSeriesIdentity && (
-    Boolean(directData?.isMovie) ||
-    (
-      !hasSeriesEpisodes &&
+  const isKnownTv = mockItem?.type === "TV" || isKnownTvMovieTitleCollision(cleanSlug, directData?.title);
+  const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
+  const isMovieConfirmed =
+    (Boolean(directData?.isMovie) && !isKnownTv) ||
+    mockItem?.type === "Movie" ||
+    (searchItemType === "Movie" && !isKnownTv) ||
+    (movieData?.format?.toUpperCase() === "MOVIE" && !isKnownTv) ||
+    (animeData?.format?.toUpperCase() === "MOVIE" && !isKnownTv);
+
+  const isMovie =
+    isMovieConfirmed ||
+    (!hasSeriesEpisodes &&
       !hasMultipleSeasons &&
-      (
-        mockItem?.type === "Movie" ||
-        (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
-      )
-    )
-  );
+      !isKnownTv &&
+      Boolean(matchingMovieData?.title) &&
+      !animeData?.title);
 
   let item: Anime | undefined;
   if (isMovie && matchingMovieData?.title) {
@@ -432,21 +436,21 @@ export default async function AnimeDetailPage({
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
-  // Series episodes, multiple seasons, or a known TV catalog record take
-  // precedence over a conflicting cached movie classification.
-  const hasSeriesIdentity =
-    hasSeriesEpisodes || hasMultipleSeasons || mockItem?.type === "TV" || searchItemType === "TV";
+  const isKnownTv = mockItem?.type === "TV" || isKnownTvMovieTitleCollision(cleanSlug, directData?.title);
+  const isMovieConfirmed =
+    (Boolean(directData?.isMovie) && !isKnownTv) ||
+    mockItem?.type === "Movie" ||
+    (searchItemType === "Movie" && !isKnownTv) ||
+    (movieData?.format?.toUpperCase() === "MOVIE" && !isKnownTv) ||
+    (animeData?.format?.toUpperCase() === "MOVIE" && !isKnownTv);
+
   const isMovie =
-    !hasSeriesIdentity &&
-    (Boolean(directData?.isMovie) ||
-    (
-      !hasSeriesEpisodes &&
+    isMovieConfirmed ||
+    (!hasSeriesEpisodes &&
       !hasMultipleSeasons &&
-      (
-        mockItem?.type === "Movie" ||
-        (mockItem?.type !== "TV" && Boolean(matchingMovieData?.title) && !animeData?.title)
-      )
-    ));
+      !isKnownTv &&
+      Boolean(matchingMovieData?.title) &&
+      !animeData?.title);
 
   let item: Anime | undefined;
   if (isMovie && matchingMovieData?.title) {
@@ -598,7 +602,7 @@ export default async function AnimeDetailPage({
     ...item,
     id: cleanSlug,
     slug: cleanSlug,
-    type: isMovie ? "Movie" : hasSeriesIdentity ? "TV" : item.type,
+    type: isMovie ? "Movie" : (mockItem?.type || item.type || "TV"),
   };
 
   // Resolve actual genres from scraped, API, movie, or mock data

@@ -166,13 +166,21 @@ export async function generateMetadata({
     isKnownTv && episodeId !== "movie" &&
     (directData?.isMovie || isKnownTvMovieTitleCollision(cleanSlug, directData?.title) || isSingleMovieEntry)
   );
-  const isMovie =
+  const isMovieConfirmed =
     isMovieRoute ||
-    (Boolean(directData?.isMovie) && !isKnownTv && episodeId === "movie") ||
+    (Boolean(directData?.isMovie) && !isKnownTv) ||
+    mockAnime?.type === "Movie" ||
+    (searchMatch ? mapSearchItemToAnime(searchMatch).type === "Movie" && !isKnownTv : false) ||
+    (movieData?.format?.toUpperCase() === "MOVIE" && !isKnownTv) ||
+    (animeDataMeta?.format?.toUpperCase() === "MOVIE" && !isKnownTv);
+
+  const isMovie =
+    isMovieConfirmed ||
     (!hasSeriesEpisodes &&
       !hasMultipleSeasons &&
-      episodeId === "movie" &&
-      (Boolean(movieData?.title) && !animeDataMeta?.title));
+      !isKnownTv &&
+      Boolean(movieData?.title) &&
+      !animeDataMeta?.title);
 
   let anime: Anime = createFallbackAnime(cleanSlug);
   if (isMovie && movieData?.title) {
@@ -375,14 +383,19 @@ export default async function WatchPage({
   );
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
-  // isMovieRoute (episodeId === 'movie') is the strongest signal — always a movie.
-  // Only classify as movie if explicitly a movie route or confirmed movie type with no series episodes
-  const isMovie =
+  const isMovieConfirmed =
     isMovieRoute ||
-    (Boolean(directData?.isMovie) && mockAnime?.type !== "TV" && episodeId === "movie") ||
+    (Boolean(directData?.isMovie) && !isKnownTv) ||
+    mockAnime?.type === "Movie" ||
+    (searchItemType === "Movie" && !isKnownTv) ||
+    (movieData?.format?.toUpperCase() === "MOVIE" && !isKnownTv) ||
+    (animeData?.format?.toUpperCase() === "MOVIE" && !isKnownTv);
+
+  const isMovie =
+    isMovieConfirmed ||
     (!hasSeriesEpisodes &&
       !hasMultipleSeasons &&
-      episodeId === "movie" &&
+      !isKnownTv &&
       Boolean(movieData?.title) &&
       !animeData?.title);
 

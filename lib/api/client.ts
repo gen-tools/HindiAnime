@@ -2816,7 +2816,7 @@ export interface ScrapedSeriesMeta {
   genres?: string[];
 }
 
-function isKnownTvMovieTitleCollision(slug: string, title?: string): boolean {
+export function isKnownTvMovieTitleCollision(slug: string, title?: string): boolean {
   if (!title) return false;
   const known = getAnimeBySlug(slug);
   if (known?.type !== "TV") return false;
@@ -3560,6 +3560,17 @@ export async function getEpisodes(
   // 1. AnimeSalt episode pages are the primary source.
   try {
     const meta = await scrapeDirectSeriesData(cleanId);
+    if (meta?.isMovie || getAnimeBySlug(cleanId)?.type === "Movie") {
+      return {
+        success: true,
+        results: {
+          totalSeasons: "1",
+          seasons: [{ season: "1", text: "Full Movie" }],
+          episodes: [],
+        },
+      };
+    }
+
     const episodes = await scrapeDirectSeasonEpisodes(cleanId, seasonNum);
     const allSeasons = meta?.seasons && meta.seasons.length > 0 ? meta.seasons : await getAvailableSeasons(cleanId);
     const seasonsList = allSeasons.length > 0 ? allSeasons : [seasonNum];
@@ -3591,6 +3602,16 @@ export async function getEpisodes(
 
   // 2. AniList metadata determines a conservative episode/season fallback.
   const aniMeta = await fetchAniListMeta(cleanId);
+  if (aniMeta?.format?.toUpperCase() === "MOVIE") {
+    return {
+      success: true,
+      results: {
+        totalSeasons: "1",
+        seasons: [{ season: "1", text: "Full Movie" }],
+        episodes: [],
+      },
+    };
+  }
 
   // 3. Optional migration fallback to the retired episode API.
   const legacyEpisodes = await fetchLegacyValidated(
@@ -3607,6 +3628,16 @@ export async function getEpisodes(
   // 4. Synthesize a fallback episode list from AniList / bundled metadata.
   try {
     const mock = getAnimeBySlug(cleanId);
+    if (mock?.type === "Movie") {
+      return {
+        success: true,
+        results: {
+          totalSeasons: "1",
+          seasons: [{ season: "1", text: "Full Movie" }],
+          episodes: [],
+        },
+      };
+    }
     const allSeasons = await getAvailableSeasons(cleanId);
     const seasonsList = allSeasons.length > 0 ? allSeasons : [seasonNum];
     const totalEp = parseInt(aniMeta?.episodes || "", 10) || mock?.episodeCount || 12;
