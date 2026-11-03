@@ -9,12 +9,13 @@ import Link from "next/link";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/constants";
 import { FavoriteButton } from "./FavoriteButton";
 import { ReadMoreText } from "@/components/ui/ReadMoreText";
+import { buildWatchHref } from "@/lib/watch-routing";
 import { normalizeGenreSlug } from "@/lib/mock/genres";
 
 export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeId?: string }) {
   const isMovie = item.type === "Movie" || firstEpisodeId === "movie";
   const targetWatchHref = isMovie
-    ? `/watch/${item.slug}/movie`
+    ? buildWatchHref(item.slug, "Movie")
     : firstEpisodeId
     ? `/watch/${item.slug}/${firstEpisodeId}`
     : `/watch/${item.slug}/ep-1-1`;

@@ -10,6 +10,7 @@ import { PosterArt } from "@/components/anime/PosterArt";
 import { getAnimeBySlug } from "@/lib/mock/anime";
 import { anime } from "@/lib/mock/anime";
 import { MockWatchUnavailable } from "@/components/player/MockWatchUnavailable";
+import { hasMovieSlugMarker } from "@/lib/watch-routing";
 import {
   cleanAnimeSlug,
   formatDisplayTitle,
@@ -112,7 +113,9 @@ export default async function MovieWatchPage({
   );
   const hasMultipleSeasons = (seasons?.length || 0) > 1 || (directData?.seasons?.length || 0) > 1;
   const isKnownTv = mockAnime?.type === "TV" || isKnownTvMovieTitleCollision(slug, directData?.title);
+  const movieSlug = hasMovieSlugMarker(slug) && !isKnownTv;
   const isMovieConfirmed =
+    movieSlug ||
     (Boolean(directData?.isMovie) && !isKnownTv) ||
     mockAnime?.type === "Movie" ||
     (searchType === "Movie" && !isKnownTv) ||

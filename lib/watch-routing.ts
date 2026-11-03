@@ -5,6 +5,11 @@ export function buildWatchHref(slug: string, type: AnimeType, episodeId?: string
   return `/watch/${slug}/${episodeId || "ep-1-1"}`;
 }
 
+/** Movie catalog slugs commonly retain the source title's `-movie-` marker. */
+export function hasMovieSlugMarker(slug: string): boolean {
+  return /(?:^|-)movie(?:-|$)/i.test(slug);
+}
+
 export function isStoredMovieWatch(item: {
   type?: AnimeType;
   episodeId?: string;

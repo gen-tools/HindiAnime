@@ -17,6 +17,7 @@ import { Play, ChevronRight } from "lucide-react";
 import { getAnimeBySlug, getAnimeByGenre, anime as mockAnimeList } from "@/lib/mock/anime";
 import { genres } from "@/lib/mock/genres";
 import { staticCatalog } from "@/lib/static-catalog";
+import { hasMovieSlugMarker } from "@/lib/watch-routing";
 import {
   getAnimeInfo,
   getEpisodes,
@@ -162,12 +163,14 @@ export async function generateMetadata({
 
   const isMovieRoute = episodeId === "movie";
   const isKnownTv = mockAnime?.type === "TV";
+  const movieSlug = hasMovieSlugMarker(cleanSlug) && !isKnownTv;
   const wrongMovieDetail = Boolean(
     isKnownTv && episodeId !== "movie" &&
     (directData?.isMovie || isKnownTvMovieTitleCollision(cleanSlug, directData?.title) || isSingleMovieEntry)
   );
   const isMovieConfirmed =
     isMovieRoute ||
+    movieSlug ||
     (Boolean(directData?.isMovie) && !isKnownTv) ||
     mockAnime?.type === "Movie" ||
     (searchMatch ? mapSearchItemToAnime(searchMatch).type === "Movie" && !isKnownTv : false) ||
@@ -289,7 +292,9 @@ export async function generateMetadata({
 
   const seoDescription = buildWatchDescription();
 
-  const canonicalUrl = getCanonicalUrl(`/watch/${cleanSlug}/${episodeId}`);
+  const canonicalUrl = getCanonicalUrl(
+    isMovie ? `/watch/${cleanSlug}` : `/watch/${cleanSlug}/${episodeId}`
+  );
   const posterUrl = anime.poster && anime.poster.startsWith("http") ? anime.poster : DEFAULT_OG_IMAGE;
 
   return {
@@ -374,6 +379,7 @@ export default async function WatchPage({
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const isKnownTv = mockAnime?.type === "TV";
+  const movieSlug = hasMovieSlugMarker(cleanSlug) && !isKnownTv;
   const wrongMovieDetail = Boolean(
     isKnownTv && !isMovieRoute &&
     (directData?.isMovie ||
@@ -385,6 +391,7 @@ export default async function WatchPage({
 
   const isMovieConfirmed =
     isMovieRoute ||
+    movieSlug ||
     (Boolean(directData?.isMovie) && !isKnownTv) ||
     mockAnime?.type === "Movie" ||
     (searchItemType === "Movie" && !isKnownTv) ||
@@ -505,10 +512,8 @@ export default async function WatchPage({
   let episodes: Episode[] = [];
 
   if (isMovie) {
-    // Redirect old ep-* movie URLs to the clean /movie route
-    if (episodeId !== "movie") {
-      redirect(`/watch/${cleanSlug}/movie`);
-    }
+    // Movies use the single-segment watch route; normalize old episode URLs.
+    redirect(`/watch/${cleanSlug}`);
     episodes = [
       {
         id: "movie",

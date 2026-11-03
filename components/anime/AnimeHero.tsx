@@ -11,6 +11,7 @@ import { PosterArt } from "./PosterArt";
 import { FavoriteButton } from "./FavoriteButton";
 import { SYNOPSIS_FALLBACK } from "@/lib/api/constants";
 import { normalizeGenreSlug } from "@/lib/mock/genres";
+import { buildWatchHref } from "@/lib/watch-routing";
 
 const SLIDE_DURATION = 7500;
 
@@ -46,7 +47,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
   const selectSlide = (nextIndex: number) => {
     setIndex((nextIndex + items.length) % items.length);
   };
-  const watchHref = item.type === "Movie" ? `/watch/${item.slug}/movie` : `/watch/${item.slug}/ep-1-1`;
+  const watchHref = buildWatchHref(item.slug, item.type);
 
   return (
     <section className="relative overflow-hidden border-b border-border-line bg-background">
