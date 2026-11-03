@@ -10,9 +10,9 @@ import {
 
 import { createCanonicalMetadata } from "@/lib/seo";
 
-// Revalidate the homepage every two minutes so fresh upstream drops
-// appear quickly on the SSR page.
-export const revalidate = 120;
+// The validated homepage feed is cached for 15 minutes; align page ISR with it
+// so the page does not write snapshots more often than its source data changes.
+export const revalidate = 900;
 
 export const metadata: Metadata = createCanonicalMetadata("/");
 

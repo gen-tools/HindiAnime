@@ -933,19 +933,22 @@ export async function POST(request: Request) {
         }
       };
 
-      void Promise.all([
-        fetchGoogleDriveSource(cleanId, season, ep).then((s) => { gdriveSource = s; emitSnapshot(false); }).catch(() => {}),
-        fetchPlayZenSource(cleanId, season, ep).then((s) => { playzenSource = s; emitSnapshot(false); }).catch(() => {}),
-      ]);
+      const gdrivePromise = fetchGoogleDriveSource(cleanId, season, ep).catch(() => null);
+      const playzenPromise = fetchPlayZenSource(cleanId, season, ep).catch(() => null);
+      void gdrivePromise.then((source) => {
+        gdriveSource = source;
+        emitSnapshot(false);
+      });
+      void playzenPromise.then((source) => {
+        playzenSource = source;
+        emitSnapshot(false);
+      });
 
       void (async () => {
         animeSaltItems = await animeSaltPromise;
         emitSnapshot(false);
         // Await parallel source resolution then emit final snapshot
-        await Promise.allSettled([
-          fetchGoogleDriveSource(cleanId, season, ep).then((s) => { if (s) gdriveSource = s; }),
-          fetchPlayZenSource(cleanId, season, ep).then((s) => { if (s) playzenSource = s; }),
-        ]);
+        await Promise.all([gdrivePromise, playzenPromise]);
         emitSnapshot(true);
         controller.close();
       })().catch((error) => controller.error(error));
