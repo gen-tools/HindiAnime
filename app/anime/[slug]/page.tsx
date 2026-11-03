@@ -32,6 +32,7 @@ import { createCanonicalMetadata } from "@/lib/seo";
 import type { Episode } from "@/types/episode";
 import type { SeasonItem } from "@/types/api";
 import { deduplicateEpisodes } from "@/lib/episodes";
+import { hasMovieSlugMarker } from "@/lib/watch-routing";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
@@ -112,11 +113,14 @@ export async function generateMetadata({
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
+  const catalogItem = staticCatalog.find((candidate) => candidate.slug === cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
 
   const isKnownTv = mockItem?.type === "TV" || isKnownTvMovieTitleCollision(cleanSlug, directData?.title);
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
   const isMovieConfirmed =
+    catalogItem?.type === "Movie" ||
+    (hasMovieSlugMarker(cleanSlug) && !isKnownTv) ||
     (Boolean(directData?.isMovie) && !isKnownTv) ||
     mockItem?.type === "Movie" ||
     (searchItemType === "Movie" && !isKnownTv) ||
@@ -238,9 +242,14 @@ export async function generateMetadata({
   // A poster parsed from this title's own AnimeSalt detail page is the source
   // of truth. The legacy API can return a valid-looking image from another
   // title, so do not keep it merely because it is a URL.
-  const verifiedArtwork =
-    (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
-    (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
+  const directMovieMatches = Boolean(directData?.isMovie && isMatchingMovie(directData.title, cleanSlug));
+  const catalogMoviePoster = catalogItem?.type === "Movie" && isUsableImageUrl(catalogItem.poster)
+    ? catalogItem.poster
+    : undefined;
+  const verifiedArtwork = isMovie
+    ? matchingMovieData?.poster || catalogMoviePoster || (directMovieMatches && directData?.poster && isUsableImageUrl(directData.poster) ? directData.poster : undefined)
+    : (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
+      (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
   if (verifiedArtwork) {
     item = { ...item, poster: verifiedArtwork };
   }
@@ -248,6 +257,20 @@ export async function generateMetadata({
     item = { ...item, backdrop: directData.backdrop };
   } else if (directData?.poster && isUsableImageUrl(directData.poster)) {
     item = { ...item, backdrop: directData.poster };
+  }
+
+  if (isMovie) {
+    item = {
+      ...item,
+      title: matchingMovieData?.title || (catalogItem?.type === "Movie" ? catalogItem.title : undefined) || item.title,
+      type: "Movie",
+      status: "Completed",
+      episodeCount: 1,
+      seasons: 1,
+      durationMinutes: item.durationMinutes || 110,
+      poster: matchingMovieData?.poster || catalogMoviePoster || item.poster,
+      backdrop: matchingMovieData?.backdrop || catalogItem?.backdrop || catalogMoviePoster || item.backdrop,
+    };
   }
 
   // Mock data fallback when AnimeSalt (directData) is unavailable on production
@@ -433,11 +456,14 @@ export default async function AnimeDetailPage({
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
+  const catalogItem = staticCatalog.find((candidate) => candidate.slug === cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
   const isKnownTv = mockItem?.type === "TV" || isKnownTvMovieTitleCollision(cleanSlug, directData?.title);
   const isMovieConfirmed =
+    catalogItem?.type === "Movie" ||
+    (hasMovieSlugMarker(cleanSlug) && !isKnownTv) ||
     (Boolean(directData?.isMovie) && !isKnownTv) ||
     mockItem?.type === "Movie" ||
     (searchItemType === "Movie" && !isKnownTv) ||
@@ -565,9 +591,14 @@ export default async function AnimeDetailPage({
 
   // Prefer the verified image from this exact source page over an unrelated
   // image that the fallback API may have attached to the same title.
-  const verifiedArtwork =
-    (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
-    (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
+  const directMovieMatches = Boolean(directData?.isMovie && isMatchingMovie(directData.title, cleanSlug));
+  const catalogMoviePoster = catalogItem?.type === "Movie" && isUsableImageUrl(catalogItem.poster)
+    ? catalogItem.poster
+    : undefined;
+  const verifiedArtwork = isMovie
+    ? matchingMovieData?.poster || catalogMoviePoster || (directMovieMatches && directData?.poster && isUsableImageUrl(directData.poster) ? directData.poster : undefined)
+    : (directData?.poster && isUsableImageUrl(directData.poster) && directData.poster) ||
+      (directData?.backdrop && isUsableImageUrl(directData.backdrop) && directData.backdrop);
   if (verifiedArtwork) {
     item = { ...item, poster: verifiedArtwork };
   }
@@ -575,6 +606,20 @@ export default async function AnimeDetailPage({
     item = { ...item, backdrop: directData.backdrop };
   } else if (directData?.poster && isUsableImageUrl(directData.poster)) {
     item = { ...item, backdrop: directData.poster };
+  }
+
+  if (isMovie) {
+    item = {
+      ...item,
+      title: matchingMovieData?.title || (catalogItem?.type === "Movie" ? catalogItem.title : undefined) || item.title,
+      type: "Movie",
+      status: "Completed",
+      episodeCount: 1,
+      seasons: 1,
+      durationMinutes: item.durationMinutes || 110,
+      poster: matchingMovieData?.poster || catalogMoviePoster || item.poster,
+      backdrop: matchingMovieData?.backdrop || catalogItem?.backdrop || catalogMoviePoster || item.backdrop,
+    };
   }
 
   // When AnimeSalt (directData) is unavailable on production (403), fall back to
