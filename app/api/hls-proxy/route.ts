@@ -4,6 +4,12 @@ import { createHmac } from "crypto";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const noStoreErrorHeaders = {
+  "Cache-Control": "no-store, no-cache, must-revalidate",
+  "Vercel-CDN-Cache-Control": "no-store",
+  "Cloudflare-CDN-Cache-Control": "no-store",
+};
+
 const ALLOWED_HLS_HOSTS = new Set([
   "ravok.buzz",
   "as-cdn.top",
@@ -52,7 +58,7 @@ export async function GET(request: NextRequest) {
   // Security: Block cross-site hotlinking
   const secFetchSite = request.headers.get("sec-fetch-site");
   if (secFetchSite === "cross-site") {
-    return new NextResponse("Forbidden", { status: 403 });
+    return new NextResponse("Forbidden", { status: 403, headers: noStoreErrorHeaders });
   }
 
   const { searchParams } = new URL(request.url);
@@ -62,22 +68,22 @@ export async function GET(request: NextRequest) {
   const sig = searchParams.get("sig");
 
   if (!targetUrl) {
-    return new NextResponse("Missing url parameter", { status: 400 });
+    return new NextResponse("Missing url parameter", { status: 400, headers: noStoreErrorHeaders });
   }
 
   let parsed: URL;
   try {
     parsed = new URL(targetUrl);
   } catch {
-    return new NextResponse("Invalid target url", { status: 400 });
+    return new NextResponse("Invalid target url", { status: 400, headers: noStoreErrorHeaders });
   }
 
   if (!isAllowedHost(parsed.hostname)) {
-    return new NextResponse("Host not allowed", { status: 403 });
+    return new NextResponse("Host not allowed", { status: 403, headers: noStoreErrorHeaders });
   }
 
   if (!verifyHlsSignature(targetUrl, exp, sig)) {
-    return new NextResponse("Invalid or expired signature", { status: 403 });
+    return new NextResponse("Invalid or expired signature", { status: 403, headers: noStoreErrorHeaders });
   }
 
   try {
@@ -102,6 +108,7 @@ export async function GET(request: NextRequest) {
     if (!upstreamRes.ok && upstreamRes.status !== 206) {
       return new NextResponse(`Upstream returned ${upstreamRes.status}`, {
         status: upstreamRes.status,
+        headers: noStoreErrorHeaders,
       });
     }
 
@@ -150,7 +157,9 @@ export async function GET(request: NextRequest) {
           "Content-Type": "application/vnd.apple.mpegurl",
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-          "Cache-Control": "public, max-age=60",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Vercel-CDN-Cache-Control": "no-store",
+          "Cloudflare-CDN-Cache-Control": "no-store",
         },
       });
     }
@@ -159,7 +168,9 @@ export async function GET(request: NextRequest) {
     const responseHeaders = new Headers();
     responseHeaders.set("Access-Control-Allow-Origin", "*");
     responseHeaders.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    responseHeaders.set("Cache-Control", "public, max-age=3600");
+    responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    responseHeaders.set("Vercel-CDN-Cache-Control", "no-store");
+    responseHeaders.set("Cloudflare-CDN-Cache-Control", "no-store");
 
     const passHeaders = ["content-type", "content-length", "content-range", "accept-ranges"];
     for (const h of passHeaders) {
@@ -174,6 +185,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return new NextResponse(`Proxy error: ${error instanceof Error ? error.message : String(error)}`, {
       status: 502,
+      headers: noStoreErrorHeaders,
     });
   }
 }

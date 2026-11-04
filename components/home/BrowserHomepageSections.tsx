@@ -19,6 +19,7 @@ import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL, WORKER_LEGACY_HOST } fro
 
 const HOMEPAGE_SNAPSHOT_KEY = "hindi-anime-homepage-v1";
 const HOMEPAGE_SNAPSHOT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
+const SERVER_HOMEPAGE_MAX_AGE_MS = 15 * 60 * 1000; // Matches the page's existing ISR interval.
 
 function hasHomepageActivity(data: HomepageData): boolean {
   return data.trendingItems.length > 0 || data.latestEpisodes.length > 0;
@@ -145,7 +146,13 @@ async function fetchWorkerHomepage(signal: AbortSignal): Promise<HomepageData> {
   throw new Error("All worker homepage endpoints failed");
 }
 
-export function BrowserHomepageSections({ initialData }: { initialData: HomepageData }) {
+export function BrowserHomepageSections({
+  initialData,
+  initialDataGeneratedAt,
+}: {
+  initialData: HomepageData;
+  initialDataGeneratedAt: number;
+}) {
   // Lazy initializer: read localStorage on the very first client render so
   // returning visitors never see the skeleton — even when the ISR snapshot is stale.
   const [data, setData] = useState<HomepageData>(() => {
@@ -165,6 +172,20 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
     // Save a fresh server snapshot so it is available on the next visit.
     if (hasHomepageActivity(initialData)) {
       saveHomepageSnapshot(initialData);
+    }
+
+    const serverDataAgeMs = Date.now() - initialDataGeneratedAt;
+    const serverDataIsFresh =
+      hasHomepageActivity(initialData) &&
+      serverDataAgeMs >= 0 &&
+      serverDataAgeMs < SERVER_HOMEPAGE_MAX_AGE_MS;
+
+    if (serverDataIsFresh) {
+      setIsLoading(false);
+      return () => {
+        active = false;
+        controller.abort(new DOMException("unmounted", "AbortError"));
+      };
     }
 
     const refreshHomepage = async (): Promise<HomepageData | null> => {
@@ -242,7 +263,7 @@ export function BrowserHomepageSections({ initialData }: { initialData: Homepage
         controller.abort(new DOMException("unmounted", "AbortError"));
       }
     };
-  }, [initialData]);
+  }, [initialData, initialDataGeneratedAt]);
 
   const displayHeroItems = data.heroItems.length > 0
     ? data.heroItems

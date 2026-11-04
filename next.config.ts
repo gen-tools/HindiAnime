@@ -67,6 +67,19 @@ const nextConfig: NextConfig = {
       // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
       // GETs with no query string; API and account routes are intentionally absent.
       { source: "/", headers: publicHtmlCacheHeader(300) },
+      // These routes render browser-only profile and library shells. Keep both
+      // their HTML and the legacy redirects out of shared caches.
+      ...["/profile", "/list", "/you"].map((source) => ({
+        source,
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "private, no-store, max-age=0, must-revalidate",
+          },
+          { key: "Vercel-CDN-Cache-Control", value: "no-store" },
+          { key: "Cloudflare-CDN-Cache-Control", value: "no-store" },
+        ],
+      })),
       // Anime and watch HTML is identical for all visitors. Cache it at Vercel
       // and Cloudflare after dynamic rendering, instead of storing each slug or
       // episode as a durable ISR entry.

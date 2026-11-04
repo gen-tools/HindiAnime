@@ -18,11 +18,15 @@ export const metadata: Metadata = createCanonicalMetadata("/");
 
 export default async function HomePage() {
   const homepageData = await getHomepageData();
+  const homepageDataGeneratedAt = Date.now();
 
   return (
     <>
       <h1 className="sr-only">Hindi Anime – Watch Hindi Dubbed Anime Online</h1>
-      <BrowserHomepageSections initialData={homepageData} />
+      <BrowserHomepageSections
+        initialData={homepageData}
+        initialDataGeneratedAt={homepageDataGeneratedAt}
+      />
 
       {/* 8. Other existing sections */}
       <FadeIn>

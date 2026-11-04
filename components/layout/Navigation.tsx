@@ -26,6 +26,7 @@ export function Navigation() {
           <Link
             key={item.href}
             href={item.href}
+            prefetch={false}
             className={cn(
               "focus-ring relative px-3.5 py-2 text-sm font-medium transition-[color,transform] duration-200 hover:-translate-y-px",
               isActive ? "text-white" : "text-text-secondary hover:text-white"
