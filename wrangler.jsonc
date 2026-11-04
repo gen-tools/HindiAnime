@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "hindianime-preview",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-11-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      // Required by OpenNext's revalidation queue. Worker Previews route this
+      // service binding to the active deployment of the named Worker, so keep
+      // this staging configuration bound only to hindianime-preview.
+      "service": "hindianime-preview"
+    }
+  ],
+  "previews": {
+    "vars": {
+      "CF_PROXY_URL": "https://cloud.hindi-anime.com",
+      "NEXT_PUBLIC_CF_PROXY_URL": "https://cloud.hindi-anime.com",
+      "NEXT_PUBLIC_SOURCE_WORKER_ENABLED": "true"
+    }
+  },
+  "observability": {
+    "enabled": true
+  }
+}

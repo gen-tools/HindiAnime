@@ -29,9 +29,9 @@ import {
   isKnownTvMovieTitleCollision,
 } from "@/lib/api/client";
 
-// Public watch landing pages are cached as shared CDN responses rather than
-// durable ISR snapshots, so a long tail of slugs does not write ISR entries.
-export const dynamic = "force-dynamic";
+// Movie watch pages are public; the stream itself loads separately through
+// the no-store player API. Cache page output for the existing one-hour TTL.
+export const revalidate = 3600;
 export const dynamicParams = true;
 
 export function generateStaticParams() {

@@ -36,9 +36,9 @@ import { hasMovieSlugMarker } from "@/lib/watch-routing";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
-// These public pages use shared CDN response caching instead of durable ISR
-// snapshots. This avoids an ISR write for every newly visited anime slug.
-export const dynamic = "force-dynamic";
+// Anime metadata and episodes are public. Cache each rendered route for two
+// hours so repeat HTML and RSC requests reuse the same server render.
+export const revalidate = 7200;
 export const dynamicParams = true;
 export function generateStaticParams() {
   return [];

@@ -37,9 +37,9 @@ import {
   parseLanguages,
 } from "@/lib/api/client";
 
-// Public episode pages are cached as shared CDN responses instead of durable
-// ISR snapshots, avoiding a write for each newly visited episode URL.
-export const dynamic = "force-dynamic";
+// Watch pages contain public metadata only; stream URLs load separately through
+// the no-store player API. Cache rendered page and RSC output for one hour.
+export const revalidate = 3600;
 export const dynamicParams = true;
 
 export function generateStaticParams() {

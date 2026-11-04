@@ -136,6 +136,7 @@ function findAnimaHdFileId(html: string, season: string, ep: string): string | n
   const regex = /<a[^>]*class=["'][^"']*app-ep-row-item[^"']*["'][^>]*data-season=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let match;
   const episodes: Array<{ fileId: string; seasonNum: number; epNum: number }> = [];
+  const lastEpisodeBySeason = new Map<number, number>();
   while ((match = regex.exec(html)) !== null) {
     const file = match[2].match(/data-fileid=["']([a-zA-Z0-9_-]{20,100})["']/i);
     if (!file) continue;
@@ -143,11 +144,18 @@ function findAnimaHdFileId(html: string, season: string, ep: string): string | n
     const title = (titleMatch?.[1] || "").replace(/<[^>]+>/g, " ").trim();
     const seasonMatch = match[1].match(/\d+/);
     let seasonNum = seasonMatch ? Number(seasonMatch[0]) : 1;
-    let epNum = episodes.length + 1;
+    let epNum = (lastEpisodeBySeason.get(seasonNum) || 0) + 1;
     const both = title.match(/S(\d+)E(\d+)/i);
     const onlyEp = title.match(/(?:ep|episode)[-.\s]*(\d+)/i);
-    if (both) { seasonNum = Number(both[1]); epNum = Number(both[2]); }
-    else if (onlyEp) epNum = Number(onlyEp[1]);
+    if (both) {
+      seasonNum = Number(both[1]);
+      // AnimaHD currently labels one Grand Blue S3 file "S03E0". Treat zero
+      // as a missing episode number and use its ordinal within that season.
+      epNum = Number(both[2]) || (lastEpisodeBySeason.get(seasonNum) || 0) + 1;
+    } else if (onlyEp) {
+      epNum = Number(onlyEp[1]) || epNum;
+    }
+    lastEpisodeBySeason.set(seasonNum, Math.max(lastEpisodeBySeason.get(seasonNum) || 0, epNum));
     episodes.push({ fileId: file[1], seasonNum, epNum });
   }
   const epTarget = episodes.find((item) => item.seasonNum === Number(season) && item.epNum === Number(ep));

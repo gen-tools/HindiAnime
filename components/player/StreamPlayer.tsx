@@ -48,6 +48,7 @@ interface ValidServer {
   /** True when this is a direct HLS/MP4 stream — no ads, no iframe */
   adFree: boolean;
   languageSources?: NonNullable<StreamItem["languageSources"]>;
+  slot?: string;
   displayLanguage?: string;
   restrictNavigation: boolean;
   allowSandboxedForms: boolean;
@@ -98,8 +99,11 @@ function parseServers(results: StreamItem[]): ValidServer[] {
     if (!isOwnProxy && !isBackendGoogleDriveStream && !isValidEmbedUrl(streamUrl)) continue;
 
     const finalType: "hls" | "mp4" | "embed" = isDirect ? (item.type as "hls" | "mp4") : "embed";
-    const serverNum = servers.length + 1;
-    const label = `Server ${serverNum}`;
+    const declaredSlot = item.slot?.match(/^server-(\d+)$/i);
+    const serverNum = declaredSlot ? Number(declaredSlot[1]) : servers.length + 1;
+    const label = item.slot === "server-4"
+      ? item.label || "Server 4 · 🌐 Multi-Audio"
+      : `Server ${serverNum}`;
     const serverName = `Server ${serverNum}`;
     const displayLanguage = item.languageLabel || item.audioLanguage || "Hindi Dub";
     const isMyStream = /mystream|ravok\.buzz/i.test(`${rawEmbed} ${streamUrl} ${item.label || ""} ${item.server || ""}`);
@@ -117,6 +121,7 @@ function parseServers(results: StreamItem[]): ValidServer[] {
       isDirect,
       adFree: Boolean(item.adFree) || isDirect,
       languageSources: item.languageSources,
+      slot: item.slot,
       displayLanguage,
       restrictNavigation: isMyStream || Boolean(item.restrictNavigation),
       allowSandboxedForms: true,
