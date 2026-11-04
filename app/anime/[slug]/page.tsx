@@ -4,9 +4,9 @@ import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { AnimeSeasonBrowser } from "@/components/episodes/AnimeSeasonBrowser";
 import { AnimeRow } from "@/components/anime/AnimeRow";
-import { genres } from "@/lib/mock/genres";
-import { getAnimeBySlug, getAnimeByGenre } from "@/lib/mock/anime";
-import { staticCatalog } from "@/lib/static-catalog";
+import { getAnimeBySlug } from "@/lib/mock/anime";
+import { getStaticCatalogItemBySlug } from "@/lib/static-catalog";
+import { getRelatedAnimeForPage } from "@/lib/related-anime";
 import {
   getAnimeInfo,
   getEpisodes,
@@ -113,7 +113,7 @@ export async function generateMetadata({
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
-  const catalogItem = staticCatalog.find((candidate) => candidate.slug === cleanSlug);
+  const catalogItem = getStaticCatalogItemBySlug(cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
 
   const isKnownTv = mockItem?.type === "TV" || isKnownTvMovieTitleCollision(cleanSlug, directData?.title);
@@ -456,7 +456,7 @@ export default async function AnimeDetailPage({
   const movieData = resolveMovieInfoData(movieInfo);
   const animeData = resolveAnimeInfoData(apiInfo);
   const mockItem = getAnimeBySlug(cleanSlug);
-  const catalogItem = staticCatalog.find((candidate) => candidate.slug === cleanSlug);
+  const catalogItem = getStaticCatalogItemBySlug(cleanSlug);
   const matchingMovieData = isMatchingMovie(movieData?.title, cleanSlug) ? movieData : null;
   const searchItemType = searchMatch ? mapSearchItemToAnime(searchMatch).type : undefined;
 
@@ -747,80 +747,7 @@ export default async function AnimeDetailPage({
     ? episodes[0].id
     : `ep-${seasonNum}-1`;
 
-  // ── Build "You Might Also Like" genre-based anime ─────────────────────────
-  const nonGenreTags = new Set([
-    "animation",
-    "adult-cast",
-    "award-winning",
-    "all-episodes",
-    "subbed",
-    "dubbed",
-    "hindi",
-    "english",
-    "japanese",
-  ]);
-
-  const rawGenres = (item.genres || [])
-    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
-    .filter((g) => g && !nonGenreTags.has(g) && !g.startsWith("page"));
-
-  const knownGenres = new Set(genres.map((g) => g.slug));
-
-  const genrePriority = [
-    "sports",
-    "romance",
-    "mystery",
-    "horror",
-    "thriller",
-    "comedy",
-    "isekai",
-    "sci-fi",
-    "action",
-    "fantasy",
-    "adventure",
-    "slice-of-life",
-    "psychological",
-    "supernatural",
-    "drama",
-    "shounen",
-    "school",
-    "super-power",
-  ];
-
-  const primaryGenre =
-    genrePriority.find((p) => rawGenres.includes(p)) ||
-    rawGenres.find((g) => knownGenres.has(g)) ||
-    rawGenres[0] ||
-    "action";
-
-  const seenSlugs = new Set<string>([item.slug]);
-  const youMightAlsoLikeItems: Anime[] = [];
-
-  const localRelatedItems = staticCatalog.filter((candidate) =>
-    candidate.genres?.some((genre) => {
-      const normalizedGenre = genre.toLowerCase().trim().replace(/\s+/g, "-");
-      return (rawGenres.length ? rawGenres : [primaryGenre]).includes(normalizedGenre);
-    })
-  );
-
-  for (const genreItem of localRelatedItems) {
-    if (genreItem.slug && !seenSlugs.has(genreItem.slug)) {
-      seenSlugs.add(genreItem.slug);
-      youMightAlsoLikeItems.push(genreItem);
-    }
-  }
-
-  for (const g of (rawGenres.length ? rawGenres : [primaryGenre])) {
-    const mockGenreItems = getAnimeByGenre(g);
-    for (const mockItem of mockGenreItems) {
-      if (mockItem.slug && !seenSlugs.has(mockItem.slug)) {
-        seenSlugs.add(mockItem.slug);
-        youMightAlsoLikeItems.push(mockItem);
-      }
-    }
-  }
-
-  const related = youMightAlsoLikeItems.slice(0, 18);
+  const { items: related, primaryGenre } = getRelatedAnimeForPage(item);
 
   return (
     <div className="pb-14">

@@ -891,8 +891,21 @@ export const anime: Anime[] = [
   },
 ];
 
+const animeBySlug = new Map<string, Anime>();
+const animeByGenre = new Map<string, Anime[]>();
+
+for (const item of anime) {
+  if (!animeBySlug.has(item.slug)) animeBySlug.set(item.slug, item);
+
+  for (const genre of new Set(item.genres)) {
+    const genreItems = animeByGenre.get(genre);
+    if (genreItems) genreItems.push(item);
+    else animeByGenre.set(genre, [item]);
+  }
+}
+
 export function getAnimeBySlug(slug: string) {
-  return anime.find((a) => a.slug === slug);
+  return animeBySlug.get(slug);
 }
 
 export function getFeaturedAnime() {
@@ -932,7 +945,7 @@ export function getMoviesFromAnime() {
 }
 
 export function getAnimeByGenre(slug: string) {
-  return anime.filter((a) => a.genres.includes(slug));
+  return [...(animeByGenre.get(slug) ?? [])];
 }
 
 export function getAnimeByLanguage(code: string) {

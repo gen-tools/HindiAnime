@@ -14,9 +14,8 @@ import { Badge } from "@/components/ui/Badge";
 import { FavoriteButton } from "@/components/anime/FavoriteButton";
 import { AnimeRow } from "@/components/anime/AnimeRow";
 import { Play, ChevronRight } from "lucide-react";
-import { getAnimeBySlug, getAnimeByGenre, anime as mockAnimeList } from "@/lib/mock/anime";
-import { genres } from "@/lib/mock/genres";
-import { staticCatalog } from "@/lib/static-catalog";
+import { getAnimeBySlug, anime as mockAnimeList } from "@/lib/mock/anime";
+import { getRelatedAnimeForPage } from "@/lib/related-anime";
 import { hasMovieSlugMarker } from "@/lib/watch-routing";
 import {
   getAnimeInfo,
@@ -600,84 +599,7 @@ export default async function WatchPage({
 
   const episodeTitle = `EP ${episode.number} — ${episode.title}`;
 
-  // ── 4. Build "You Might Also Like" genre-based anime ───────────────────────
-  const nonGenreTags = new Set([
-    "animation",
-    "adult-cast",
-    "award-winning",
-    "all-episodes",
-    "subbed",
-    "dubbed",
-    "hindi",
-    "english",
-    "japanese",
-  ]);
-
-  const rawGenres = (anime.genres || [])
-    .map((g) => g.toLowerCase().trim().replace(/\s+/g, "-"))
-    .filter((g) => g && !nonGenreTags.has(g) && !g.startsWith("page"));
-
-  const knownGenres = new Set(genres.map((g) => g.slug));
-
-  const genrePriority = [
-    "sports",
-    "romance",
-    "mystery",
-    "horror",
-    "thriller",
-    "comedy",
-    "isekai",
-    "sci-fi",
-    "action",
-    "fantasy",
-    "adventure",
-    "slice-of-life",
-    "psychological",
-    "supernatural",
-    "drama",
-    "shounen",
-    "school",
-    "super-power",
-  ];
-
-  // Determine the primary genre
-  const primaryGenre =
-    genrePriority.find((p) => rawGenres.includes(p)) ||
-    rawGenres.find((g) => knownGenres.has(g)) ||
-    rawGenres[0] ||
-    "action";
-
-  const seenSlugs = new Set<string>([cleanSlug]);
-  const youMightAlsoLikePool: Anime[] = [];
-
-  // Use the build-time catalog for related titles so rendering a detail or
-  // watch page does not wait on additional scraper and homepage API calls.
-  const localRelatedItems = staticCatalog.filter((candidate) =>
-    candidate.genres?.some((genre) => {
-      const normalizedGenre = genre.toLowerCase().trim().replace(/\s+/g, "-");
-      return (rawGenres.length ? rawGenres : [primaryGenre]).includes(normalizedGenre);
-    })
-  );
-
-  for (const item of localRelatedItems) {
-    if (item.slug && !seenSlugs.has(item.slug)) {
-      seenSlugs.add(item.slug);
-      youMightAlsoLikePool.push(item);
-    }
-  }
-
-  // 2. Mock anime matching any of this anime's genres (e.g. action, fantasy)
-  for (const g of (rawGenres.length ? rawGenres : [primaryGenre])) {
-    const mockGenreItems = getAnimeByGenre(g);
-    for (const item of mockGenreItems) {
-      if (item.slug && !seenSlugs.has(item.slug)) {
-        seenSlugs.add(item.slug);
-        youMightAlsoLikePool.push(item);
-      }
-    }
-  }
-
-  const youMightAlsoLike = youMightAlsoLikePool.slice(0, 18);
+  const { items: youMightAlsoLike, primaryGenre } = getRelatedAnimeForPage(anime);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 md:py-8 lg:max-w-6xl transition-all">

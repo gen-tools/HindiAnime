@@ -23,3 +23,42 @@ for (const item of catalogIndex) {
 }
 
 export const staticCatalog = [...combined.values()];
+
+const staticCatalogBySlug = new Map(staticCatalog.map((item) => [item.slug, item]));
+const catalogGenresByItem = staticCatalog.map((item) => ({
+  item,
+  genres: new Set(item.genres.map((genre) => genre.toLowerCase().trim().replace(/\s+/g, "-"))),
+}));
+
+export function getStaticCatalogItemBySlug(slug: string): Anime | undefined {
+  return staticCatalogBySlug.get(slug);
+}
+
+/** Return the first related catalog items in the same order as staticCatalog. */
+export function getStaticCatalogItemsByGenres(
+  genreSlugs: readonly string[],
+  excludedSlug: string,
+  limit: number
+): Anime[] {
+  if (genreSlugs.length === 0 || limit <= 0) return [];
+
+  const wantedGenres = new Set(genreSlugs);
+  const matches: Anime[] = [];
+
+  for (const entry of catalogGenresByItem) {
+    if (!entry.item.slug || entry.item.slug === excludedSlug) continue;
+    let hasMatch = false;
+    for (const genre of entry.genres) {
+      if (wantedGenres.has(genre)) {
+        hasMatch = true;
+        break;
+      }
+    }
+    if (!hasMatch) continue;
+
+    matches.push(entry.item);
+    if (matches.length >= limit) break;
+  }
+
+  return matches;
+}
