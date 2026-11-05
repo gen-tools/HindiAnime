@@ -36,8 +36,8 @@ import { hasMovieSlugMarker } from "@/lib/watch-routing";
 import { CANONICAL_SITE_ORIGIN, DEFAULT_OG_IMAGE, getCanonicalUrl } from "@/lib/seo";
 import { MOCK_ARTWORK_URL } from "@/lib/mock/artwork";
 
-// These public pages use shared CDN response caching instead of durable ISR
-// snapshots. This avoids an ISR write for every newly visited anime slug.
+// Render public anime details on a cache miss; shared HTML caching is handled
+// by the Cloudflare response cache without persistent Next.js ISR storage.
 export const dynamic = "force-dynamic";
 export const dynamicParams = true;
 export function generateStaticParams() {

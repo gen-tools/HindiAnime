@@ -29,8 +29,8 @@ import {
   isKnownTvMovieTitleCollision,
 } from "@/lib/api/client";
 
-// Public watch landing pages are cached as shared CDN responses rather than
-// durable ISR snapshots, so a long tail of slugs does not write ISR entries.
+// Render public watch metadata on a cache miss. Stream resolution remains
+// separate and no-store through the player API.
 export const dynamic = "force-dynamic";
 export const dynamicParams = true;
 

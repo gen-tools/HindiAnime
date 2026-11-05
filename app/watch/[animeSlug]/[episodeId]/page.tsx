@@ -37,8 +37,8 @@ import {
   parseLanguages,
 } from "@/lib/api/client";
 
-// Public episode pages are cached as shared CDN responses instead of durable
-// ISR snapshots, avoiding a write for each newly visited episode URL.
+// Render public episode metadata on a cache miss. Stream URLs load separately
+// through the no-store player API.
 export const dynamic = "force-dynamic";
 export const dynamicParams = true;
 

@@ -6,6 +6,18 @@ import { buildAnimeSaltEpisodeCandidates, buildAnimeSaltMovieUrl, isValidAnimeSa
 import { buildServerWorkerProxyUrl, getServerWorkerHeaders } from "@/lib/api/worker-auth";
 import type { StreamItem } from "@/types/api";
 
+const noStoreHeaders = {
+  "Cache-Control": "no-store, no-cache, must-revalidate",
+  "Vercel-CDN-Cache-Control": "no-store",
+  "Cloudflare-CDN-Cache-Control": "no-store",
+};
+
+function noStoreJson(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  for (const [name, value] of Object.entries(noStoreHeaders)) headers.set(name, value);
+  return NextResponse.json(body, { ...init, headers });
+}
+
 function isCloudflareChallenge(text: string): boolean {
   return (
     text.includes("Just a moment...") ||
@@ -714,7 +726,7 @@ async function buildStreamResponse(
   const finalResults = assembleServers(animeSaltItems, cleanId, gdriveSource, playzenSource);
 
   if (finalResults.length > 0) {
-    return NextResponse.json(
+    return noStoreJson(
       {
         success: true,
         message: "Stream Found!!",
@@ -726,7 +738,7 @@ async function buildStreamResponse(
     );
   }
 
-  return NextResponse.json(
+  return noStoreJson(
     { success: false, message: "No valid streams found", results: [], saltCount: 0 },
     {
       status: 404,
@@ -806,9 +818,9 @@ function isAuthorizedFrontendRequest(request: Request): boolean {
   return true;
 }
 
-export async function GET(request: Request) {
+async function handleGet(request: Request) {
   if (!isAuthorizedFrontendRequest(request)) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, message: "Unauthorized: Request rejected." },
       { status: 403 }
     );
@@ -821,7 +833,7 @@ export async function GET(request: Request) {
   const isMovieRequest = searchParams.get("movie") === "1";
 
   if (!id) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, message: "Missing required parameter: id" },
       { status: 400 }
     );
@@ -841,9 +853,17 @@ export async function GET(request: Request) {
   return buildStreamResponse(cleanId, season, ep, undefined, isMovieRequest);
 }
 
-export async function POST(request: Request) {
+export async function GET(request: Request) {
+  try {
+    return await handleGet(request);
+  } catch {
+    return noStoreJson({ success: false, message: "Stream resolution failed" }, { status: 500 });
+  }
+}
+
+async function handlePost(request: Request) {
   if (!isAuthorizedFrontendRequest(request)) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, message: "Unauthorized: Request rejected." },
       { status: 403 }
     );
@@ -851,23 +871,23 @@ export async function POST(request: Request) {
 
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (contentLength > 512 * 1024) {
-    return NextResponse.json({ success: false, message: "AnimeSalt response is too large" }, { status: 413 });
+    return noStoreJson({ success: false, message: "AnimeSalt response is too large" }, { status: 413 });
   }
 
   let payload: unknown;
   try {
     payload = await request.json();
   } catch {
-    return NextResponse.json({ success: false, message: "Invalid JSON body" }, { status: 400 });
+    return noStoreJson({ success: false, message: "Invalid JSON body" }, { status: 400 });
   }
   if (!payload || typeof payload !== "object") {
-    return NextResponse.json({ success: false, message: "Invalid request body" }, { status: 400 });
+    return noStoreJson({ success: false, message: "Invalid request body" }, { status: 400 });
   }
 
   const body = payload as Record<string, unknown>;
   const id = typeof body.id === "string" ? body.id : "";
   if (!id) {
-    return NextResponse.json({ success: false, message: "Missing required parameter: id" }, { status: 400 });
+    return noStoreJson({ success: false, message: "Missing required parameter: id" }, { status: 400 });
   }
   const season = String(body.season ?? "1");
   const ep = String(body.ep ?? "1");
@@ -886,7 +906,7 @@ export async function POST(request: Request) {
       byteLength > 512 * 1024 ||
       !isValidAnimeSaltHtml(html)
     ) {
-      return NextResponse.json({ success: false, message: "Invalid AnimeSalt response" }, { status: 400 });
+      return noStoreJson({ success: false, message: "Invalid AnimeSalt response" }, { status: 400 });
     }
     browserResult = { targetUrl, html, isMovie };
   }
@@ -957,8 +977,16 @@ export async function POST(request: Request) {
 
   return new Response(bodyStream, {
     headers: {
-      "Cache-Control": "no-store, no-cache, must-revalidate",
+      ...noStoreHeaders,
       "Content-Type": "application/x-ndjson; charset=utf-8",
     },
   });
+}
+
+export async function POST(request: Request) {
+  try {
+    return await handlePost(request);
+  } catch {
+    return noStoreJson({ success: false, message: "Stream resolution failed" }, { status: 500 });
+  }
 }

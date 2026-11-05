@@ -53,6 +53,7 @@ node_modules/
 # 3. NEXT.JS & BUILD OUTPUTS
 # ==============================================================================
 .next/
+.open-next/
 out/
 build/
 dist/

@@ -10,9 +10,9 @@ import {
 
 import { createCanonicalMetadata } from "@/lib/seo";
 
-// The validated homepage feed is cached for 15 minutes; align page ISR with it
-// so the page does not write snapshots more often than its source data changes.
-export const revalidate = 900;
+// Render the data-driven homepage on a cache miss. Cloudflare's shared HTTP
+// cache controls freshness without requiring persistent Next.js ISR storage.
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = createCanonicalMetadata("/");
 

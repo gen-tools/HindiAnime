@@ -39,12 +39,22 @@ const BROWSER_HEADERS = {
   Referer: "https://animesalt.cx/",
 };
 
-export async function GET(request: Request) {
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate",
+  "Vercel-CDN-Cache-Control": "no-store",
+  "Cloudflare-CDN-Cache-Control": "no-store",
+};
+
+function noStoreJson(body: unknown, status: number) {
+  return NextResponse.json(body, { status, headers: NO_STORE_HEADERS });
+}
+
+async function handleGet(request: Request) {
   const { searchParams } = new URL(request.url);
   const targetUrl = searchParams.get("url");
 
   if (!targetUrl) {
-    return NextResponse.json({ error: "Missing url param" }, { status: 400 });
+    return noStoreJson({ error: "Missing url param" }, 400);
   }
 
   let decodedUrl = targetUrl;
@@ -56,11 +66,11 @@ export async function GET(request: Request) {
   try {
     parsedTarget = new URL(decodedUrl);
   } catch {
-    return NextResponse.json({ error: "Invalid url" }, { status: 400 });
+    return noStoreJson({ error: "Invalid url" }, 400);
   }
 
   if (!isAllowedHost(parsedTarget.hostname)) {
-    return NextResponse.json({ error: "Host not allowed" }, { status: 403 });
+    return noStoreJson({ error: "Host not allowed" }, 403);
   }
 
   // 1. Direct fetch
@@ -101,7 +111,10 @@ export async function GET(request: Request) {
   if (!upstreamResponse?.ok) {
     return new Response(
       `<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh"><p style="color:#888;font-family:sans-serif;font-size:14px">Stream source temporarily unavailable. Try another server.</p></body></html>`,
-      { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } }
+      {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8", ...NO_STORE_HEADERS },
+      }
     );
   }
 
@@ -110,7 +123,7 @@ export async function GET(request: Request) {
 
   const safeHeaders: Record<string, string> = {
     "Content-Type": contentType,
-    "Cache-Control": "no-store, no-cache",
+    ...NO_STORE_HEADERS,
     // Explicitly override Next.js global X-Frame-Options: SAMEORIGIN with ALLOWALL
     // so this proxied page can be embedded inside our sandboxed iframe.
     "X-Frame-Options": "ALLOWALL",
@@ -134,5 +147,16 @@ export async function GET(request: Request) {
     .replace(/frame-ancestors[^;'"]*[;'"]/gi, "");
 
   return new Response(rewritten, { status: 200, headers: safeHeaders });
+}
+
+export async function GET(request: Request) {
+  try {
+    return await handleGet(request);
+  } catch {
+    return new Response("Stream source temporarily unavailable", {
+      status: 502,
+      headers: { "Content-Type": "text/plain; charset=utf-8", ...NO_STORE_HEADERS },
+    });
+  }
 }
 

@@ -80,6 +80,16 @@ const nextConfig: NextConfig = {
           { key: "Cloudflare-CDN-Cache-Control", value: "no-store" },
         ],
       })),
+      {
+        // Cover framework-generated method/error responses as well as the
+        // explicit no-store headers on every stream-proxy handler branch.
+        source: "/api/stream-proxy",
+        headers: [
+          { key: "Cache-Control", value: "no-store, no-cache, must-revalidate" },
+          { key: "Vercel-CDN-Cache-Control", value: "no-store" },
+          { key: "Cloudflare-CDN-Cache-Control", value: "no-store" },
+        ],
+      },
       // Anime and watch HTML is identical for all visitors. Cache it at Vercel
       // and Cloudflare after dynamic rendering, instead of storing each slug or
       // episode as a durable ISR entry.
@@ -113,7 +123,10 @@ const nextConfig: NextConfig = {
       { source: "/movies", headers: publicHtmlCacheHeader(86400) },
       { source: "/language", headers: publicHtmlCacheHeader(86400) },
       { source: "/language/:path*", headers: publicHtmlCacheHeader(86400) },
-      { source: "/popular", headers: publicHtmlCacheHeader(86400) },
+      {
+        source: "/popular",
+        headers: publicDynamicDocumentCacheHeaders(900),
+      },
       { source: "/browse", headers: publicHtmlCacheHeader(86400) },
       { source: "/genre", headers: publicHtmlCacheHeader(86400) },
       { source: "/genre/:path*", headers: publicHtmlCacheHeader(86400) },

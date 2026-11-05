@@ -8,6 +8,10 @@ import { Badge } from "@/components/ui/Badge";
 import { getPopularAnime, getTrendingAnime } from "@/lib/mock/anime";
 import { getHomepageData } from "@/lib/api/client";
 
+// Popularity data is shared and may change between builds. Render it when the
+// Cloudflare HTTP cache misses rather than freezing it into the build output.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = createCanonicalMetadata("/popular", {
   title: "Popular Anime",
   description: "The most watched and top-rated anime on Hindi Anime right now.",
