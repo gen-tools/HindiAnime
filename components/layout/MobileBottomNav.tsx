@@ -101,6 +101,7 @@ function MobileBottomNavInner() {
         {/* 4. List */}
         <Link
           href="/profile?tab=favorites"
+          prefetch={false}
           className={cn(
             "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isListActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
@@ -116,6 +117,7 @@ function MobileBottomNavInner() {
         {/* 5. You */}
         <Link
           href="/profile"
+          prefetch={false}
           className={cn(
             "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isYouActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"

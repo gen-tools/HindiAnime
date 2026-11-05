@@ -43,6 +43,7 @@ export function Header() {
           </div>
           <Link
             href="/profile"
+            prefetch={false}
             aria-label="Guest Profile"
             className="hidden md:flex items-center gap-1.5 rounded-xl border border-border-line bg-surface px-3 py-1.5 text-xs font-semibold text-text-secondary hover:border-green-primary/50 hover:text-white transition-colors"
           >
