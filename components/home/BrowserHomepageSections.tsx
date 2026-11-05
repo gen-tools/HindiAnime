@@ -9,11 +9,7 @@ import { LatestSection } from "@/components/home/LatestSection";
 import { AllAnimeSection } from "@/components/home/AllAnimeSection";
 import { MovieSection } from "@/components/home/MovieSection";
 import { FadeIn } from "@/components/ui/FadeIn";
-import {
-  mapHomepageFeedToData,
-  parseHomepageSourceHtml,
-  type HomepageData,
-} from "@/lib/api/client";
+import type { HomepageData } from "@/lib/api/client";
 import type { HomepageApiResponse } from "@/types/api";
 import { ALLOWED_WORKER_HOSTS, DEFAULT_WORKER_BASE_URL, WORKER_LEGACY_HOST } from "@/lib/api/worker-config";
 
@@ -109,6 +105,7 @@ async function fetchWorkerHomepage(signal: AbortSignal): Promise<HomepageData> {
       if (res.ok && (res.headers.get("content-type") || "").includes("application/json")) {
         const feed = await res.json();
         if (feed && feed.data?.results) {
+          const { mapHomepageFeedToData } = await import("@/lib/api/client");
           const mapped = mapHomepageFeedToData(feed as HomepageApiResponse);
           if (hasHomepageActivity(mapped)) {
             return mapped;
@@ -131,6 +128,7 @@ async function fetchWorkerHomepage(signal: AbortSignal): Promise<HomepageData> {
       if (response.ok && (response.headers.get("content-type") || "").toLowerCase().includes("text/html")) {
         const html = await response.text();
         if (new TextEncoder().encode(html).byteLength <= 1024 * 1024) {
+          const { mapHomepageFeedToData, parseHomepageSourceHtml } = await import("@/lib/api/client");
           const feed = parseHomepageSourceHtml(html);
           if (feed) {
             const mapped = mapHomepageFeedToData(feed);
@@ -194,9 +192,13 @@ export function BrowserHomepageSections({
         const response = await fetch("/api/homepage", { signal: controller.signal, cache: "default" });
         if (response.ok) {
           const payload: unknown = await response.json();
-          const parsed = payload && typeof payload === "object" && "data" in payload
-            ? mapHomepageFeedToData(payload as HomepageApiResponse)
-            : (payload as HomepageData);
+          let parsed: HomepageData;
+          if (payload && typeof payload === "object" && "data" in payload) {
+            const { mapHomepageFeedToData } = await import("@/lib/api/client");
+            parsed = mapHomepageFeedToData(payload as HomepageApiResponse);
+          } else {
+            parsed = payload as HomepageData;
+          }
           if (hasHomepageActivity(parsed)) {
             return parsed;
           }
