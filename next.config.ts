@@ -66,7 +66,7 @@ const nextConfig: NextConfig = {
       // Cloudflare can cache public document responses separately from the
       // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
       // GETs with no query string; API and account routes are intentionally absent.
-      { source: "/", headers: publicHtmlCacheHeader(300) },
+      { source: "/", headers: publicHtmlCacheHeader(900) },
       // These routes render browser-only profile and library shells. Keep both
       // their HTML and the legacy redirects out of shared caches.
       ...["/profile", "/list", "/you"].map((source) => ({
