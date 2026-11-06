@@ -70,6 +70,7 @@ export function MobileNavigation() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    prefetch={false}
                     onClick={() => setOpen(false)}
                     className={cn(
                       "focus-ring rounded-lg px-4 py-3 text-[15px] font-semibold transition-colors",

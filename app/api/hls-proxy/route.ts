@@ -42,7 +42,7 @@ function verifyHlsSignature(url: string, exp: string | null, sig: string | null)
   return sig === expectedSig;
 }
 
-export function signHlsProxyUrl(streamUrl: string): string {
+function signHlsProxyUrl(streamUrl: string): string {
   const secret = process.env.CF_PROXY_SHARED_SECRET?.trim();
   const exp = String(Math.floor(Date.now() / 1000) + 7200);
   const p = new URLSearchParams({ url: streamUrl, exp });

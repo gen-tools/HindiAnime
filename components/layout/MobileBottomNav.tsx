@@ -64,6 +64,7 @@ function MobileBottomNavInner() {
         {/* 2. Browse */}
         <Link
           href="/genre"
+          prefetch={false}
           className={cn(
             "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isBrowseActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
@@ -80,6 +81,7 @@ function MobileBottomNavInner() {
         <div className="relative -top-4 sm:-top-5 flex flex-col items-center px-1 sm:px-2">
           <Link
             href="/search"
+            prefetch={false}
             aria-label="Search anime"
             className={cn(
               "flex h-13 w-13 touch-manipulation sm:h-14 sm:w-14 items-center justify-center rounded-full bg-green-bright text-black shadow-[0_0_24px_rgba(34,197,94,0.7)] border-4 border-background transition-all duration-150 hover:scale-105 active:scale-90",
