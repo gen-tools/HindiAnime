@@ -12,6 +12,7 @@ export function LanguageSection() {
           </h2>
           <Link
             href="/language"
+            prefetch={false}
             className="text-xs font-semibold text-text-secondary hover:text-green-light"
           >
             All languages →

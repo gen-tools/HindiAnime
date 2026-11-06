@@ -95,6 +95,7 @@ export function MovieSpotlight({ items }: { items: Anime[] }) {
               <ButtonLink
                 href={`/anime/${item.slug}`}
                 prefetch={false}
+                documentNavigation
                 size="lg"
                 icon={<Play className="h-4 w-4 fill-white" />}
                 className="shadow-[0_0_20px_rgba(34,197,94,0.4)]"
@@ -105,6 +106,7 @@ export function MovieSpotlight({ items }: { items: Anime[] }) {
             <ButtonLink
               href={`/anime/${item.slug}`}
               prefetch={false}
+              documentNavigation
               variant="secondary"
               size="lg"
               icon={<Info className="h-4 w-4" />}

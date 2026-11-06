@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
@@ -23,10 +22,9 @@ export function Navigation() {
         const isActive =
           item.href === "/" ? pathname === "/" : pathname.startsWith(item.href.split("/").slice(0, 2).join("/"));
         return (
-          <Link
+          <a
             key={item.href}
             href={item.href}
-            prefetch={false}
             className={cn(
               "focus-ring relative px-3.5 py-2 text-sm font-medium transition-[color,transform] duration-200 hover:-translate-y-px",
               isActive ? "text-white" : "text-text-secondary hover:text-white"
@@ -36,7 +34,7 @@ export function Navigation() {
             {isActive && (
               <span className="absolute inset-x-3 -bottom-[1px] h-[2px] rounded-full bg-green-bright shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
             )}
-          </Link>
+          </a>
         );
       })}
     </nav>

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import { Search } from "lucide-react";
 import type { Episode } from "@/types/episode";
 import type { EpisodeItem } from "@/types/api";
@@ -134,10 +133,9 @@ export function EpisodeList({
         {filtered.map((ep) => {
           const isActive = ep.id === activeEpisodeId;
           return (
-            <Link
+            <a
               key={getEpisodeIdentity(ep)}
               href={`/watch/${animeSlug}/${ep.id}`}
-              prefetch={false}
               aria-current={isActive ? "true" : undefined}
               className={cn(
                 "focus-ring flex aspect-square items-center justify-center rounded-lg border text-sm font-semibold transition-colors",
@@ -147,7 +145,7 @@ export function EpisodeList({
               )}
             >
               {String(ep.number).padStart(2, "0")}
-            </Link>
+            </a>
           );
         })}
       </div>

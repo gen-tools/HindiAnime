@@ -10,7 +10,6 @@ export function AnimeGrid({ items }: { items: Anime[] }) {
           key={item.id}
           item={item}
           className="w-full"
-          prefetch={false}
           imageLoading={index < 2 ? "eager" : "lazy"}
         />
       ))}

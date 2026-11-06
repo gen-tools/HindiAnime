@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Search, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "./Logo";
@@ -41,15 +40,14 @@ export function Header() {
           <div className="hidden md:block w-64">
             <SearchBar size="sm" />
           </div>
-          <Link
+          <a
             href="/profile"
-            prefetch={false}
             aria-label="Guest Profile"
             className="hidden md:flex items-center gap-1.5 rounded-xl border border-border-line bg-surface px-3 py-1.5 text-xs font-semibold text-text-secondary hover:border-green-primary/50 hover:text-white transition-colors"
           >
             <User className="h-3.5 w-3.5 text-green-bright" />
             <span>Profile</span>
-          </Link>
+          </a>
           <button
             className="focus-ring rounded-lg p-2 text-text-primary hover:bg-white/5 md:hidden"
             aria-label="Open search"

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Play, Clock } from "lucide-react";
 import type { Episode } from "@/types/episode";
 import { PosterArt } from "@/components/anime/PosterArt";
@@ -62,12 +61,11 @@ export function EpisodeCard({ episode, className }: { episode: Episode; classNam
   }
 
   return (
-    <Link
+    <a
       href={`/watch/${episode.animeSlug}/${episode.id}`}
-      prefetch={false}
       className={cardClassName}
     >
       {content}
-    </Link>
+    </a>
   );
 }

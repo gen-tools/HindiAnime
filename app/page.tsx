@@ -10,10 +10,6 @@ import {
 
 import { createCanonicalMetadata } from "@/lib/seo";
 
-// Render the data-driven homepage on a cache miss. Cloudflare's shared HTTP
-// cache controls freshness without requiring persistent Next.js ISR storage.
-export const dynamic = "force-dynamic";
-
 export const metadata: Metadata = createCanonicalMetadata("/");
 
 export default async function HomePage() {

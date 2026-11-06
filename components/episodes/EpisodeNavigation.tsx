@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,24 +16,22 @@ export function EpisodeNavigation({
 
   return (
     <div className="flex items-center gap-3">
-      <Link
+      <a
         href={prevId ? `/watch/${animeSlug}/${prevId}` : "#"}
-        prefetch={false}
         className={cn(baseStyles, !prevId && disabledStyles)}
         aria-disabled={!prevId}
       >
         <ChevronLeft className="h-4 w-4" />
         Previous
-      </Link>
-      <Link
+      </a>
+      <a
         href={nextId ? `/watch/${animeSlug}/${nextId}` : "#"}
-        prefetch={false}
         className={cn(baseStyles, !nextId && disabledStyles)}
         aria-disabled={!nextId}
       >
         Next
         <ChevronRight className="h-4 w-4" />
-      </Link>
+      </a>
     </div>
   );
 }

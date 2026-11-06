@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import type { SeasonItem } from "@/types/api";
 
@@ -34,7 +34,7 @@ export function SeasonSelector({
     if (onSeasonChange) {
       onSeasonChange(selected);
     } else if (watchAnimeSlug) {
-      router.push(`/watch/${watchAnimeSlug}/ep-${selected}-1`);
+      window.location.assign(`/watch/${watchAnimeSlug}/ep-${selected}-1`);
     } else {
       const nextParams = new URLSearchParams();
       for (const [key, value] of Object.entries(queryParams || {})) {

@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { SearchBar } from "@/components/search/SearchBar";
 import { SearchFilters } from "@/components/search/SearchFilters";
 import { BrowserSearchResults } from "@/components/search/BrowserSearchResults";
 import { normalizeFilterParams, hasFilterParamChanges } from "@/lib/search-filters";
 
 export function SearchPageClient() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const rawParams = searchParams.toString();
   const params = normalizeFilterParams(rawParams, {
@@ -22,9 +21,9 @@ export function SearchPageClient() {
     });
     if (hasFilterParamChanges(original, normalized)) {
       const query = normalized.toString();
-      router.replace(`/search${query ? `?${query}` : ""}`);
+      window.history.replaceState(null, "", `/search${query ? `?${query}` : ""}`);
     }
-  }, [rawParams, router]);
+  }, [rawParams]);
 
   const query = (params.get("q") || params.get("s") || "").trim();
   const genre = params.get("genre") || undefined;

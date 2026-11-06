@@ -87,6 +87,7 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
             <ButtonLink
               href={targetWatchHref}
               prefetch={false}
+              documentNavigation
               size="lg"
               className="touch-manipulation active:scale-95"
               icon={<Play className="h-4 w-4 fill-white" />}

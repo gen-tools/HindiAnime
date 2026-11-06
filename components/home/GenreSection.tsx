@@ -12,6 +12,7 @@ export function GenreSection() {
           </h2>
           <Link
             href="/genre"
+            prefetch={false}
             className="text-xs font-semibold text-text-secondary hover:text-green-light"
           >
             All genres →

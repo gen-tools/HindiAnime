@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -67,10 +66,9 @@ export function MobileNavigation() {
                     ? pathname === "/"
                     : pathname.startsWith(item.href.split("/").slice(0, 2).join("/"));
                 return (
-                  <Link
+                  <a
                     key={item.href}
                     href={item.href}
-                    prefetch={false}
                     onClick={() => setOpen(false)}
                     className={cn(
                       "focus-ring rounded-lg px-4 py-3 text-[15px] font-semibold transition-colors",
@@ -80,7 +78,7 @@ export function MobileNavigation() {
                     )}
                   >
                     {item.label}
-                  </Link>
+                  </a>
                 );
               })}
             </nav>

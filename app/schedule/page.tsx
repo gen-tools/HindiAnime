@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import Link from "next/link";
 import { PosterArt } from "@/components/anime/PosterArt";
 import { getAnimeBySlug } from "@/lib/mock/anime";
 import { LanguageBadges } from "@/components/anime/LanguageBadges";
@@ -263,22 +262,20 @@ export default function SchedulePage() {
                       </span>
                     </div>
 
-                    <Link
+                    <a
                       href={`/anime/${entry.animeSlug}`}
-                      prefetch={false}
                       className="relative h-16 w-12 shrink-0 overflow-hidden rounded-lg border border-border-line transition-transform group-hover:scale-105"
                     >
                       <PosterArt seed={entry.poster} title={entry.animeTitle} fillContainer showOverlay={false} showSprocket={false} />
-                    </Link>
+                    </a>
 
                     <div className="min-w-0 flex-1">
-                      <Link
+                      <a
                         href={`/anime/${entry.animeSlug}`}
-                        prefetch={false}
                         className="truncate font-display text-base font-bold text-text-primary group-hover:text-green-light block"
                       >
                         {entry.animeTitle}
-                      </Link>
+                      </a>
                       <p className="text-xs text-text-secondary mt-0.5">
                         Episode {entry.episodeNumber} Broadcast
                       </p>
@@ -329,14 +326,13 @@ export default function SchedulePage() {
                           )}
                         </button>
                       ) : !getAnimeBySlug(entry.animeSlug)?.isMock ? (
-                        <Link
+                        <a
                           href={`/anime/${entry.animeSlug}`}
-                          prefetch={false}
                           className="flex items-center gap-1.5 rounded-lg bg-green-primary px-3 py-1.5 text-xs font-bold text-black shadow-md transition-all hover:bg-green-bright active:scale-95"
                         >
                           <Play className="h-3.5 w-3.5 fill-black" />
                           Watch Now
-                        </Link>
+                        </a>
                       ) : null}
                     </div>
                   </div>

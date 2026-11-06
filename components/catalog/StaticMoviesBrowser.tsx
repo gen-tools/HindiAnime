@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { Clock, Play } from "lucide-react";
 import { staticCatalog } from "@/lib/static-catalog";
 import { MovieSpotlight } from "@/components/anime/MovieSpotlight";
@@ -86,7 +85,7 @@ export function StaticMoviesBrowser() {
 
         {visible.length ? <>
           <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {visible.map((movie) => <Link key={movie.id} href={`/anime/${movie.slug}`} prefetch={false} className="focus-ring group relative flex flex-col overflow-hidden rounded-xl border border-border-line bg-surface transition-all duration-200 hover:-translate-y-1 hover:border-green-primary/60 hover:shadow-[0_8px_24px_-4px_rgba(0,0,0,0.6)]">
+            {visible.map((movie) => <a key={movie.id} href={`/anime/${movie.slug}`} className="focus-ring group relative flex flex-col overflow-hidden rounded-xl border border-border-line bg-surface transition-all duration-200 hover:-translate-y-1 hover:border-green-primary/60 hover:shadow-[0_8px_24px_-4px_rgba(0,0,0,0.6)]">
               <div className="relative aspect-[16/10] w-full overflow-hidden bg-surface-dark">
                 <PosterArt seed={movie.backdrop || movie.poster} title={movie.title} orientation="landscape" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
                 <div className="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-transparent opacity-80" />
@@ -97,7 +96,7 @@ export function StaticMoviesBrowser() {
               <div className="flex flex-1 flex-col justify-between p-4"><div><h3 className="font-display font-bold text-text-primary group-hover:text-green-light line-clamp-1">{movie.title}</h3>{movie.synopsis && <p className="mt-1.5 text-xs text-text-muted line-clamp-2 leading-relaxed">{movie.synopsis}</p>}</div>
                 <div className="mt-4 flex flex-col gap-2 border-t border-border-line/60 pt-3"><div className="flex items-center justify-between text-xs text-text-muted"><span>{movie.year || "—"}</span><span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDuration(movie.durationMinutes)}</span></div><LanguageBadges languages={movie.languages} max={3} /></div>
               </div>
-            </Link>)}
+            </a>)}
           </div>
           {totalPages > 1 && <nav className="mt-10 flex items-center justify-center gap-2" aria-label="Pagination"><a href={makeHref({ page: String(Math.max(1, safePage - 1)) })} className="rounded-lg border border-border-line px-3 py-2 text-sm text-text-secondary">Prev</a><span className="px-3 text-sm text-text-muted">Page {safePage} of {totalPages}</span><a href={makeHref({ page: String(Math.min(totalPages, safePage + 1)) })} className="rounded-lg border border-border-line px-3 py-2 text-sm text-text-secondary">Next</a></nav>}
         </> : <div className="mt-8"><NoResultsState /></div>}

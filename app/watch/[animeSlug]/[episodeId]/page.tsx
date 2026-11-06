@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { cache } from "react";
 import { createCanonicalMetadata } from "@/lib/seo";
-import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { StreamPlayer } from "@/components/player/StreamPlayer";
 import { MockWatchUnavailable } from "@/components/player/MockWatchUnavailable";
@@ -605,13 +604,12 @@ export default async function WatchPage({
     <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 md:py-8 lg:max-w-6xl transition-all">
       {/* Breadcrumb — server-rendered */}
       <nav aria-label="Breadcrumb" className="mb-4 text-sm text-text-muted">
-        <Link
+        <a
           href={`/anime/${anime.slug}`}
-          prefetch={false}
           className="focus-ring hover:text-green-light"
         >
           {anime.title}
-        </Link>
+        </a>
         <span className="mx-1.5">/</span>
         <span className="text-text-secondary">
           {isMovie ? "Full Movie" : `Season ${episode.season} · Episode ${episode.number}`}
@@ -692,9 +690,8 @@ export default async function WatchPage({
           </div>
 
           {!isMovie && nextEpisode && (
-            <Link
+            <a
               href={`/watch/${anime.slug}/${nextEpisode.id}`}
-              prefetch={false}
               className="group mt-3.5 inline-flex items-center gap-3 rounded-xl border border-border-line bg-surface/80 px-3.5 py-2 text-xs transition-all hover:border-green-primary/50 hover:bg-surface-elevated"
             >
               <span className="flex h-6 w-6 items-center justify-center rounded-md bg-green-primary/20 text-green-light">
@@ -707,7 +704,7 @@ export default async function WatchPage({
                 </span>
               </div>
               <ChevronRight className="h-3.5 w-3.5 text-text-muted group-hover:text-white transition-colors ml-1" />
-            </Link>
+            </a>
           )}
         </div>
         {!isMovie && (

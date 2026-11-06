@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useSearchParams, usePathname } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import { genres } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
@@ -8,7 +8,6 @@ import { countries } from "@/lib/mock/countries";
 import { normalizeFilterParams } from "@/lib/search-filters";
 
 export function ListingFilters({ years }: { years: number[] }) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const normalizedParams = normalizeFilterParams(searchParams.toString(), {
@@ -33,16 +32,16 @@ export function ListingFilters({ years }: { years: number[] }) {
 
     if (pathname.startsWith("/genre")) {
       if (newGenre) {
-        router.push(`/genre/${newGenre}${query}`);
+        window.location.assign(`/genre/${newGenre}${query}`);
       } else {
-        router.push(`/search${query}`);
+        window.location.assign(`/search${query}`);
       }
       return;
     }
 
     if (newGenre) params.set("genre", newGenre);
     else params.delete("genre");
-    router.push(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`);
+    window.history.pushState(null, "", `${pathname}${params.toString() ? `?${params.toString()}` : ""}`);
   }
 
   function handleLanguageChange(newLang: string) {
@@ -53,16 +52,16 @@ export function ListingFilters({ years }: { years: number[] }) {
 
     if (pathname.startsWith("/language")) {
       if (newLang) {
-        router.push(`/language/${newLang}${query}`);
+        window.location.assign(`/language/${newLang}${query}`);
       } else {
-        router.push(`/search${query}`);
+        window.location.assign(`/search${query}`);
       }
       return;
     }
 
     if (newLang) params.set("language", newLang);
     else params.delete("language");
-    router.push(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`);
+    window.history.pushState(null, "", `${pathname}${params.toString() ? `?${params.toString()}` : ""}`);
   }
 
   function updateParam(key: string, value: string) {
@@ -73,7 +72,7 @@ export function ListingFilters({ years }: { years: number[] }) {
     else params.delete(key);
     params.delete("page");
     const query = params.toString() ? `?${params.toString()}` : "";
-    router.push(`${pathname}${query}`);
+    window.history.pushState(null, "", `${pathname}${query}`);
   }
 
   return (

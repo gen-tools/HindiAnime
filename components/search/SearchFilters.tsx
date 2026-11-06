@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import { genres } from "@/lib/mock/genres";
 import { languages } from "@/lib/mock/languages";
@@ -8,7 +8,6 @@ import { countries } from "@/lib/mock/countries";
 import { normalizeFilterParams } from "@/lib/search-filters";
 
 export function SearchFilters() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const normalizedParams = normalizeFilterParams(searchParams.toString(), {
     sortOptions: ["rating", "year", "title"],
@@ -21,7 +20,7 @@ export function SearchFilters() {
     if (value) params.set(key, value);
     else params.delete(key);
     params.delete("page");
-    router.push(`/search?${params.toString()}`);
+    window.history.pushState(null, "", `/search?${params.toString()}`);
   }
 
   return (

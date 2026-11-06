@@ -51,17 +51,29 @@ export function Button({
 export function ButtonLink({
   href,
   prefetch,
+  documentNavigation = false,
   variant = "primary",
   size = "md",
   icon,
   className,
   children,
-}: BaseProps & { href: string; prefetch?: boolean }) {
+}: BaseProps & { href: string; prefetch?: boolean; documentNavigation?: boolean }) {
+  const classNames = cn(shared, variantStyles[variant], sizeStyles[size], className);
+
+  if (documentNavigation) {
+    return (
+      <a href={href} className={classNames}>
+        {icon}
+        {children}
+      </a>
+    );
+  }
+
   return (
     <Link
       href={href}
       prefetch={prefetch}
-      className={cn(shared, variantStyles[variant], sizeStyles[size], className)}
+      className={classNames}
     >
       {icon}
       {children}

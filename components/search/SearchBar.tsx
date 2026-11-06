@@ -1,9 +1,8 @@
 "use client";
 
 import { Search, Loader2 } from "lucide-react";
-import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect, useId } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -52,7 +51,6 @@ export function SearchBar({
   defaultValue?: string;
   autoFocus?: boolean;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const [inputState, setInputState] = useState({ defaultValue, value: defaultValue });
   const value = inputState.defaultValue === defaultValue ? inputState.value : defaultValue;
@@ -159,7 +157,7 @@ export function SearchBar({
     setOpen(false);
     setSuggestions([]);
     inputRef.current?.blur();
-    router.push(`/anime/${slug}`);
+    window.location.assign(`/anime/${slug}`);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -177,7 +175,12 @@ export function SearchBar({
     inputRef.current?.blur();
     const params = new URLSearchParams();
     params.set("q", trimmed);
-    router.push(`/search?${params.toString()}`);
+    const destination = `/search?${params.toString()}`;
+    if (pathname === "/search") {
+      window.history.pushState(null, "", destination);
+    } else {
+      window.location.assign(destination);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -351,7 +354,7 @@ export function SearchBar({
                   : "Searching…"}
             </p>
           )}
-          <Link
+          <a
             href={`/search?q=${encodeURIComponent(normalizedQuery)}`}
             onPointerDown={(e) => e.preventDefault()}
             onClick={() => setOpen(false)}
@@ -359,7 +362,7 @@ export function SearchBar({
           >
             <Search className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">See all results for &apos;{normalizedQuery}&apos;</span>
-          </Link>
+          </a>
         </div>
       )}
     </div>

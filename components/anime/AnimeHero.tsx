@@ -124,11 +124,11 @@ export function AnimeHero({ items }: { items: Anime[] }) {
 
           <div className="mt-2 flex flex-wrap items-center gap-2.5 sm:gap-3">
             {!item.isMock && (
-              <ButtonLink href={watchHref} prefetch={false} size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold touch-manipulation active:scale-95">
+              <ButtonLink href={watchHref} prefetch={false} documentNavigation size="lg" icon={<Play className="h-4 w-4 fill-white" />} className="font-bold touch-manipulation active:scale-95">
                 WATCH NOW
               </ButtonLink>
             )}
-            <ButtonLink href={`/anime/${item.slug}`} prefetch={false} variant="secondary" size="lg" icon={<Info className="h-4 w-4" />}>
+            <ButtonLink href={`/anime/${item.slug}`} prefetch={false} documentNavigation variant="secondary" size="lg" icon={<Info className="h-4 w-4" />}>
               Details
             </ButtonLink>
             <FavoriteButton anime={{
@@ -176,9 +176,9 @@ export function AnimeHero({ items }: { items: Anime[] }) {
             <PosterArt seed={item.poster} title={item.title} orientation="portrait" loading="lazy" />
             {!item.isMock && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                <Link href={watchHref} prefetch={false} aria-label={`Watch ${item.title}`} className="flex h-14 w-14 items-center justify-center rounded-full bg-green-bright text-black transition-transform hover:scale-110 active:scale-95">
+                <a href={watchHref} aria-label={`Watch ${item.title}`} className="flex h-14 w-14 items-center justify-center rounded-full bg-green-bright text-black transition-transform hover:scale-110 active:scale-95">
                   <Play className="h-6 w-6 translate-x-0.5 fill-black" />
-                </Link>
+                </a>
               </div>
             )}
           </div>

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { createCanonicalMetadata } from "@/lib/seo";
-import Link from "next/link";
 import { RatingBadge } from "@/components/ui/RatingBadge";
 import { LanguageBadges } from "@/components/anime/LanguageBadges";
 import { PosterArt } from "@/components/anime/PosterArt";
@@ -33,10 +32,9 @@ export default async function PopularPage() {
         <h2 className="mb-5 font-display text-xl font-bold text-text-primary">Most Watched</h2>
         <div className="flex flex-col divide-y divide-border-line rounded-xl border border-border-line bg-surface">
           {popular.map((item, i) => (
-            <Link
+            <a
               key={item.id}
               href={`/anime/${item.slug}`}
-              prefetch={false}
               className="focus-ring group flex items-center gap-4 p-3 transition-colors hover:bg-white/[0.03] sm:p-4"
             >
               <span className="font-eyebrow w-10 shrink-0 text-center text-3xl text-green-bright sm:text-4xl">
@@ -56,7 +54,7 @@ export default async function PopularPage() {
                 </div>
                 <LanguageBadges languages={item.languages} max={4} className="mt-1.5" />
               </div>
-            </Link>
+            </a>
           ))}
         </div>
       </section>
@@ -65,7 +63,7 @@ export default async function PopularPage() {
         <h2 className="mb-5 font-display text-xl font-bold text-text-primary">Trending Now</h2>
         <div className="grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 md:grid-cols-5">
           {trending.map((item, i) => (
-            <Link key={item.id} href={`/anime/${item.slug}`} prefetch={false} className="focus-ring group relative block">
+            <a key={item.id} href={`/anime/${item.slug}`} className="focus-ring group relative block">
               <div className="relative overflow-hidden rounded-xl border border-border-line group-hover:border-green-primary/70">
                 <PosterArt seed={item.poster} title={item.title} />
               </div>
@@ -75,7 +73,7 @@ export default async function PopularPage() {
               <p className="mt-2 truncate text-sm font-semibold text-text-primary group-hover:text-green-light">
                 {item.title}
               </p>
-            </Link>
+            </a>
           ))}
         </div>
       </section>
@@ -84,7 +82,7 @@ export default async function PopularPage() {
         <h2 className="mb-5 font-display text-xl font-bold text-text-primary">Top Rated</h2>
         <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 md:grid-cols-5">
           {topRated.map((item) => (
-            <Link key={item.id} href={`/anime/${item.slug}`} prefetch={false} className="focus-ring group block">
+            <a key={item.id} href={`/anime/${item.slug}`} className="focus-ring group block">
               <div className="relative overflow-hidden rounded-xl border border-border-line group-hover:border-green-primary/70">
                 <PosterArt seed={item.poster} title={item.title} />
                 <RatingBadge rating={item.rating} className="absolute right-2 top-2" />
@@ -92,7 +90,7 @@ export default async function PopularPage() {
               <p className="mt-2 truncate text-sm font-semibold text-text-primary group-hover:text-green-light">
                 {item.title}
               </p>
-            </Link>
+            </a>
           ))}
         </div>
       </section>

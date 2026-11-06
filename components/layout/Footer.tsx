@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Logo } from "./Logo";
 import { genres } from "@/lib/mock/genres";
 
@@ -34,9 +33,9 @@ export function Footer() {
           <ul className="space-y-2.5">
             {platformLinks.map((l) => (
               <li key={l.href}>
-                <Link href={l.href} className="focus-ring text-sm text-text-muted hover:text-green-light">
+                <a href={l.href} className="focus-ring text-sm text-text-muted hover:text-green-light">
                   {l.label}
-                </Link>
+                </a>
               </li>
             ))}
           </ul>
@@ -47,12 +46,12 @@ export function Footer() {
           <ul className="space-y-2.5">
             {genres.slice(0, 5).map((g) => (
               <li key={g.slug}>
-                <Link
+                <a
                   href={`/genre/${g.slug}`}
                   className="focus-ring text-sm text-text-muted hover:text-green-light"
                 >
                   {g.label}
-                </Link>
+                </a>
               </li>
             ))}
           </ul>
@@ -67,12 +66,12 @@ export function Footer() {
               { label: "Telugu Dubbed Anime", href: "/language/telugu" },
             ].map((l) => (
               <li key={l.href}>
-                <Link
+                <a
                   href={l.href}
                   className="focus-ring text-sm text-text-muted hover:text-green-light"
                 >
                   {l.label}
-                </Link>
+                </a>
               </li>
             ))}
           </ul>
@@ -83,9 +82,9 @@ export function Footer() {
           <ul className="space-y-2.5">
             {legalLinks.map((l) => (
               <li key={l.href}>
-                <Link href={l.href} className="focus-ring text-sm text-text-muted hover:text-green-light">
+                <a href={l.href} className="focus-ring text-sm text-text-muted hover:text-green-light">
                   {l.label}
-                </Link>
+                </a>
               </li>
             ))}
           </ul>

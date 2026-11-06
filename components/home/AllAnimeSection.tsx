@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
-import Link from "next/link";
 import { ChevronRight, ChevronLeft } from "lucide-react";
 import type { Anime } from "@/types/anime";
 import { AnimeCard } from "@/components/anime/AnimeCard";
@@ -83,13 +82,13 @@ export function AllAnimeSection({
               </button>
             </div>
 
-            <Link
+            <a
               href={viewAllHref}
               className="focus-ring flex items-center gap-0.5 text-sm font-medium text-text-secondary hover:text-green-light"
             >
               View all
               <ChevronRight className="h-4 w-4" />
-            </Link>
+            </a>
           </div>
         </div>
 
@@ -118,7 +117,6 @@ export function AllAnimeSection({
                 key={item.id}
                 item={item}
                 className="w-[150px] shrink-0 sm:w-[168px] md:w-[180px]"
-                prefetch={false}
               />
             ))}
           </div>

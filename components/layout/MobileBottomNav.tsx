@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Home, Compass, Search, Bookmark, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -102,9 +102,8 @@ function MobileBottomNavInner() {
         </div>
 
         {/* 4. List */}
-        <Link
+        <a
           href="/profile?tab=favorites"
-          prefetch={false}
           className={cn(
             "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isListActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
@@ -115,12 +114,11 @@ function MobileBottomNavInner() {
           {isListActive && (
             <span className="mt-0.5 h-1 w-1 rounded-full bg-green-bright shadow-[0_0_8px_rgba(34,197,94,0.9)]" />
           )}
-        </Link>
+        </a>
 
         {/* 5. You */}
-        <Link
+        <a
           href="/profile"
-          prefetch={false}
           className={cn(
             "flex touch-manipulation flex-col items-center justify-center py-1 px-2.5 sm:px-3.5 transition-[color,transform] duration-150 active:scale-90 active:text-green-light group",
             isYouActive ? "text-green-light font-bold" : "text-text-muted hover:text-white"
@@ -131,7 +129,7 @@ function MobileBottomNavInner() {
           {isYouActive && (
             <span className="mt-0.5 h-1 w-1 rounded-full bg-green-bright shadow-[0_0_8px_rgba(34,197,94,0.9)]" />
           )}
-        </Link>
+        </a>
       </div>
     </nav>
   );

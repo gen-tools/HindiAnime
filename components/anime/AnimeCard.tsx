@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Play } from "lucide-react";
 import type { Anime } from "@/types/anime";
 import { PosterArt } from "./PosterArt";
@@ -13,19 +12,16 @@ export function AnimeCard({
   className,
   imageLoading,
   imageSizes,
-  prefetch = false,
 }: {
   item: Anime;
   rank?: number;
   className?: string;
   imageLoading?: "lazy" | "eager";
   imageSizes?: string;
-  prefetch?: boolean;
 }) {
   return (
-    <Link
+    <a
       href={`/anime/${item.slug}`}
-      prefetch={prefetch}
       className={cn(
         "focus-ring group relative block shrink-0 touch-manipulation rounded-xl transition-[transform,filter] duration-150 ease-out hover:-translate-y-1 active:scale-[0.98] active:brightness-110 motion-reduce:transform-none",
         className
@@ -92,6 +88,6 @@ export function AnimeCard({
           )}
         </div>
       </div>
-    </Link>
+    </a>
   );
 }

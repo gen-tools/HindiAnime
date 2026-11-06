@@ -411,14 +411,13 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
               <p className="mt-1 max-w-sm text-sm text-text-secondary">
                 When you stream anime, your progress will automatically appear here so you can resume where you left off.
               </p>
-              <Link
+              <a
                 href="/latest"
-                prefetch={false}
                 className="mt-4 inline-flex items-center gap-2 rounded-xl bg-green-primary px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-green-primary/25 hover:bg-green-bright hover:text-black transition-all"
               >
                 <Play className="h-4 w-4 fill-current" />
                 <span>Explore Anime</span>
-              </Link>
+              </a>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -451,14 +450,13 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     </div>
 
                     <div className="mt-3 flex items-center justify-between gap-2">
-                      <Link
+                      <a
                         href={buildStoredWatchHref(item)}
-                        prefetch={false}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-green-primary px-3 py-1.5 text-xs font-semibold text-white shadow-md transition-all hover:bg-green-bright hover:text-black active:scale-95"
                       >
                         <Play className="h-3.5 w-3.5 fill-current" />
                         <span>Resume</span>
-                      </Link>
+                      </a>
 
                       <button
                         type="button"
@@ -489,13 +487,12 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
               <p className="mt-1 max-w-sm text-sm text-text-secondary">
                 Bookmark anime you love by clicking &ldquo;Add to List&rdquo; on any anime page to save them here.
               </p>
-              <Link
+              <a
                 href="/popular"
-                prefetch={false}
                 className="mt-4 inline-flex items-center gap-2 rounded-xl bg-green-primary px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-green-primary/25 hover:bg-green-bright hover:text-black transition-all"
               >
                 <span>Browse Popular Anime</span>
-              </Link>
+              </a>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
@@ -504,7 +501,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                   key={item.animeSlug}
                   className="group relative flex flex-col overflow-hidden rounded-xl border border-border-line bg-surface transition-all hover:border-green-primary/40 hover:shadow-lg"
                 >
-                  <Link href={`/anime/${item.animeSlug}`} prefetch={false} className="block relative aspect-[2/3] w-full overflow-hidden">
+                  <a href={`/anime/${item.animeSlug}`} className="block relative aspect-[2/3] w-full overflow-hidden">
                     <PosterArt
                       seed={item.poster}
                       title={item.title}
@@ -518,14 +515,14 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
-                  </Link>
+                  </a>
 
                   <div className="p-3">
-                    <Link href={`/anime/${item.animeSlug}`} prefetch={false}>
+                    <a href={`/anime/${item.animeSlug}`}>
                       <h4 className="font-display text-sm font-bold text-text-primary line-clamp-1 group-hover:text-green-light transition-colors">
                         {item.title}
                       </h4>
-                    </Link>
+                    </a>
                     <div className="mt-1.5 flex items-center justify-between text-[11px] text-text-muted">
                       <span>{item.type || "TV"}</span>
                       {item.rating ? (
@@ -585,13 +582,12 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
                       />
                     </div>
                     <div className="min-w-0">
-                      <Link
+                      <a
                         href={buildStoredWatchHref(item)}
-                        prefetch={false}
                         className="font-display font-semibold text-text-primary hover:text-green-light line-clamp-1 transition-colors"
                       >
                         {item.animeTitle}
-                      </Link>
+                      </a>
                       <p className="text-xs text-text-secondary line-clamp-1">
                         {isStoredMovieWatch(item)
                           ? "Full Movie"

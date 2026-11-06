@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import Link from "next/link";
 import { Play, Trash2, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import {
   getContinueWatching,
@@ -145,9 +144,8 @@ export function HomeContinueWatching() {
                 className="group relative flex w-[160px] sm:w-[180px] md:w-[200px] shrink-0 flex-col overflow-hidden rounded-xl border border-border-line bg-surface transition-all duration-300 hover:border-green-primary/50 hover:shadow-lg hover:shadow-green-primary/5"
               >
                 {/* Poster Artwork with Hover Resume */}
-                <Link
+                <a
                   href={buildStoredWatchHref(item)}
-                  prefetch={false}
                   className="relative block aspect-[2/3] w-full overflow-hidden bg-surface-card"
                 >
                   <PosterArt
@@ -177,15 +175,15 @@ export function HomeContinueWatching() {
                   <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-black/70">
                     <div className="h-full w-3/5 rounded-r bg-gradient-to-r from-green-primary to-green-bright shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
                   </div>
-                </Link>
+                </a>
 
                 {/* Info & Metadata */}
                 <div className="p-3">
-                  <Link href={buildStoredWatchHref(item)} prefetch={false}>
+                  <a href={buildStoredWatchHref(item)}>
                     <h3 className="truncate text-sm font-semibold text-text-primary transition-colors group-hover:text-green-light">
                       {item.animeTitle}
                     </h3>
-                  </Link>
+                  </a>
                   <div className="mt-1 flex items-center justify-between text-xs text-text-muted">
                     {isStoredMovieWatch(item) ? (
                       <span className="font-medium text-green-light">Movie</span>
