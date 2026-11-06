@@ -10,7 +10,7 @@ export default function NotFound() {
       <p className="max-w-sm text-sm text-text-muted">
         The page you&apos;re looking for doesn&apos;t exist or may have moved.
       </p>
-      <ButtonLink href="/" icon={<Compass className="h-4 w-4" />} className="mt-2">
+      <ButtonLink href="/" prefetch={false} icon={<Compass className="h-4 w-4" />} className="mt-2">
         Back to Home
       </ButtonLink>
       <Link href="/search" className="focus-ring text-sm text-text-secondary hover:text-green-light">

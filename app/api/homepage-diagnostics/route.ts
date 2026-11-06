@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 import {
   parseHomepageSourceHtml,
   scrapeDirectHomepageFeed,
@@ -13,7 +14,29 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate",
+  "Vercel-CDN-Cache-Control": "no-store",
+  "Cloudflare-CDN-Cache-Control": "no-store",
+};
+
+function hasValidDiagnosticSecret(request: Request): boolean {
+  const secret = process.env.CF_PROXY_SHARED_SECRET?.trim();
+  const provided = request.headers.get("x-hindianime-proxy-secret")?.trim();
+  if (!secret || !provided) return false;
+
+  const expectedBytes = Buffer.from(secret);
+  const providedBytes = Buffer.from(provided);
+  return expectedBytes.length === providedBytes.length && timingSafeEqual(expectedBytes, providedBytes);
+}
+
+export async function GET(request: Request) {
+  // This route runs multiple uncached upstream probes and is for operators only.
+  // Fail closed if the existing server-side shared secret is unavailable.
+  if (!hasValidDiagnosticSecret(request)) {
+    return new NextResponse(null, { status: 404, headers: NO_STORE_HEADERS });
+  }
+
   const diag: Record<string, any> = {
     env_CF_PROXY_URL: process.env.CF_PROXY_URL || null,
     env_NEXT_PUBLIC_CF_PROXY_URL: process.env.NEXT_PUBLIC_CF_PROXY_URL || null,
@@ -135,6 +158,6 @@ export async function GET() {
 
   return NextResponse.json(diag, {
     status: 200,
-    headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+    headers: NO_STORE_HEADERS,
   });
 }

@@ -607,6 +607,7 @@ export default async function WatchPage({
       <nav aria-label="Breadcrumb" className="mb-4 text-sm text-text-muted">
         <Link
           href={`/anime/${anime.slug}`}
+          prefetch={false}
           className="focus-ring hover:text-green-light"
         >
           {anime.title}

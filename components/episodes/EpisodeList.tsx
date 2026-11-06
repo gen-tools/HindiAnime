@@ -14,11 +14,13 @@ export function EpisodeList({
   animeSlug,
   activeEpisodeId,
   seasonNumber: propSeason,
+  autoFetchSynthetic = true,
 }: {
   episodes: Episode[];
   animeSlug: string;
   activeEpisodeId?: string;
   seasonNumber?: number;
+  autoFetchSynthetic?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [episodes, setEpisodes] = useState<Episode[]>(initialEpisodes);
@@ -35,6 +37,8 @@ export function EpisodeList({
   // If initial episodes are empty or purely synthetic (no thumbnails or generic titles),
   // fetch the real released episodes from the Worker snapshot endpoint.
   useEffect(() => {
+    if (!autoFetchSynthetic) return;
+
     const isSynthetic =
       episodes.length === 0 ||
       episodes.every(
@@ -98,7 +102,7 @@ export function EpisodeList({
     return () => {
       controller.abort(new DOMException("unmounted", "AbortError"));
     };
-  }, [animeSlug, season, episodes.length]);
+  }, [animeSlug, season, episodes.length, autoFetchSynthetic]);
 
   const filtered = deduplicateEpisodes(episodes).filter(
     (e) =>

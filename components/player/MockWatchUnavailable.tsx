@@ -15,6 +15,7 @@ export function MockWatchUnavailable({ anime }: { anime: Anime }) {
         </p>
         <Link
           href={`/anime/${anime.slug}`}
+          prefetch={false}
           className="mt-5 inline-flex rounded-lg border border-border-line px-4 py-2 text-sm font-semibold text-text-primary transition-colors hover:border-green-primary/60 hover:text-green-light"
         >
           Back to details

@@ -158,7 +158,7 @@ export default async function MovieWatchPage({
     <div className="pb-14">
       <div className="container-page pt-5">
         <nav className="mb-4 text-sm text-text-muted" aria-label="Breadcrumb">
-          <Link href="/" className="hover:text-green-light">Home</Link>
+          <Link href="/" prefetch={false} className="hover:text-green-light">Home</Link>
           <span className="mx-1.5">/</span>
           <span className="text-text-secondary">{title}</span>
         </nav>

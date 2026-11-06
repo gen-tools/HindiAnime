@@ -78,6 +78,7 @@ export function LatestSection({ episodes = [] }: { episodes?: Episode[] }) {
 
             <Link
               href="/latest"
+              prefetch={false}
               className="focus-ring flex items-center gap-0.5 text-sm font-medium text-text-secondary hover:text-green-light"
             >
               View all

@@ -128,7 +128,7 @@ export function AnimeHero({ items }: { items: Anime[] }) {
                 WATCH NOW
               </ButtonLink>
             )}
-            <ButtonLink href={`/anime/${item.slug}`} variant="secondary" size="lg" icon={<Info className="h-4 w-4" />}>
+            <ButtonLink href={`/anime/${item.slug}`} prefetch={false} variant="secondary" size="lg" icon={<Info className="h-4 w-4" />}>
               Details
             </ButtonLink>
             <FavoriteButton anime={{

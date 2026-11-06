@@ -97,7 +97,7 @@ export function AnimeSeasonBrowser({
           />
         </div>
       )}
-      <EpisodeList episodes={episodes} animeSlug={animeSlug} />
+      <EpisodeList episodes={episodes} animeSlug={animeSlug} autoFetchSynthetic={false} />
     </>
   );
 }

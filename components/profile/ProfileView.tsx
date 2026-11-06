@@ -413,6 +413,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
               </p>
               <Link
                 href="/latest"
+                prefetch={false}
                 className="mt-4 inline-flex items-center gap-2 rounded-xl bg-green-primary px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-green-primary/25 hover:bg-green-bright hover:text-black transition-all"
               >
                 <Play className="h-4 w-4 fill-current" />
@@ -490,6 +491,7 @@ export function ProfileView({ initialTab = "continue" }: ProfileViewProps) {
               </p>
               <Link
                 href="/popular"
+                prefetch={false}
                 className="mt-4 inline-flex items-center gap-2 rounded-xl bg-green-primary px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-green-primary/25 hover:bg-green-bright hover:text-black transition-all"
               >
                 <span>Browse Popular Anime</span>
