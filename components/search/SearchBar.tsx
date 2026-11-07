@@ -2,7 +2,8 @@
 
 import { Search, Loader2 } from "lucide-react";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect, useId } from "react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -52,6 +53,7 @@ export function SearchBar({
   autoFocus?: boolean;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [inputState, setInputState] = useState({ defaultValue, value: defaultValue });
   const value = inputState.defaultValue === defaultValue ? inputState.value : defaultValue;
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -157,7 +159,7 @@ export function SearchBar({
     setOpen(false);
     setSuggestions([]);
     inputRef.current?.blur();
-    window.location.assign(`/anime/${slug}`);
+    router.push(`/anime/${slug}`);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -179,7 +181,7 @@ export function SearchBar({
     if (pathname === "/search") {
       window.history.pushState(null, "", destination);
     } else {
-      window.location.assign(destination);
+      router.push(destination);
     }
   }
 
@@ -354,15 +356,16 @@ export function SearchBar({
                   : "Searching…"}
             </p>
           )}
-          <a
+          <Link
             href={`/search?q=${encodeURIComponent(normalizedQuery)}`}
+            prefetch={false}
             onPointerDown={(e) => e.preventDefault()}
             onClick={() => setOpen(false)}
             className="flex w-full items-center gap-2 border-t border-emerald-500/15 px-4 py-3 text-left text-sm text-emerald-200/80 transition-colors hover:bg-emerald-500/10 hover:text-emerald-100"
           >
             <Search className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">See all results for &apos;{normalizedQuery}&apos;</span>
-          </a>
+          </Link>
         </div>
       )}
     </div>

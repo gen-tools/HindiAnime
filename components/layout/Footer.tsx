@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Logo } from "./Logo";
 import { genres } from "@/lib/mock/genres";
 
@@ -33,9 +34,9 @@ export function Footer() {
           <ul className="space-y-2.5">
             {platformLinks.map((l) => (
               <li key={l.href}>
-                <a href={l.href} className="focus-ring text-sm text-text-muted hover:text-green-light">
+                <Link href={l.href} prefetch={false} className="focus-ring text-sm text-text-muted hover:text-green-light">
                   {l.label}
-                </a>
+                </Link>
               </li>
             ))}
           </ul>

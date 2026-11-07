@@ -19,10 +19,10 @@ export function DiscoverySection() {
             queued up.
           </p>
           <div className="relative mt-7 flex flex-wrap justify-center gap-3">
-            <ButtonLink href="/search" documentNavigation size="lg" icon={<Compass className="h-4 w-4" />}>
+            <ButtonLink href="/search" prefetch={false} size="lg" icon={<Compass className="h-4 w-4" />}>
               Explore the Catalog
             </ButtonLink>
-            <ButtonLink href="/schedule" documentNavigation variant="secondary" size="lg">
+            <ButtonLink href="/schedule" prefetch={false} variant="secondary" size="lg">
               View Schedule
             </ButtonLink>
           </div>

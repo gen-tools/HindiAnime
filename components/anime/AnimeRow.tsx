@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import Link from "next/link";
 import { ChevronRight, ChevronLeft } from "lucide-react";
 import type { Anime } from "@/types/anime";
 import { AnimeCard } from "./AnimeCard";
@@ -89,13 +90,14 @@ export function AnimeRow({
             </div>
 
             {viewAllHref && (
-              <a
+              <Link
                 href={viewAllHref}
+                prefetch={false}
                 className="focus-ring flex items-center gap-0.5 text-sm font-medium text-text-secondary hover:text-green-light"
               >
                 View all
                 <ChevronRight className="h-4 w-4" />
-              </a>
+              </Link>
             )}
           </div>
         </div>
