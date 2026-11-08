@@ -195,6 +195,7 @@ export default function LanguagesDirectoryPage() {
           </div>
           <Link
             href="/language/hindi"
+            prefetch={false}
             className="flex items-center gap-1 text-xs font-semibold text-green-light hover:underline"
           >
             View all Hindi ({getAnimeByLanguage("hindi").length})
@@ -217,12 +218,14 @@ export default function LanguagesDirectoryPage() {
           <div className="flex gap-2">
             <Link
               href="/language/tamil"
+              prefetch={false}
               className="rounded-md border border-border-line bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary hover:border-green-primary/60 hover:text-white"
             >
               Tamil
             </Link>
             <Link
               href="/language/telugu"
+              prefetch={false}
               className="rounded-md border border-border-line bg-surface px-2.5 py-1 text-xs font-medium text-text-secondary hover:border-green-primary/60 hover:text-white"
             >
               Telugu

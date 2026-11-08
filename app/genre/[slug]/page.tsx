@@ -46,7 +46,7 @@ export default async function GenrePage({
   return (
     <div className="container-page py-10">
       <div className="no-scrollbar mb-8 flex items-center gap-2 overflow-x-auto pb-2">
-        <Link href="/genre" className="flex items-center gap-1.5 rounded-full border border-border-line bg-surface px-4 py-1.5 text-xs font-semibold text-text-secondary hover:border-green-primary/60 hover:text-white">
+        <Link href="/genre" prefetch={false} className="flex items-center gap-1.5 rounded-full border border-border-line bg-surface px-4 py-1.5 text-xs font-semibold text-text-secondary hover:border-green-primary/60 hover:text-white">
           <Layers className="h-3.5 w-3.5" /> All Genres
         </Link>
         {genres.map((item) => (

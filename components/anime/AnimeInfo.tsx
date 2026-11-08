@@ -62,7 +62,7 @@ export function AnimeInfo({ item, firstEpisodeId }: { item: Anime; firstEpisodeI
         {item.genres && item.genres.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {item.genres.map((g) => (
-              <Link key={g} href={`/genre/${normalizeGenreSlug(g)}`}>
+              <Link key={g} href={`/genre/${normalizeGenreSlug(g)}`} prefetch={false}>
                 <Badge className="capitalize hover:border-green-primary/60 hover:text-green-light">
                   {g.replace("-", " ")}
                 </Badge>

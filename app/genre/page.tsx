@@ -146,6 +146,7 @@ export default function GenresDirectoryPage() {
           </div>
           <Link
             href="/genre/action"
+            prefetch={false}
             className="flex items-center gap-1 text-xs font-semibold text-green-light hover:underline"
           >
             View all Action ({getAnimeByGenre("action").length})
@@ -167,6 +168,7 @@ export default function GenresDirectoryPage() {
           </div>
           <Link
             href="/genre/fantasy"
+            prefetch={false}
             className="flex items-center gap-1 text-xs font-semibold text-green-light hover:underline"
           >
             View all Fantasy ({getAnimeByGenre("fantasy").length})
