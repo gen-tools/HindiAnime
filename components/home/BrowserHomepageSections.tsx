@@ -151,22 +151,21 @@ export function BrowserHomepageSections({
   initialData: HomepageData;
   initialDataGeneratedAt: number;
 }) {
-  // Lazy initializer: read localStorage on the very first client render so
-  // returning visitors never see the skeleton — even when the ISR snapshot is stale.
-  const [data, setData] = useState<HomepageData>(() => {
-    if (hasHomepageActivity(initialData)) return initialData;
-    const cached = readHomepageSnapshot();
-    return cached ?? initialData;
-  });
-  const [isLoading, setIsLoading] = useState(() => {
-    if (hasHomepageActivity(initialData)) return false;
-    const cached = readHomepageSnapshot();
-    return !cached || !hasHomepageActivity(cached);
-  });
+  // Keep the first client render identical to the prerendered HTML. Browser
+  // storage is read after hydration so cached visitor data cannot cause a mismatch.
+  const [data, setData] = useState(initialData);
+  const [isLoading, setIsLoading] = useState(!hasHomepageActivity(initialData));
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    if (!hasHomepageActivity(initialData)) {
+      const cached = readHomepageSnapshot();
+      if (cached) {
+        setData(cached);
+        setIsLoading(false);
+      }
+    }
     // Save a fresh server snapshot so it is available on the next visit.
     if (hasHomepageActivity(initialData)) {
       saveHomepageSnapshot(initialData);

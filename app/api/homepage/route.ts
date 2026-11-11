@@ -11,14 +11,14 @@ const HOMEPAGE_CDN_SECONDS = 900;
 export const dynamic = "force-dynamic";
 
 function homepageCacheHeaders(edgeTtlSeconds: number) {
-  const sharedCacheControl = `public, max-age=0, s-maxage=${edgeTtlSeconds}, stale-while-revalidate=300`;
+  const sharedCacheControl = "public, max-age=0, stale-while-revalidate=300";
   return {
     // Visitors should revalidate in their browser; shared edges may reuse this
     // public feed for a short, explicit interval. Empty fallbacks use the
     // shorter TTL passed by GET so an upstream hiccup is not cached as data.
     "Cache-Control": sharedCacheControl,
     "Vercel-CDN-Cache-Control": `public, s-maxage=${edgeTtlSeconds}, stale-while-revalidate=300`,
-    "Cloudflare-CDN-Cache-Control": `public, max-age=${edgeTtlSeconds}`,
+    "Cloudflare-CDN-Cache-Control": `public, max-age=${edgeTtlSeconds}, stale-while-revalidate=300`,
   };
 }
 
@@ -29,10 +29,13 @@ export async function GET() {
   let data = await getHomepageData();
 
   if (data.trendingItems.length === 0 && data.latestEpisodes.length === 0) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
     try {
       const res = await fetch(`https://${WORKER_LEGACY_HOST}/data/homepage`, {
         headers: { Accept: "application/json" },
         cache: "no-store",
+        signal: controller.signal,
       });
       if (res.ok) {
         const feed = (await res.json()) as HomepageApiResponse;
@@ -45,6 +48,8 @@ export async function GET() {
       }
     } catch {
       // Fall through to empty fallback response
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

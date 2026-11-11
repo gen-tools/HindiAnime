@@ -149,7 +149,8 @@ async function fetchLegacyValidated<T>(
   cacheKey: string,
   path: string,
   isValid: (data: unknown) => data is T,
-  revalidateSeconds = ANIME_DATA_CACHE_SECONDS
+  revalidateSeconds = ANIME_DATA_CACHE_SECONDS,
+  timeoutMs?: number
 ): Promise<T | null> {
   const baseUrl = getLegacyApiBaseUrl();
   if (!baseUrl) return null;
@@ -160,11 +161,17 @@ async function fetchLegacyValidated<T>(
   const { unstable_cache } = require("next/cache") as typeof import("next/cache");
   const load = unstable_cache(
     async () => {
-      const response = await fetch(`${baseUrl}${path}`);
-      if (!response.ok) throw new Error(`Legacy API returned ${response.status}`);
-      const data: unknown = await response.json();
-      if (!isValid(data)) throw new Error("Legacy API returned an invalid or empty payload");
-      return data;
+      const controller = timeoutMs ? new AbortController() : null;
+      const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      try {
+        const response = await fetch(`${baseUrl}${path}`, controller ? { signal: controller.signal } : undefined);
+        if (!response.ok) throw new Error(`Legacy API returned ${response.status}`);
+        const data: unknown = await response.json();
+        if (!isValid(data)) throw new Error("Legacy API returned an invalid or empty payload");
+        return data;
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
     },
     ["validated-legacy-api-v1", feature, cacheKey, baseUrl, path],
     { revalidate: revalidateSeconds }
@@ -2297,7 +2304,9 @@ async function getHomepageFeedUnshared(diagnostics = false): Promise<HomepageApi
     (value): value is HomepageApiResponse => {
       const candidate = value as HomepageApiResponse | null;
       return Boolean(candidate && candidate.data?.success !== false && hasHomepageItems(candidate));
-    }
+    },
+    900,
+    6000
   );
   if (legacyFeed) {
     homepageFeedCache = { data: legacyFeed, timestamp: Date.now() };
