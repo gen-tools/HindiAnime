@@ -312,7 +312,7 @@ export function parseDurationMinutes(durationStr?: string): number {
  */
 export function cleanAnimeSlug(rawId?: string): string {
   if (!rawId) return "";
-  return rawId
+  let slug = rawId
     // The homepage feed sometimes omits slashes from Animesalt URLs, e.g.
     // https:animesalt.cxseriesmy-title. Normalize both valid and malformed forms.
     .replace(/^https?:\/*animesalt\.cx\/?(?:series|movies|anime)?\/?/, "")
@@ -327,6 +327,17 @@ export function cleanAnimeSlug(rawId?: string): string {
     // Strip trailing slashes
     .replace(/\/+$/, "")
     .trim();
+
+  // Some AnimeSalt catalog IDs wrap the slug in brackets, including percent-
+  // encoded fullwidth brackets (for example, 【oshi-no-ko】). App and Worker
+  // routes use the bare slug, while the scraper can rediscover the canonical
+  // bracketed source URL through its existing exact-match search fallback.
+  try {
+    slug = decodeURIComponent(slug);
+  } catch {
+    // Keep malformed upstream IDs usable as-is.
+  }
+  return slug.replace(/^[\[【〖]+|[\]】〗]+$/g, "").trim();
 }
 
 /**
@@ -3200,7 +3211,8 @@ async function scrapeDirectSeriesDataUnshared(cleanId: string): Promise<ScrapedS
       seriesScrapeCache.set(cleanId, { data: snapshot, timestamp: Date.now() });
       return snapshot;
     }
-    return null;
+    // Snapshot endpoints are the fast path. If a snapshot is missing or
+    // unavailable, continue to the existing AnimeSalt scraper below.
   }
 
   try {
@@ -3532,7 +3544,8 @@ async function scrapeDirectSeasonEpisodesUncached(slug: string, season: number):
     );
     const episodes = snapshot?.success ? snapshot.results?.episodes : null;
     if (episodes?.length) return episodes;
-    return [];
+    // Continue through the existing parser when the Worker has no snapshot so
+    // missing catalog records do not become an artificial one-episode list.
   }
 
   const seriesMeta = await scrapeDirectSeriesData(cleanId);
