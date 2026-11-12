@@ -34,4 +34,7 @@ const homepageOnlyIncrementalCache: IncrementalCache = {
 
 export default defineCloudflareConfig({
   incrementalCache: homepageOnlyIncrementalCache,
+  // The custom incremental cache returns entries only for the prerendered
+  // homepage. Intercept those hits before loading the page's JS bundle.
+  enableCacheInterception: true,
 });
