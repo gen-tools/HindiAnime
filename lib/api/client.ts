@@ -1962,6 +1962,7 @@ export async function getLatestEpisodes(): Promise<LatestEpisodesResponse | null
 
 let homepageFeedCache: { data: HomepageApiResponse; timestamp: number } | null = null;
 let homepageFeedInFlight: Promise<HomepageApiResponse | null> | null = null;
+const HOMEPAGE_FEED_TIMEOUT_MS = 8_000;
 
 type HomepageSectionCounts = {
   freshDrops: number;
@@ -2271,7 +2272,27 @@ export function getHomepageFeed(diagnostics = false): Promise<HomepageApiRespons
   }
   if (homepageFeedInFlight) return homepageFeedInFlight;
 
-  const request = getHomepageFeedUnshared(diagnostics);
+  // Bound the shared request itself. Without this deadline, a stuck
+  // upstream/cache promise can remain in homepageFeedInFlight indefinitely.
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      logHomepageSsr(diagnostics, {
+        source: "homepage-feed",
+        attempt: "feed-resolution",
+        outcome: "timeout",
+        elapsedMs: HOMEPAGE_FEED_TIMEOUT_MS,
+        errorCategory: "feed-timeout",
+      });
+      resolve(null);
+    }, HOMEPAGE_FEED_TIMEOUT_MS);
+  });
+  const request = Promise.race([
+    getHomepageFeedUnshared(diagnostics),
+    timeout,
+  ]).finally(() => {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  });
   homepageFeedInFlight = request;
   const cleanup = () => {
     if (homepageFeedInFlight === request) homepageFeedInFlight = null;
