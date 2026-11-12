@@ -46,9 +46,16 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
-    const publicHtmlCacheHeader = (ttlSeconds: number) => [{
+    const publicHtmlCacheHeader = (
+      ttlSeconds: number,
+      staleWhileRevalidateSeconds = 0,
+    ) => [{
       key: "Cloudflare-CDN-Cache-Control",
-      value: `public, max-age=${ttlSeconds}`,
+      // This is an edge-only header. Do not use s-maxage here: Cloudflare's
+      // revalidation docs specify max-age with stale-while-revalidate.
+      value: `public, max-age=${ttlSeconds}${staleWhileRevalidateSeconds > 0
+        ? `, stale-while-revalidate=${staleWhileRevalidateSeconds}, stale-if-error=3600`
+        : ""}`,
     }];
     const publicDynamicDocumentCacheHeaders = (ttlSeconds: number) => [
       {
@@ -66,7 +73,10 @@ const nextConfig: NextConfig = {
       // Cloudflare can cache public document responses separately from the
       // browser and Vercel ISR cache. The Cache Rule must limit this to HTML
       // GETs with no query string; API and account routes are intentionally absent.
-      { source: "/", headers: publicHtmlCacheHeader(900) },
+      // Serve the previous homepage HTML during a slow or failed edge revalidation.
+      // This protects the first visitor after the 15-minute TTL without extending
+      // the browser cache lifetime.
+      { source: "/", headers: publicHtmlCacheHeader(900, 300) },
       // These routes render browser-only profile and library shells. Keep both
       // their HTML and the legacy redirects out of shared caches.
       ...["/profile", "/list", "/you"].map((source) => ({
