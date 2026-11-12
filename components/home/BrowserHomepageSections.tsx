@@ -162,7 +162,7 @@ export function BrowserHomepageSections({
     // Bound the full browser refresh, including both the API and Worker fallback.
     const refreshTimeout = setTimeout(() => {
       controller.abort(new DOMException("Homepage refresh timed out", "AbortError"));
-    }, 12_000);
+    }, 20_000);
     if (!hasHomepageActivity(initialData)) {
       const cached = readHomepageSnapshot();
       if (cached) {
