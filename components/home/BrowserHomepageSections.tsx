@@ -159,6 +159,10 @@ export function BrowserHomepageSections({
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    // Bound the full browser refresh, including both the API and Worker fallback.
+    const refreshTimeout = setTimeout(() => {
+      controller.abort(new DOMException("Homepage refresh timed out", "AbortError"));
+    }, 12_000);
     if (!hasHomepageActivity(initialData)) {
       const cached = readHomepageSnapshot();
       if (cached) {
@@ -181,6 +185,7 @@ export function BrowserHomepageSections({
       setIsLoading(false);
       return () => {
         active = false;
+        clearTimeout(refreshTimeout);
         controller.abort(new DOMException("unmounted", "AbortError"));
       };
     }
@@ -253,10 +258,12 @@ export function BrowserHomepageSections({
         }
       })
       .finally(() => {
+        clearTimeout(refreshTimeout);
         if (active) setIsLoading(false);
       });
     return () => {
       active = false;
+      clearTimeout(refreshTimeout);
       if (!controller.signal.aborted) {
         // Use a proper AbortError DOMException so that:
         // 1. Fetch correctly identifies it as an AbortError (error.name === "AbortError")
