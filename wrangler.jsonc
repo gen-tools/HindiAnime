@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "hindianime",
+  "name": "hindianime-preview",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-11-04",
   "compatibility_flags": ["nodejs_compat"],
@@ -20,7 +20,7 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "hindianime"
+      "service": "hindianime-preview"
     }
   ],
   "observability": {
